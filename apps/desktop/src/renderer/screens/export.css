@@ -1,0 +1,242 @@
+.export {
+  background: radial-gradient(820px 380px at 88% -10%, rgba(255, 90, 54, 0.1), transparent 62%);
+}
+.export-inner {
+  max-width: 1180px;
+}
+.export-head h1 {
+  margin: 12px 0 12px;
+  font-size: clamp(38px, 4.4vw, 58px);
+}
+.export-head .lede {
+  font-size: 14.5px;
+  max-width: 620px;
+  margin: 0 0 28px;
+  line-height: 1.55;
+}
+.export-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 1040px) {
+  .export-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.format-note {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+.dest {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  min-width: 0;
+  color: var(--text-2);
+}
+.dest .dest-name {
+  color: var(--text);
+  white-space: nowrap;
+  flex: none;
+}
+.dest .dest-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  min-width: 40px;
+}
+
+.checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 10px 2px;
+  border-top: 1px solid var(--line);
+}
+.check:first-child {
+  border-top: 0;
+}
+.check-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  margin-top: 1px;
+  background: rgba(155, 214, 143, 0.13);
+  color: var(--ok);
+}
+/* shape differs by state as well as colour */
+.check.warn .check-mark {
+  background: var(--ai-wash);
+  color: var(--ai);
+  border-radius: 6px;
+}
+.check.block .check-mark {
+  background: var(--danger-wash);
+  color: var(--danger);
+  border-radius: 4px;
+}
+.check-title {
+  font-weight: 580;
+  font-size: 12.5px;
+}
+
+.export-status {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px;
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  border-color: var(--line-2);
+}
+.will-write {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 7px 12px;
+  border-radius: var(--r-2);
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+.will-write li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+}
+.will-write li svg {
+  color: var(--ok);
+}
+.will-write li.off {
+  color: var(--text-4);
+}
+.will-write li.off svg {
+  color: var(--text-4);
+}
+
+.stage-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stage-list li {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: var(--r-2);
+}
+.stage-list li.running {
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+}
+.stage-list li.pending {
+  color: var(--text-3);
+}
+.stage-mark {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  margin-top: 1px;
+  color: var(--ok);
+}
+.stage-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+.stage-label {
+  font-weight: 560;
+  font-size: 12.5px;
+}
+
+.folder-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line-2);
+  background: var(--bg);
+  color: var(--text-2);
+  font-size: 11px;
+  text-align: left;
+  word-break: break-all;
+  transition: border-color 0.14s, color 0.14s;
+}
+.folder-path:hover {
+  border-color: var(--line-3);
+  color: var(--text);
+}
+.file-list,
+.history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg);
+  overflow: hidden;
+}
+.file-list li,
+.history li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  min-height: 42px;
+}
+.file-list li:first-child,
+.history li:first-child {
+  border-top: 0;
+}
+.file-name {
+  font-size: 12px;
+  word-break: break-all;
+}
+.export .notes {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}

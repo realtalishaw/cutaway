@@ -1,0 +1,220 @@
+.settings-inner {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 36px;
+  max-width: 1000px;
+  align-items: start;
+}
+.set-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.set-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--text-2);
+  font-weight: 540;
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.14s, color 0.14s;
+}
+.set-nav button:hover {
+  color: var(--text);
+  background: var(--bg-1);
+}
+.set-nav button[aria-current='page'] {
+  background: var(--bg-3);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.set-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: rise 0.28s var(--ease);
+}
+.set-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+}
+.set-title {
+  font-weight: 640;
+  font-size: 14px;
+}
+.set-hint {
+  margin-top: 2px;
+}
+.settings .two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.settings .path {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--text-2);
+  text-align: left;
+  word-break: break-all;
+  min-width: 0;
+}
+.settings button.path:hover {
+  border-color: var(--line-3);
+  color: var(--text);
+}
+.status-dot {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+.status-dot.ok {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(155, 214, 143, 0.16);
+}
+/* not-signed-in is a square, so it does not rely on colour */
+.status-dot.bad {
+  background: var(--ai);
+  border-radius: 3px;
+  box-shadow: 0 0 0 4px var(--ai-wash);
+}
+.status-dot.unknown {
+  background: transparent;
+  border: 2px solid var(--text-3);
+}
+.settings .code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line-2);
+  color: var(--text);
+  font-size: 11.5px;
+}
+.disclosure {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 10px 16px;
+  margin: 0;
+  padding: 14px;
+  border-radius: var(--r-2);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.disclosure dt {
+  color: var(--text-3);
+  font-weight: 560;
+  font-size: 11.5px;
+}
+.disclosure dd {
+  margin: 0;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.disclosure ul,
+.settings .plain {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  line-height: 1.5;
+}
+.kbd.big {
+  font-size: 11.5px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.keys {
+  width: 100%;
+  border-collapse: collapse;
+}
+.keys th {
+  width: 120px;
+  text-align: left;
+  padding: 7px 0;
+  font-weight: 400;
+  vertical-align: top;
+}
+.keys td {
+  padding: 7px 0;
+  color: var(--text-2);
+}
+.keys tr + tr th,
+.keys tr + tr td {
+  border-top: 1px solid var(--line);
+}
+.transcript-sample {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: var(--r-2);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  line-height: 1.6;
+  color: var(--text);
+  user-select: text;
+}
+.transcript-sample s {
+  color: var(--text-4);
+}
+.presets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.presets li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.presets li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.preset-swatch {
+  position: relative;
+  width: 54px;
+  height: 32px;
+  border-radius: 7px;
+  flex: none;
+  border: 1px solid var(--line-2);
+}
+.preset-swatch i {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 10px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.85);
+}
+@media (max-width: 900px) {
+  .settings-inner {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .set-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "cutaway",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cutaway — record once, get the first cut. macOS recorder and AI editor for YouTube creators.",
+  "packageManager": "pnpm@9.4.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "pnpm native:build && pnpm --filter @cutaway/desktop dev",
+    "build": "pnpm native:build && pnpm -r build",
+    "native:build": "cd native && swift build -c release --product cutaway-native",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "package": "pnpm build && pnpm --filter @cutaway/desktop package"
+  }
+}

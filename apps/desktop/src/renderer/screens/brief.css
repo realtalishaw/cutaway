@@ -1,0 +1,15 @@
+.brief { background: radial-gradient(800px 380px at 20% -10%, rgba(245, 200, 75, .07), transparent 60%), radial-gradient(700px 400px at 90% 0%, rgba(255, 90, 54, .08), transparent 60%); }
+.brief-head { margin: 10px 0 28px; }
+.brief-head h1 { margin: 12px 0 12px; }
+.brief-head .lede { font-size: 15px; max-width: 620px; margin: 0; }
+.brief-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .85fr); gap: 20px; align-items: start; }
+.stages { display: flex; flex-direction: column; gap: 2px; padding: 8px; margin-bottom: 14px; }
+.stage-row { display: flex; gap: 12px; padding: 12px; border-radius: var(--r-2); }
+.stage-row.running { background: var(--bg-2); }
+.stage-row.pending { opacity: .5; }
+.stage-dot { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--line-3); display: grid; place-items: center; flex: none; margin-top: 1px; }
+.stage-row.done .stage-dot { background: var(--ok); border-color: var(--ok); color: #0c1a09; }
+.stage-row.failed .stage-dot { background: var(--danger); border-color: var(--danger); color: #1c0606; }
+.stage-row.running .stage-dot { border-color: transparent; }
+.stage-label { font-weight: 600; display: inline-flex; align-items: center; }
+@media (max-width: 980px) { .brief-grid { grid-template-columns: 1fr; } }

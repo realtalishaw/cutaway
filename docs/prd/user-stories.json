@@ -1,0 +1,719 @@
+{
+  "schema_version": "2.0",
+  "project": "AI Recording and YouTube Editing Desktop App",
+  "status": "Draft",
+  "source_prd": "prd.md",
+  "stories": [
+    {
+      "story_id": "US-001",
+      "title": "Start and reopen a project",
+      "epic": "Projects",
+      "story": "As a creator, I want to record or import and reopen my work so that I can keep my production in one app.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "The library offers Record and Import and reopens saved edits and packaging.",
+        "Unsaved or missing-source projects show a recovery action rather than discarding state."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-001",
+        "SC-027"
+      ],
+      "requirement_ids": [
+        "R01",
+        "R10"
+      ]
+    },
+    {
+      "story_id": "US-002",
+      "title": "Recover denied permissions",
+      "epic": "Recording",
+      "story": "As a creator, I want to understand and resolve capture permissions so that I can record with the sources I choose.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "research",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Only permissions for selected sources are requested.",
+        "Denied camera access leaves screen-only or import available."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-002"
+      ],
+      "requirement_ids": [
+        "R01"
+      ]
+    },
+    {
+      "story_id": "US-003",
+      "title": "Record separate sources",
+      "epic": "Recording",
+      "story": "As a creator, I want to record a display, window or region with optional camera and sound so that I can edit each source independently.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "research"
+      ],
+      "acceptance_criteria": [
+        "Source previews and meters precede countdown and recording.",
+        "Pause, resume and stop preserve independent screen, microphone and system-audio tracks."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-003",
+        "SC-028"
+      ],
+      "requirement_ids": [
+        "R01"
+      ]
+    },
+    {
+      "story_id": "US-004",
+      "title": "Record two cameras simultaneously",
+      "epic": "Recording",
+      "story": "As a creator, I want to capture camera A and camera B together so that I can give the editor a genuine second angle.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder"
+      ],
+      "acceptance_criteria": [
+        "Distinct device selectors prevent using the same device twice.",
+        "A qualified two-camera setup produces independent synchronized camera tracks; unsupported combinations are rejected before capture."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-003"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-004",
+        "SC-027",
+        "SC-031"
+      ],
+      "requirement_ids": [
+        "R15"
+      ]
+    },
+    {
+      "story_id": "US-005",
+      "title": "Recover an interrupted recording",
+      "epic": "Recording",
+      "story": "As a creator, I want to recover usable footage after a crash or device failure so that I can avoid losing a take.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Recovery identifies available segments and the affected range.",
+        "A disconnected camera does not discard working screen, camera or audio sources."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-005",
+        "SC-028"
+      ],
+      "requirement_ids": [
+        "R01",
+        "R15"
+      ]
+    },
+    {
+      "story_id": "US-006",
+      "title": "Import and identify media",
+      "epic": "Sources",
+      "story": "As a creator, I want to import existing videos and assign source roles so that I can use recordings from other devices.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Camera-only, screen-only and combined projects are accepted within supported formats.",
+        "Unsupported/corrupt media is identified and flattened imports show missing metadata limitations."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-006",
+        "SC-030"
+      ],
+      "requirement_ids": [
+        "R02"
+      ]
+    },
+    {
+      "story_id": "US-007",
+      "title": "Synchronize additional camera footage",
+      "epic": "Sources",
+      "story": "As a creator, I want to align a separately recorded camera and correct drift so that I can keep speech and angles aligned.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Suggested sync displays confidence and coverage and offers manual calibration.",
+        "Without a shared reference the project requires manual alignment instead of claiming automatic success.",
+        "Playback remains within one output frame at qualified start/middle/end checkpoints."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-006"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-007",
+        "SC-027",
+        "SC-032"
+      ],
+      "requirement_ids": [
+        "R03"
+      ]
+    },
+    {
+      "story_id": "US-008",
+      "title": "Select the voice track",
+      "epic": "Audio",
+      "story": "As a creator, I want to choose one master voice and adjust other audio so that I can avoid doubled speech and balance sound.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Only selected audio sources enter the mix and camera scratch audio is muted by default after master selection.",
+        "Level changes, noise cleanup and supplied music can be previewed and reversed."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-008"
+      ],
+      "requirement_ids": [
+        "R05"
+      ]
+    },
+    {
+      "story_id": "US-009",
+      "title": "Set an editing brief",
+      "epic": "AI edit",
+      "story": "As a creator, I want to set audience duration and style or use defaults so that I can get a suitable edit without writing a detailed prompt.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Defaults allow Create first cut with no free-text brief.",
+        "Duration goals are treated as goals without silently discarding essential or locked content."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-009"
+      ],
+      "requirement_ids": [
+        "R04"
+      ]
+    },
+    {
+      "story_id": "US-010",
+      "title": "Receive a complete first cut",
+      "epic": "AI edit",
+      "story": "As a creator, I want to receive an assembled playable candidate so that I can review a video instead of manually executing suggestions.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "The candidate contains actual source cuts, view decisions and applicable visual effects.",
+        "The summary identifies consequential and uncertain choices with source/output times."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-007",
+        "US-008",
+        "US-009"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-010",
+        "SC-027",
+        "SC-030"
+      ],
+      "requirement_ids": [
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08"
+      ]
+    },
+    {
+      "story_id": "US-011",
+      "title": "Clean pacing without changing meaning",
+      "epic": "AI edit",
+      "story": "As a creator, I want to remove safe fillers and pauses while retaining necessary context so that I can sound natural and remain accurate.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "research",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Negation, numbers, meaningful waits and protected ranges remain intact.",
+        "Uncertain retakes or story reordering are suggested rather than silently applied."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-010"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-011"
+      ],
+      "requirement_ids": [
+        "R05"
+      ]
+    },
+    {
+      "story_id": "US-012",
+      "title": "Choose useful views automatically",
+      "epic": "AI edit",
+      "story": "As a creator, I want to switch among screen and available camera angles so that I can make explanations engaging and clear.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder"
+      ],
+      "acceptance_criteria": [
+        "The AI uses visible demonstration actions as well as narration.",
+        "No selected source lies outside its usable coverage, and manual angle overrides take precedence."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-010"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-012",
+        "SC-032"
+      ],
+      "requirement_ids": [
+        "R06"
+      ]
+    },
+    {
+      "story_id": "US-013",
+      "title": "Add editable motion and graphics",
+      "epic": "Visuals",
+      "story": "As a creator, I want to use zooms transitions and accurate visual callouts so that I can keep important content visible and engaging.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "research"
+      ],
+      "acceptance_criteria": [
+        "Zooms, pans, view transitions and text graphics can be adjusted or removed independently.",
+        "An overlay does not conceal the designated demonstration target; capture-specific cursor controls are unavailable on metadata-free imports."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-010"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-013"
+      ],
+      "requirement_ids": [
+        "R07"
+      ]
+    },
+    {
+      "story_id": "US-014",
+      "title": "Insert relevant B-roll",
+      "epic": "Visuals",
+      "story": "As a creator, I want to add supporting footage from my supplied material so that I can illustrate ideas without distracting from the explanation.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Inserted assets show their origin and are trimmed to usable ranges.",
+        "Narration remains audible and critical screen steps remain visible.",
+        "When no suitable asset exists the edit keeps a clean view and does not report invented B-roll."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-010"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-014"
+      ],
+      "requirement_ids": [
+        "R08"
+      ]
+    },
+    {
+      "story_id": "US-015",
+      "title": "Correct through transcript and timeline",
+      "epic": "Editing",
+      "story": "As a creator, I want to correct text and make precise timeline changes so that I can finish without another editing app.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "research",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Text corrections and transcript-based cuts are distinct operations.",
+        "Trim/split/speed/layout changes are undoable and captions follow the edited timeline."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-001"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-015"
+      ],
+      "requirement_ids": [
+        "R09"
+      ]
+    },
+    {
+      "story_id": "US-016",
+      "title": "Lock and revise a chosen section",
+      "epic": "Editing",
+      "story": "As a creator, I want to lock important content and request a local AI revision so that I can keep creative control without rebuilding my edit.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "A locked range survives later AI cleanup.",
+        "Local regeneration preserves unrelated manual edits and shows an undoable comparison."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-015"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-016"
+      ],
+      "requirement_ids": [
+        "R10"
+      ]
+    },
+    {
+      "story_id": "US-017",
+      "title": "Caption the finished edit",
+      "epic": "Accessibility",
+      "story": "As a creator, I want to review and export captions matching the final video so that I can make speech accessible.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "research",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Caption text and timings follow cuts, synchronization and speed changes.",
+        "A silent project can proceed without a fabricated transcript or caption file."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-015"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-017",
+        "SC-030"
+      ],
+      "requirement_ids": [
+        "R09"
+      ]
+    },
+    {
+      "story_id": "US-018",
+      "title": "Mask private content",
+      "epic": "Visuals",
+      "story": "As a creator, I want to conceal a time-bounded region so that I can remove private details before export.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "research",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Masks can be placed, timed, resized and previewed.",
+        "The mask remains aligned after reframing and does not expose its target in the exported frames."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-015"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-018"
+      ],
+      "requirement_ids": [
+        "R14"
+      ]
+    },
+    {
+      "story_id": "US-019",
+      "title": "Choose where AI data is processed",
+      "epic": "Privacy",
+      "story": "As a creator, I want to understand and control remote processing so that I can choose what leaves my Mac.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Before an outbound request the product names the provider, data, purpose, cost and known retention terms.",
+        "Declining cloud processing leaves recording and manual editing available and sends no project data."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-019",
+        "SC-034"
+      ],
+      "requirement_ids": [
+        "R13"
+      ]
+    },
+    {
+      "story_id": "US-020",
+      "title": "Recover slow or failed processing",
+      "epic": "Reliability",
+      "story": "As a creator, I want to leave retry or cancel analysis safely so that I can avoid duplicated work and losing my project.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Processing shows real stages and explains continued work after 30 seconds without a progress update.",
+        "Retry reconciles existing remote jobs before initiating duplicate paid work.",
+        "A provider failure preserves sources and completed edits."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-020",
+        "SC-029"
+      ],
+      "requirement_ids": [
+        "R10",
+        "R13"
+      ]
+    },
+    {
+      "story_id": "US-021",
+      "title": "Choose a thumbnail and title pair",
+      "epic": "Packaging",
+      "story": "As a creator, I want to receive thumbnail compositions and suggested titles so that I can package the finished video for YouTube.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder"
+      ],
+      "acceptance_criteria": [
+        "Three distinct concepts include actual editable thumbnails and grounded title alternatives.",
+        "The selected title is within 100 characters and the thumbnail exports to a validated image.",
+        "The creator can edit text, crop, colors and layout and preview the pair at small size."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-010"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-021",
+        "SC-027"
+      ],
+      "requirement_ids": [
+        "R11"
+      ]
+    },
+    {
+      "story_id": "US-022",
+      "title": "Keep packaging consistent with revisions",
+      "epic": "Packaging",
+      "story": "As a creator, I want to know when packaging no longer matches the edit so that I can export a coherent final result.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "A material edit marks dependent packaging and timings stale.",
+        "Updating derived materials preserves unrelated manual packaging decisions and records the edit revision."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-021"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-022"
+      ],
+      "requirement_ids": [
+        "R10",
+        "R11"
+      ]
+    },
+    {
+      "story_id": "US-023",
+      "title": "Export a complete YouTube package",
+      "epic": "Export",
+      "story": "As a creator, I want to export video thumbnail and title together so that I can upload them manually to YouTube.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "founder",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Success includes a playable MP4, selected thumbnail and title, plus applicable sidecars from one edit revision.",
+        "No YouTube login or upload occurs and existing exports are never overwritten silently.",
+        "Captions and chapters refer to final output time; invalid chapters become section notes or are omitted explicitly."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-017",
+        "US-021",
+        "US-022"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-023",
+        "SC-027",
+        "SC-030",
+        "SC-033"
+      ],
+      "requirement_ids": [
+        "R12"
+      ]
+    },
+    {
+      "story_id": "US-024",
+      "title": "Recover a partial export",
+      "epic": "Export",
+      "story": "As a creator, I want to identify and retry an export failure so that I can finish without starting the project over.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Missing media or insufficient disk space is identified before complete export.",
+        "Failure shows completed files as partial and preserves the project for retry.",
+        "Complete status is shown only after required files are validated."
+      ],
+      "edge_cases": [],
+      "dependencies": [
+        "US-023"
+      ],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-024",
+        "SC-033"
+      ],
+      "requirement_ids": [
+        "R12"
+      ]
+    },
+    {
+      "story_id": "US-025",
+      "title": "Manage originals and caches safely",
+      "epic": "Projects",
+      "story": "As a creator, I want to relink media remove projects and clear derived caches separately so that I can control storage without losing originals.",
+      "user_type": "creator",
+      "priority": "must-have",
+      "requirement_source": [
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "Relinking restores the intended source and its edits after source identity validation.",
+        "Removing a project uses Trash and never deletes externally referenced originals.",
+        "Clearing caches does not silently remove data required by unfinished work."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-025",
+        "SC-034"
+      ],
+      "requirement_ids": [
+        "R02",
+        "R10",
+        "R13"
+      ]
+    },
+    {
+      "story_id": "US-026",
+      "title": "Reuse a creator style",
+      "epic": "Presets",
+      "story": "As a returning creator, I want to reuse colors framing and caption choices so that I can keep future videos consistent.",
+      "user_type": "returning creator",
+      "priority": "should-have",
+      "requirement_source": [
+        "research",
+        "inference"
+      ],
+      "acceptance_criteria": [
+        "A saved preset can be named and applied to another project.",
+        "Applying a preset does not alter source timing or discard locked manual content."
+      ],
+      "edge_cases": [],
+      "dependencies": [],
+      "analytics_or_success_events": [],
+      "scenario_ids": [
+        "SC-026"
+      ],
+      "requirement_ids": [
+        "R16"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2174 @@
+{
+  "schema_version": "2.0",
+  "project": "AI Recording and YouTube Editing Desktop App",
+  "status": "Draft",
+  "source_prd": "prd.md",
+  "note": "Provisional behavior inventory for founder review; no UX layout or visual design is approved.",
+  "screens": [
+    {
+      "screen_id": "070c409e-d742-55ee-8ea8-7e321d6eac3d",
+      "name": "Project library",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "library",
+      "description": "Record and Import entry points with no projects.",
+      "primary_actions": [
+        "Record",
+        "Import"
+      ],
+      "related_user_stories": [
+        "US-001",
+        "US-006"
+      ],
+      "related_scenarios": [
+        "SC-001",
+        "SC-006"
+      ],
+      "required_states": [
+        "empty"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "a03569f9-0288-5b9a-9ca7-629c2efd6680",
+      "name": "Project library",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "library",
+      "description": "Recent saved projects with edit and packaging status.",
+      "primary_actions": [
+        "Open project",
+        "Record",
+        "Import"
+      ],
+      "related_user_stories": [
+        "US-001"
+      ],
+      "related_scenarios": [
+        "SC-001"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "f3a23c59-a87d-5ec0-bfc3-8cf0714b57d7",
+      "name": "Interrupted work",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "library",
+      "description": "Recoverable recording and processing work with last checkpoint.",
+      "primary_actions": [
+        "Recover",
+        "Inspect available media"
+      ],
+      "related_user_stories": [
+        "US-005",
+        "US-020"
+      ],
+      "related_scenarios": [
+        "SC-028",
+        "SC-020"
+      ],
+      "required_states": [
+        "recovery"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "896abee5-e29e-5b07-9775-bb5aac7489ed",
+      "name": "Source setup",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "recording",
+      "description": "Display/window/area or camera-only setup, distinct A/B selectors, meters and formats.",
+      "primary_actions": [
+        "Choose source",
+        "Choose cameras",
+        "Continue"
+      ],
+      "related_user_stories": [
+        "US-003",
+        "US-004",
+        "US-008"
+      ],
+      "related_scenarios": [
+        "SC-003",
+        "SC-004"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "2fcc0da1-783d-5360-8606-8cb6bbf83427",
+      "name": "Capture permissions",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "recording",
+      "description": "Explain enabled-source permissions and alternatives.",
+      "primary_actions": [
+        "Open permission settings",
+        "Continue with available sources",
+        "Import"
+      ],
+      "related_user_stories": [
+        "US-002"
+      ],
+      "related_scenarios": [
+        "SC-002"
+      ],
+      "required_states": [
+        "permission"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "9efdc087-8fbf-5cb1-ac0e-6fd0dba67acb",
+      "name": "Capture preflight",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "recording",
+      "description": "Duplicate device, unsupported format/combination or insufficient storage.",
+      "primary_actions": [
+        "Change setup",
+        "Choose one camera"
+      ],
+      "related_user_stories": [
+        "US-003",
+        "US-004",
+        "US-024"
+      ],
+      "related_scenarios": [
+        "SC-031",
+        "SC-024"
+      ],
+      "required_states": [
+        "error"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "ee193af0-9a26-59dd-882f-a46e0441a0c2",
+      "name": "Recording countdown",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "recording",
+      "description": "Countdown with selected source status.",
+      "primary_actions": [
+        "Cancel countdown"
+      ],
+      "related_user_stories": [
+        "US-003",
+        "US-004"
+      ],
+      "related_scenarios": [
+        "SC-003",
+        "SC-004"
+      ],
+      "required_states": [
+        "processing"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "31146518-c1b1-5a58-ad57-1175fd42620f",
+      "name": "Recording controller",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "recording",
+      "description": "Elapsed time, live source health, pause and stop.",
+      "primary_actions": [
+        "Pause",
+        "Stop"
+      ],
+      "related_user_stories": [
+        "US-003",
+        "US-004"
+      ],
+      "related_scenarios": [
+        "SC-003",
+        "SC-004"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "af2d6494-fa85-538e-a7bc-8857ab692041",
+      "name": "Recording paused",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "recording",
+      "description": "Paused recording with resume and stop.",
+      "primary_actions": [
+        "Resume",
+        "Stop"
+      ],
+      "related_user_stories": [
+        "US-003"
+      ],
+      "related_scenarios": [
+        "SC-003"
+      ],
+      "required_states": [
+        "paused"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "37b779dc-507c-51be-a231-c1b7e32bc0bf",
+      "name": "Camera disconnected",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "recording",
+      "description": "Missing source and affected range, with working sources preserved.",
+      "primary_actions": [
+        "Continue with remaining sources",
+        "Stop safely"
+      ],
+      "related_user_stories": [
+        "US-005"
+      ],
+      "related_scenarios": [
+        "SC-005"
+      ],
+      "required_states": [
+        "partial"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "9734b1e9-f135-57c1-a38c-1aec1387c4cd",
+      "name": "Media inspection",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "import",
+      "description": "Validate imported video, audio and images before role assignment.",
+      "primary_actions": [
+        "Cancel import"
+      ],
+      "related_user_stories": [
+        "US-006"
+      ],
+      "related_scenarios": [
+        "SC-006"
+      ],
+      "required_states": [
+        "processing"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "fffb723d-e7a1-5809-a27d-808f73528eaf",
+      "name": "Unsupported media",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "import",
+      "description": "Explain corrupt/unsupported file and supported alternatives.",
+      "primary_actions": [
+        "Remove from import",
+        "Choose replacement"
+      ],
+      "related_user_stories": [
+        "US-006"
+      ],
+      "related_scenarios": [
+        "SC-006"
+      ],
+      "required_states": [
+        "error"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "6a19662d-4be3-564c-8b5b-036ca65f2202",
+      "name": "Source roles",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "sources",
+      "description": "Assign screen/A/B/voice/B-roll roles and review independent source coverage.",
+      "primary_actions": [
+        "Assign role",
+        "Select master voice",
+        "Review sync"
+      ],
+      "related_user_stories": [
+        "US-006",
+        "US-007",
+        "US-008"
+      ],
+      "related_scenarios": [
+        "SC-006",
+        "SC-007",
+        "SC-008"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "9f15bb57-922d-5cc7-a70c-2f2b73862b12",
+      "name": "Sync suggestion",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "sources",
+      "description": "Suggested offset, confidence, coverage and checkpoints.",
+      "primary_actions": [
+        "Confirm alignment",
+        "Adjust manually"
+      ],
+      "related_user_stories": [
+        "US-007"
+      ],
+      "related_scenarios": [
+        "SC-007",
+        "SC-032"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "c4360bc2-26a2-575e-a2ce-f029648e8460",
+      "name": "Manual sync and drift",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "sources",
+      "description": "Align independent footage and calibrate drift using real reference points.",
+      "primary_actions": [
+        "Set offset",
+        "Set second calibration point",
+        "Preview checkpoints"
+      ],
+      "related_user_stories": [
+        "US-007"
+      ],
+      "related_scenarios": [
+        "SC-007",
+        "SC-032"
+      ],
+      "required_states": [
+        "recovery"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "805f86ea-0626-584c-9c99-9138aed9a634",
+      "name": "Source relink",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "sources",
+      "description": "Locate missing media and validate source identity.",
+      "primary_actions": [
+        "Relink",
+        "Locate replacement"
+      ],
+      "related_user_stories": [
+        "US-025",
+        "US-024"
+      ],
+      "related_scenarios": [
+        "SC-025",
+        "SC-033"
+      ],
+      "required_states": [
+        "recovery"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "ca04206a-93af-5890-83b1-5d15410db8ac",
+      "name": "Editing brief",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "brief",
+      "description": "Audience, duration, pacing, motion intensity and optional supporting assets with defaults.",
+      "primary_actions": [
+        "Create first cut",
+        "Add assets"
+      ],
+      "related_user_stories": [
+        "US-009",
+        "US-014"
+      ],
+      "related_scenarios": [
+        "SC-009",
+        "SC-014"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "700b4500-ac4c-5e73-a6dd-f1799b63ce23",
+      "name": "Remote processing choice",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "processing",
+      "description": "Actual provider, outbound data, cost/purpose/retention and local alternatives.",
+      "primary_actions": [
+        "Allow selected processing",
+        "Use local/manual workflow"
+      ],
+      "related_user_stories": [
+        "US-019"
+      ],
+      "related_scenarios": [
+        "SC-019"
+      ],
+      "required_states": [
+        "permission"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "dbca704b-ab17-5cd3-90a9-b8ac872e8a41",
+      "name": "AI analysis",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "processing",
+      "description": "Named stages and actual completed work.",
+      "primary_actions": [
+        "Return to library",
+        "Cancel safely"
+      ],
+      "related_user_stories": [
+        "US-010",
+        "US-020"
+      ],
+      "related_scenarios": [
+        "SC-010",
+        "SC-020"
+      ],
+      "required_states": [
+        "processing"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "465b5a71-456d-500d-8e60-d7f32be67236",
+      "name": "Analysis taking longer",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "processing",
+      "description": "Continuing-work explanation after the slow threshold.",
+      "primary_actions": [
+        "Leave safely",
+        "Cancel safely"
+      ],
+      "related_user_stories": [
+        "US-020"
+      ],
+      "related_scenarios": [
+        "SC-029"
+      ],
+      "required_states": [
+        "slow"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "99cf0df2-7422-5bb0-91c1-b34132ffc4ba",
+      "name": "Provider or job failure",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "processing",
+      "description": "Failure scope, preserved work and current external-job status.",
+      "primary_actions": [
+        "Reconcile and retry",
+        "Continue manually"
+      ],
+      "related_user_stories": [
+        "US-020"
+      ],
+      "related_scenarios": [
+        "SC-020"
+      ],
+      "required_states": [
+        "error"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "510dcfe8-7295-55f4-850d-1c581b383168",
+      "name": "First cut ready",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Playable candidate with concise change summary and uncertain choices.",
+      "primary_actions": [
+        "Play edit",
+        "Review changes",
+        "Open packaging"
+      ],
+      "related_user_stories": [
+        "US-010",
+        "US-011",
+        "US-012"
+      ],
+      "related_scenarios": [
+        "SC-010",
+        "SC-011",
+        "SC-012"
+      ],
+      "required_states": [
+        "success"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "1fd73f99-b567-5d8f-ab88-2b29be574bc5",
+      "name": "Transcript and preview",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Aligned text, playback and distinct correction/cut actions.",
+      "primary_actions": [
+        "Correct text",
+        "Cut selection",
+        "Restore cut"
+      ],
+      "related_user_stories": [
+        "US-015",
+        "US-017"
+      ],
+      "related_scenarios": [
+        "SC-015",
+        "SC-017"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "bd37133a-b60a-52f1-a47b-ba27ce54b9f3",
+      "name": "Expanded timeline",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Source/view, zoom, asset, caption and audio lanes.",
+      "primary_actions": [
+        "Trim",
+        "Split",
+        "Change speed",
+        "Override angle"
+      ],
+      "related_user_stories": [
+        "US-012",
+        "US-013",
+        "US-015"
+      ],
+      "related_scenarios": [
+        "SC-012",
+        "SC-013",
+        "SC-015"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "ac0f2164-082b-5f7f-bd88-2a9c165b61f0",
+      "name": "Consequential change review",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Source/output locations for retakes, pauses and uncertain reordering.",
+      "primary_actions": [
+        "Accept suggestion",
+        "Keep original",
+        "Preview source"
+      ],
+      "related_user_stories": [
+        "US-011"
+      ],
+      "related_scenarios": [
+        "SC-011"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "f3c25bea-ade1-5e12-bba5-7818c1ea3e26",
+      "name": "Visual effect inspector",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Editable zoom, pan, layout, transition and callout settings.",
+      "primary_actions": [
+        "Adjust target",
+        "Change layout",
+        "Remove effect"
+      ],
+      "related_user_stories": [
+        "US-013"
+      ],
+      "related_scenarios": [
+        "SC-013"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "cf4579d1-c416-56ef-968b-4fda11340630",
+      "name": "Audio inspector",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Master voice, scratch audio mute, cleanup, levels and music.",
+      "primary_actions": [
+        "Select master",
+        "Compare cleanup",
+        "Set levels"
+      ],
+      "related_user_stories": [
+        "US-008"
+      ],
+      "related_scenarios": [
+        "SC-008"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "796b0bdb-4cdf-53d5-be52-c0d87eee9160",
+      "name": "B-roll selection",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Relevant supplied clips, ranges and origin.",
+      "primary_actions": [
+        "Insert",
+        "Replace",
+        "Remove"
+      ],
+      "related_user_stories": [
+        "US-014"
+      ],
+      "related_scenarios": [
+        "SC-014"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "af5b8534-7ccc-5153-84b8-6cda00e64ae9",
+      "name": "No suitable B-roll",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Clean existing shot with an explanation of available options.",
+      "primary_actions": [
+        "Keep clean shot",
+        "Add my footage"
+      ],
+      "related_user_stories": [
+        "US-014"
+      ],
+      "related_scenarios": [
+        "SC-014"
+      ],
+      "required_states": [
+        "empty"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "ab875560-8e35-5640-8b0a-1286f6e630d1",
+      "name": "Range locks",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Protected content and manual view overrides.",
+      "primary_actions": [
+        "Lock range",
+        "Unlock range",
+        "Request local revision"
+      ],
+      "related_user_stories": [
+        "US-016"
+      ],
+      "related_scenarios": [
+        "SC-016"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "9778d7dd-49e7-5f20-9c98-0884404eef3e",
+      "name": "Local revision",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Only selected range is being revised; unaffected edit remains preserved.",
+      "primary_actions": [
+        "Cancel revision"
+      ],
+      "related_user_stories": [
+        "US-016",
+        "US-020"
+      ],
+      "related_scenarios": [
+        "SC-016",
+        "SC-020"
+      ],
+      "required_states": [
+        "processing"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "225f3727-bd62-59d6-a77a-9867eefa6fab",
+      "name": "Revision comparison",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Before/after revision with affected range and undo.",
+      "primary_actions": [
+        "Apply revision",
+        "Keep previous"
+      ],
+      "related_user_stories": [
+        "US-016"
+      ],
+      "related_scenarios": [
+        "SC-016"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "b1c3f9f9-bb18-53ae-81c7-cde0d1f18dae",
+      "name": "Caption correction",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Text/style/timing review aligned to edited output.",
+      "primary_actions": [
+        "Correct spelling",
+        "Set style",
+        "Preview timing"
+      ],
+      "related_user_stories": [
+        "US-017"
+      ],
+      "related_scenarios": [
+        "SC-017"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "2b47e9dc-62c9-5ada-946a-f3446a918bfa",
+      "name": "Silent project",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Screen/action-based edit with no fabricated transcript.",
+      "primary_actions": [
+        "Edit visuals",
+        "Set intent",
+        "Continue to package"
+      ],
+      "related_user_stories": [
+        "US-006",
+        "US-010",
+        "US-017"
+      ],
+      "related_scenarios": [
+        "SC-030"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "62c51979-8eb8-529c-9ae8-5c1a74a22816",
+      "name": "Mask inspector",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Time-bounded target region and final-layout preview.",
+      "primary_actions": [
+        "Set range",
+        "Resize mask",
+        "Preview"
+      ],
+      "related_user_stories": [
+        "US-018"
+      ],
+      "related_scenarios": [
+        "SC-018"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "81ef1fed-6998-5e2e-8411-263a767ebb5e",
+      "name": "Missing source",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Missing source coverage and relink action without fabricated frames.",
+      "primary_actions": [
+        "Relink source",
+        "Inspect affected range"
+      ],
+      "related_user_stories": [
+        "US-025",
+        "US-024"
+      ],
+      "related_scenarios": [
+        "SC-025",
+        "SC-033"
+      ],
+      "required_states": [
+        "error"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "1da67649-1fe2-55eb-9b11-95cd86d250fd",
+      "name": "Autosaving changes",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "editor",
+      "description": "Visible save status during edit persistence.",
+      "primary_actions": [
+        "Continue editing"
+      ],
+      "related_user_stories": [
+        "US-001",
+        "US-016"
+      ],
+      "related_scenarios": [
+        "SC-001",
+        "SC-016"
+      ],
+      "required_states": [
+        "saving"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "a3a8e1d8-b654-5664-b046-468b2f930f70",
+      "name": "Packaging entry",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "packaging",
+      "description": "Explain thumbnail/title concepts from the current edit.",
+      "primary_actions": [
+        "Generate concepts",
+        "Use my thumbnail"
+      ],
+      "related_user_stories": [
+        "US-021"
+      ],
+      "related_scenarios": [
+        "SC-021"
+      ],
+      "required_states": [
+        "empty"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "91c22bc3-fcb1-5bb0-b501-debbdaf18469",
+      "name": "Generating concepts",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "packaging",
+      "description": "Thumbnail/title work can complete independently of video review.",
+      "primary_actions": [
+        "Return to edit",
+        "Cancel generation"
+      ],
+      "related_user_stories": [
+        "US-021",
+        "US-020"
+      ],
+      "related_scenarios": [
+        "SC-021",
+        "SC-020"
+      ],
+      "required_states": [
+        "processing"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "4d0e3c29-4b25-5686-b696-8330700f0099",
+      "name": "Concept selection",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "packaging",
+      "description": "Three distinct actual thumbnail/title pairs with rationale and small preview.",
+      "primary_actions": [
+        "Choose concept",
+        "Edit thumbnail",
+        "Edit title"
+      ],
+      "related_user_stories": [
+        "US-021"
+      ],
+      "related_scenarios": [
+        "SC-021"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "2d78cb84-82c3-5e00-a821-4a0dc6365b40",
+      "name": "Thumbnail editor",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "packaging",
+      "description": "Editable image/crop/text/color/layout composition.",
+      "primary_actions": [
+        "Change text",
+        "Change image",
+        "Save variant"
+      ],
+      "related_user_stories": [
+        "US-021"
+      ],
+      "related_scenarios": [
+        "SC-021"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "65b80ab1-5cb2-54af-9883-710207d61bba",
+      "name": "Packaging stale",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "packaging",
+      "description": "Material edit revision requires derived packaging/timing review.",
+      "primary_actions": [
+        "Refresh affected material",
+        "Review current pair"
+      ],
+      "related_user_stories": [
+        "US-022"
+      ],
+      "related_scenarios": [
+        "SC-022"
+      ],
+      "required_states": [
+        "recovery"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "f8fc1caf-1b6a-5c08-926d-6a50cc398d9e",
+      "name": "Generation unavailable",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "packaging",
+      "description": "Preserved titles and editable frame/template alternatives.",
+      "primary_actions": [
+        "Use frame composition",
+        "Retry permitted generation"
+      ],
+      "related_user_stories": [
+        "US-021",
+        "US-020"
+      ],
+      "related_scenarios": [
+        "SC-021",
+        "SC-020"
+      ],
+      "required_states": [
+        "partial"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "7b565b7d-590b-5904-b01f-f62433d1fe1d",
+      "name": "Package preflight",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "export",
+      "description": "Revision, destination, settings, selected pair, sidecars, asset/space checks.",
+      "primary_actions": [
+        "Choose folder",
+        "Export package"
+      ],
+      "related_user_stories": [
+        "US-023",
+        "US-024"
+      ],
+      "related_scenarios": [
+        "SC-023",
+        "SC-024"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "3acfd9d7-8704-5efd-bd62-1ad8066a5929",
+      "name": "Preflight blocked",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "export",
+      "description": "Missing source or insufficient space blocks complete export with recovery.",
+      "primary_actions": [
+        "Relink",
+        "Change folder",
+        "Free space"
+      ],
+      "related_user_stories": [
+        "US-024",
+        "US-025"
+      ],
+      "related_scenarios": [
+        "SC-024",
+        "SC-033"
+      ],
+      "required_states": [
+        "error"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "6b61dca8-cec6-5770-a213-e138ee75539d",
+      "name": "Package export",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "export",
+      "description": "Actual render/sidecar stages with safe cancellation and preserved project.",
+      "primary_actions": [
+        "Cancel export"
+      ],
+      "related_user_stories": [
+        "US-023",
+        "US-024"
+      ],
+      "related_scenarios": [
+        "SC-023",
+        "SC-024"
+      ],
+      "required_states": [
+        "processing"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "23dd68b8-00aa-599f-9f0c-0dd5636aa9e0",
+      "name": "Partial export",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "export",
+      "description": "Completed files and failed stages are clearly distinguished.",
+      "primary_actions": [
+        "Retry failed stage",
+        "Reveal partial files"
+      ],
+      "related_user_stories": [
+        "US-024"
+      ],
+      "related_scenarios": [
+        "SC-024"
+      ],
+      "required_states": [
+        "partial"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "7ab3d99e-508a-585f-904d-a5fd508e0a7f",
+      "name": "Complete package",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "export",
+      "description": "Validated output files and saved project revision.",
+      "primary_actions": [
+        "Reveal folder",
+        "Play exported video",
+        "Copy selected title"
+      ],
+      "related_user_stories": [
+        "US-023"
+      ],
+      "related_scenarios": [
+        "SC-023",
+        "SC-027"
+      ],
+      "required_states": [
+        "success"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "9bb7d4bb-c73f-54dd-986b-dc439b3c627d",
+      "name": "Processing and storage",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "settings",
+      "description": "Local project location, outbound-processing choices and cache use.",
+      "primary_actions": [
+        "Change permitted processing mode",
+        "Inspect caches"
+      ],
+      "related_user_stories": [
+        "US-019",
+        "US-025"
+      ],
+      "related_scenarios": [
+        "SC-019",
+        "SC-034"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "54014ed1-4742-5d01-a2e6-48e24fbab794",
+      "name": "Remove project and caches",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "settings",
+      "description": "Separate Trash action, derived-cache clearing and external-source protection.",
+      "primary_actions": [
+        "Move project to Trash",
+        "Clear derived caches"
+      ],
+      "related_user_stories": [
+        "US-025"
+      ],
+      "related_scenarios": [
+        "SC-025",
+        "SC-034"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    },
+    {
+      "screen_id": "181c05e7-4c99-545d-b886-db5982a39d6c",
+      "name": "Creator presets",
+      "surface": "product",
+      "type": "app-specific",
+      "route_or_context": "settings",
+      "description": "Name, save and apply reusable appearance choices.",
+      "primary_actions": [
+        "Save preset",
+        "Apply preset"
+      ],
+      "related_user_stories": [
+        "US-026"
+      ],
+      "related_scenarios": [
+        "SC-026"
+      ],
+      "required_states": [
+        "base"
+      ],
+      "viewports": [
+        "desktop"
+      ],
+      "wireframe": {
+        "status": "not-started",
+        "html": null,
+        "screenshots": {
+          "desktop": null
+        }
+      },
+      "copy": {
+        "status": "not-started",
+        "manifest_entry": null
+      },
+      "mockup": {
+        "status": "not-started",
+        "images": {
+          "desktop": null
+        }
+      }
+    }
+  ]
+}

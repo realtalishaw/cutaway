@@ -1,0 +1,79 @@
+{
+  "name": "@cutaway/desktop",
+  "productName": "Cutaway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Record once, get the first cut.",
+  "author": "Cutaway",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "start": "electron .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "e2e": "node e2e/journey.mjs && node e2e/firstcut.mjs && node e2e/package-ui.mjs && node e2e/capture-ui.mjs",
+    "package": "electron-builder --mac dir",
+    "icon": "node scripts/icon.mjs",
+    "e2e:real": "node e2e/real-capture.mjs"
+  },
+  "devDependencies": {
+    "@cutaway/ai": "workspace:*",
+    "@cutaway/core": "workspace:*",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource-variable/hanken-grotesk": "^5.3.0",
+    "@fontsource/anton": "^5.3.0",
+    "@fontsource/instrument-serif": "^5.3.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "45.3.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.0",
+    "mediabunny": "^1.65.2",
+    "playwright-core": "^1.65.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.7.0",
+    "vite": "^8.3.8",
+    "vitest": "^3.0.0",
+    "zustand": "^5.1.0"
+  },
+  "build": {
+    "appId": "studio.cutaway.app",
+    "productName": "Cutaway",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../native/.build/release/cutaway-native",
+        "to": "bin/cutaway-native"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "target": [
+        "dir"
+      ],
+      "icon": "build/icon.icns",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Cutaway records your camera as its own track when you turn a camera on.",
+        "NSMicrophoneUsageDescription": "Cutaway records your microphone as its own track when you turn it on.",
+        "NSSpeechRecognitionUsageDescription": "Cutaway transcribes your recordings on this Mac so you can edit by text.",
+        "NSScreenCaptureUsageDescription": "Cutaway records the screen, window or area you choose."
+      },
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "asar": true,
+    "npmRebuild": false,
+    "electronVersion": "45.3.1"
+  }
+}

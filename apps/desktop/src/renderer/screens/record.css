@@ -1,0 +1,76 @@
+.record { display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(900px 420px at 30% -10%, rgba(255, 90, 54, 0.09), transparent 62%); }
+.record-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+.record-main { min-width: 0; overflow: auto; padding: 28px 28px 24px 36px; display: flex; flex-direction: column; gap: 16px; }
+.record-rail { overflow: auto; padding: 22px 20px 24px; border-left: 1px solid var(--line); background: rgba(0, 0, 0, 0.16); display: flex; flex-direction: column; gap: 10px; }
+
+.stage { position: relative; aspect-ratio: 16 / 9; max-height: 52vh; width: 100%; margin: 0 auto; border-radius: var(--r-4); overflow: hidden; background: #0a0908; border: 1px solid var(--line-2); box-shadow: var(--shadow-2); display: flex; align-items: center; justify-content: center; }
+.stage > video { width: 100%; height: 100%; object-fit: contain; display: block; background: #0a0908; }
+.stage-shot { position: relative; max-width: 100%; max-height: 100%; overflow: hidden; }
+.stage-shot > img { width: 100%; height: 100%; object-fit: fill; display: block; }
+.stage.camera-only > video { object-fit: cover; }
+.stage-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--text-3); text-align: center; padding: 24px; }
+.stage-empty .perm-note { text-align: left; }
+.stage-tag { position: absolute; left: 12px; top: 12px; font-size: 10.5px; padding: 3px 8px; border-radius: 6px; background: rgba(10, 8, 7, 0.78); backdrop-filter: blur(8px); color: var(--text-2); }
+.cam-bubble { position: absolute; bottom: 14px; width: 17%; aspect-ratio: 1; border-radius: 22%; overflow: hidden; background: var(--bg-2); border: 1.5px solid rgba(255, 236, 214, 0.28); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55); display: grid; place-items: center; color: var(--text-3); }
+.cam-bubble.a { right: 14px; }
+.cam-bubble.b { left: 14px; }
+.cam-bubble.b.solo { left: auto; right: 14px; }
+.cam-bubble video { width: 100%; height: 100%; object-fit: cover; }
+.cam-bubble span { position: absolute; left: 6px; top: 5px; font-family: var(--mono); font-size: 10px; padding: 1px 5px; border-radius: 5px; background: rgba(10, 8, 7, 0.75); color: var(--text); }
+.region-veil { position: absolute; inset: 0; pointer-events: none; }
+.region-box { position: absolute; border: 1.5px dashed var(--accent-2); border-radius: 4px; box-shadow: 0 0 0 4000px rgba(8, 6, 5, 0.6); display: grid; place-items: center; transition: all 0.2s var(--ease); }
+.region-box span { font-size: 11px; padding: 2px 7px; border-radius: 5px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+.picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.pick { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 7px 7px 8px; text-align: left; border-radius: var(--r-2); border: 1px solid var(--line); background: var(--bg-1); min-width: 0; transition: border-color 0.14s, background 0.14s, transform 0.14s var(--ease); }
+.pick:hover { border-color: var(--line-3); transform: translateY(-1px); }
+.pick[aria-checked='true'] { border-color: var(--accent); background: var(--accent-wash); }
+.pick-thumb { width: 100%; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; background: #0a0908; display: grid; place-items: center; color: var(--text-4); margin-bottom: 3px; }
+.pick-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pick-name { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.region-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.num-field { display: flex; align-items: center; gap: 6px; }
+.num-field span { font-size: 10.5px; color: var(--text-3); }
+.num-field .input { width: 74px; height: 26px; font-size: 11.5px; padding: 0 7px; }
+
+.rec-section { display: flex; flex-direction: column; gap: 9px; padding: 13px 14px 14px; border-radius: var(--r-3); border: 1px solid var(--line); background: var(--bg-1); }
+.rec-section.off { background: transparent; }
+.rec-section.off header { color: var(--text-2); }
+.perm-note { display: flex; align-items: flex-start; gap: 9px; padding: 9px 11px; border-radius: var(--r-2); border: 1px solid var(--line-2); background: var(--bg-2); font-size: 12px; color: var(--text-2); }
+.perm-note > svg { margin-top: 2px; }
+.perm-note.denied { border-color: rgba(255, 111, 111, 0.3); background: var(--danger-wash); }
+.perm-note.denied > svg { color: var(--danger); }
+.link-btn { background: none; border: 0; padding: 0; color: var(--text); text-decoration: underline; text-underline-offset: 2px; font-size: inherit; }
+
+.record-bar { flex: none; display: flex; align-items: center; gap: 12px; padding: 14px 20px 14px 36px; border-top: 1px solid var(--line); background: var(--bg-1); }
+.record-bar .btn.primary { min-width: 190px; }
+
+.countdown { position: fixed; inset: 0; z-index: 250; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: rgba(10, 8, 7, 0.86); backdrop-filter: blur(14px); animation: fade 0.18s var(--ease); }
+.countdown-num { font-size: 260px; line-height: 0.9; color: var(--accent-2); animation: count 0.95s var(--ease) both; }
+@keyframes count { from { opacity: 0; transform: scale(1.35); } 30% { opacity: 1; transform: scale(1); } 85% { opacity: 1; } to { opacity: 0.25; transform: scale(0.94); } }
+
+/* Covers the whole window, title bar included, so nothing can navigate away mid-take. */
+.rec-live { position: fixed; inset: 0; z-index: 150; display: grid; place-items: center; -webkit-app-region: drag; background: radial-gradient(700px 420px at 50% 30%, rgba(255, 90, 54, 0.14), transparent 65%), var(--bg); }
+.rec-live-card { -webkit-app-region: no-drag; width: min(620px, calc(100vw - 64px)); display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 40px 36px 30px; }
+.rec-live-card .banner { width: 100%; text-align: left; }
+.rec-clock { font-size: 92px; font-weight: 300; letter-spacing: -0.04em; line-height: 1; }
+
+/* ───────── floating controller window ───────── */
+.controller { height: 100vh; display: grid; place-items: center; padding: 8px; }
+.controller-pill { -webkit-app-region: drag; width: 100%; height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 10px 0 18px; border-radius: 28px; background: rgba(24, 20, 18, 0.94); border: 1px solid rgba(255, 236, 214, 0.16); box-shadow: 0 1px 0 rgba(255, 240, 220, 0.07) inset, 0 10px 24px rgba(0, 0, 0, 0.5); color: var(--text); }
+.controller-pill .time { font-size: 17px; font-weight: 500; min-width: 78px; }
+.controller-pill .chips { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; }
+.controller-pill .chip { width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; background: rgba(155, 214, 143, 0.13); color: var(--ok); flex: none; position: relative; }
+.controller-pill .chip.lost { background: var(--danger-wash); color: var(--danger); }
+.controller-pill .chip.lost::after { content: ''; position: absolute; left: 4px; right: 4px; top: 11px; height: 1.5px; background: var(--danger); transform: rotate(-38deg); }
+.controller-pill .chip.idle { background: var(--bg-3); color: var(--text-3); }
+.controller-pill .level { width: 46px; flex: none; display: flex; }
+.controller-pill button { -webkit-app-region: no-drag; }
+.controller-pill .ctl { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--bg-3); color: var(--text); display: grid; place-items: center; transition: background 0.14s, transform 0.08s; }
+.controller-pill .ctl:hover { background: var(--bg-4); }
+.controller-pill .ctl:active { transform: scale(0.94); }
+.controller-pill .ctl.stop { background: var(--accent); border-color: transparent; color: var(--accent-ink); box-shadow: 0 4px 16px rgba(255, 90, 54, 0.35); }
+.controller-pill .ctl.stop:hover { background: var(--accent-2); }
+.controller-pill .ctl:disabled { opacity: 0.45; }
+
+@media (max-width: 1180px) { .record-layout { grid-template-columns: minmax(0, 1fr) 300px; } }

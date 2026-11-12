@@ -1,0 +1,91 @@
+import type { CSSProperties } from 'react';
+
+const PATHS = {
+  record: '<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/>',
+  import: '<path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/>',
+  play: '<path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/>',
+  pause: '<rect x="7" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="13.4" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none"/>',
+  stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" stroke="none"/>',
+  screen: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20h6M12 16.5V20"/>',
+  window: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/>',
+  region: '<path d="M4 8V6a2 2 0 012-2h2M16 4h2a2 2 0 012 2v2M20 16v2a2 2 0 01-2 2h-2M8 20H6a2 2 0 01-2-2v-2"/>',
+  camera: '<rect x="3" y="6.5" width="13" height="11" rx="2.5"/><path d="M16 10.5l5-3v9l-5-3z"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0013 0M12 18v3"/>',
+  speaker: '<path d="M4 9.5h3l5-4v13l-5-4H4zM16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11"/>',
+  scissors: '<circle cx="6.5" cy="7" r="2.5"/><circle cx="6.5" cy="17" r="2.5"/><path d="M8.6 8.4L20 18M8.6 15.6L20 6"/>',
+  zoom: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M10.5 8v5M8 10.5h5"/>',
+  layout: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><rect x="13" y="12" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/>',
+  split: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M14 4v16"/>',
+  text: '<path d="M5 6V4.5h14V6M12 4.5v15M9 19.5h6"/>',
+  broll: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M3 15h18M8 5v4M16 5v4M8 15v4M16 15v4"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 018 0v2.5"/>',
+  unlock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 017.5-2"/>',
+  mask: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15l10-6M7 11l5-3M12 16l5-3"/>',
+  undo: '<path d="M8 7L4 11l4 4M4 11h10a5.5 5.5 0 010 11h-2"/>',
+  redo: '<path d="M16 7l4 4-4 4M20 11H10a5.5 5.5 0 000 11h2"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  dots: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  chevron: '<path d="M9 6l6 6-6 6"/>',
+  chevronDown: '<path d="M6 9l6 6 6-6"/>',
+  back: '<path d="M14 6l-6 6 6 6"/>',
+  sparkle: '<path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.500l5.1-1.9zM18.5 15.500l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" fill="currentColor" stroke="none"/>',
+  pencil: '<path d="M4 20l1-4.500L15.500 5a2.100 2.100 0 013 3L8 18.500zM13.500 7l3 3"/>',
+  warn: '<path d="M12 4l9 15.500H3zM12 10v4.500M12 17.300v.2"/>',
+  info: '<circle cx="12" cy="12" r="8.500"/><path d="M12 11v5.500M12 7.800v.2"/>',
+  folder: '<path d="M3.500 7a2 2 0 012-2h4l2 2.500h7a2 2 0 012 2V17a2 2 0 01-2 2h-13a2 2 0 01-2-2z"/>',
+  trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12.500h8L17 7M10.500 11v5M13.500 11v5"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.500M12 18.500V21M3 12h2.500M18.500 12H21M5.600 5.600l1.800 1.800M16.600 16.600l1.800 1.800M5.600 18.400l1.800-1.800M16.600 7.400l1.800-1.800"/>',
+  link: '<path d="M10 14a4 4 0 005.700 0l3-3a4 4 0 00-5.700-5.700l-1 1M14 10a4 4 0 00-5.700 0l-3 3A4 4 0 0011 18.700l1-1"/>',
+  sync: '<path d="M4.500 12a7.500 7.500 0 0113-5.100L20 9.500M19.500 12a7.500 7.500 0 01-13 5.100L4 14.500M20 4.500v5h-5M4 19.500v-5h5"/>',
+  wave: '<path d="M4 12h1.500M8 8v8M11.500 5v14M15 9v6M18.500 11v2M20.500 12H22"/>',
+  image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.500" cy="10" r="1.600"/><path d="M4 17l5-4.500 3.500 3 3-2.500 4.500 4"/>',
+  eye: '<path d="M2.500 12s3.500-6.500 9.500-6.500 9.500 6.500 9.500 6.500-3.500 6.500-9.500 6.500S2.500 12 2.500 12z"/><circle cx="12" cy="12" r="2.800"/>',
+  eyeOff: '<path d="M4 4l16 16M9.900 5.800A9.700 9.700 0 0112 5.500c6 0 9.500 6.500 9.500 6.500a15.500 15.500 0 01-3 3.700M6.300 7.500A15 15 0 002.500 12S6 18.500 12 18.500a9.300 9.300 0 003.700-.8"/>',
+  cursor: '<path d="M6 4l12 7-5 1.500L10.500 18z"/>',
+  speed: '<path d="M4.500 16a8 8 0 1115 0M12 13l4-4.500"/><circle cx="12" cy="13.500" r="1.300" fill="currentColor" stroke="none"/>',
+  captions: '<rect x="3" y="5" width="18" height="14" rx="2.500"/><path d="M7 14.500h4M13 14.500h4M7 11h2.500M11.500 11H17"/>',
+  music: '<path d="M9 18V6l10-2v11"/><circle cx="6.500" cy="18" r="2.500"/><circle cx="16.500" cy="15.500" r="2.500"/>',
+  upload: '<path d="M12 16V5m0 0l-4 4m4-4l4 4M5 19h14"/>',
+  history: '<path d="M4.500 12a7.500 7.500 0 107.500-7.500A7.600 7.600 0 006 7.500L4.500 9M4.500 5v4h4M12 8.500V12l2.500 2"/>',
+  user: '<circle cx="12" cy="8.500" r="3.500"/><path d="M5 19.500a7 7 0 0114 0"/>',
+  palette: '<path d="M12 4a8 8 0 100 16c1.300 0 1.800-1 1.300-2-.600-1.300.2-2.500 1.700-2.500H17a3 3 0 003-3C20 7.500 16.500 4 12 4z"/><circle cx="8.500" cy="10.500" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="15.500" cy="10.500" r="1" fill="currentColor" stroke="none"/>',
+  shield: '<path d="M12 3.500l7 2.500v5.500c0 4.500-3 7.500-7 9-4-1.500-7-4.500-7-9V6z"/>',
+  expand: '<path d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4"/>',
+  external: '<path d="M14 5h5v5M19 5l-8 8M11 7H6a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1v-5"/>',
+  clock: '<circle cx="12" cy="12" r="8.500"/><path d="M12 7.500V12l3 2"/>',
+  film: '<path d="M5 4h14v16H5zM9 4v16M15 4v16M5 8h4M5 12h4M5 16h4M15 8h4M15 12h4M15 16h4"/>',
+} as const;
+
+export type IconName = keyof typeof PATHS;
+
+export function Icon({ name, size = 16, style, className }: { name: IconName; size?: number; style?: CSSProperties; className?: string }) {
+  return (
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      style={{ flex: 'none', ...style }}
+      dangerouslySetInnerHTML={{ __html: PATHS[name] }}
+    />
+  );
+}
+
+/** The mark: two frames, the second cut away at an angle. */
+export function Logo({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden style={{ flex: 'none' }}>
+      <rect x="2" y="6" width="17" height="20" rx="4" fill="none" stroke="currentColor" strokeWidth="2.2" opacity="0.55" />
+      <path d="M15 6h11a4 4 0 014 4v12a4 4 0 01-4 4H9z" fill="var(--accent)" />
+    </svg>
+  );
+}

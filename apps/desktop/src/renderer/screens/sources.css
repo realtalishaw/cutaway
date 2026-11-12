@@ -1,0 +1,46 @@
+.sources { position: relative; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(800px 380px at 88% -6%, rgba(127, 214, 194, 0.06), transparent 60%); }
+.sources > .page-inner { overflow: auto; width: 100%; }
+.sources-scroll { flex: 1; min-height: 0; overflow: auto; }
+.sources-scroll .page-inner { padding-bottom: 40px; max-width: 1040px; }
+.sources-bar { flex: none; display: flex; align-items: center; gap: 12px; padding: 14px 28px 14px 40px; border-top: 1px solid var(--line); background: var(--bg-1); }
+
+.source-row { display: flex; gap: 14px; padding: 14px 16px; border-radius: var(--r-3); border: 1px solid var(--line); background: var(--bg-1); transition: border-color 0.16s; }
+.source-row:hover { border-color: var(--line-2); }
+.source-row.missing { border-color: rgba(255, 111, 111, 0.28); }
+.source-icon { width: 38px; height: 38px; flex: none; border-radius: 11px; display: grid; place-items: center; background: var(--bg); border: 1px solid var(--line-2); color: var(--text-2); }
+.source-name { font-weight: 620; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.role-select { width: 138px; height: 26px; font-size: 12px; }
+
+.cov { display: flex; flex-direction: column; gap: 4px; }
+.cov-bar { position: relative; height: 10px; border-radius: 5px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
+.cov-bar.excluded { border-style: dashed; border-color: var(--line-3); background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255, 236, 214, 0.04) 6px 12px); }
+.cov-seg { position: absolute; top: 0; bottom: 0; background: linear-gradient(180deg, rgba(127, 214, 194, 0.85), rgba(127, 214, 194, 0.55)); border-radius: 3px; min-width: 2px; }
+.cov-seg.lead { background: linear-gradient(180deg, rgba(243, 236, 227, 0.75), rgba(243, 236, 227, 0.45)); }
+.cov-gap { position: absolute; top: 0; bottom: 0; min-width: 3px; background: repeating-linear-gradient(135deg, rgba(255, 111, 111, 0.85) 0 3px, rgba(255, 111, 111, 0.25) 3px 6px); }
+
+.audio-panel { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.audio-row { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 9px; font-size: 12.5px; min-height: 36px; }
+.audio-row.master { background: rgba(155, 214, 143, 0.06); }
+.audio-row .field { gap: 0; }
+.radio { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--line-3); background: transparent; padding: 0; flex: none; display: grid; place-items: center; transition: border-color 0.14s; }
+.radio:hover:not(:disabled) { border-color: var(--text-2); }
+.radio:disabled { opacity: 0.3; }
+.radio[aria-checked='true'] { border-color: var(--ok); }
+.radio[aria-checked='true']::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+
+.inspection { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.inspection.has-rejects { border-color: rgba(245, 200, 75, 0.3); }
+.reject { display: flex; gap: 10px; padding: 9px 11px; border-radius: var(--r-2); background: var(--danger-wash); border: 1px solid rgba(255, 111, 111, 0.22); }
+
+.sync-players { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.sync-player { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sync-screen { position: relative; aspect-ratio: 16 / 9; border-radius: var(--r-2); overflow: hidden; background: #0a0908; border: 1px solid var(--line-2); }
+.sync-screen video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.sync-audio { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; align-items: center; justify-content: center; color: var(--text-3); background: #0a0908; }
+.sync-label { position: absolute; left: 8px; top: 8px; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: rgba(10, 8, 7, 0.78); backdrop-filter: blur(6px); }
+.sync-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-2); overflow: hidden; }
+.sync-stats > div { background: var(--bg); padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; min-height: 66px; }
+.sync-stats b { font-size: 14px; font-weight: 600; }
+.sync-tools { display: flex; flex-direction: column; gap: 8px; }
+.sync-tool { display: flex; flex-direction: column; gap: 7px; padding: 11px 13px; border-radius: var(--r-2); border: 1px solid var(--line); background: var(--bg-2); }
+.sync-tool b { font-size: 12.5px; font-weight: 620; }
