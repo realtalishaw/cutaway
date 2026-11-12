@@ -90,3 +90,13 @@ recorded media, replaceable caches, rolling backups). Exports go to
 `~/Movies/Cutaway Exports`. Removing a project moves only that folder to the
 Trash; files you imported by reference are never touched. Nothing is uploaded
 to YouTube.
+
+## Screens
+
+Captured from the running app with generated test footage.
+
+![Library](docs/screenshots/01-library.png)
+![Editor](docs/screenshots/02-editor.png)
+![Package](docs/screenshots/03-package.png)
+![Export](docs/screenshots/04-export.png)
+![Sync review](docs/screenshots/05-sync.png)
