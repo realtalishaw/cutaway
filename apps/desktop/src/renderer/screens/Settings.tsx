@@ -14,8 +14,8 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'processing', label: 'Processing', icon: 'shield' },
   { id: 'recording', label: 'Recording', icon: 'record' },
   { id: 'access', label: 'Accessibility', icon: 'eye' },
-  { id: 'shortcuts', label: 'Shortcuts', icon: 'text' },
-  { id: 'presets', label: 'Style presets', icon: 'palette' },
+  { id: 'shortcuts', label: 'Shortcuts', icon: 'command' },
+  { id: 'presets', label: 'Presets', icon: 'palette' },
   { id: 'about', label: 'About', icon: 'info' },
 ];
 
@@ -191,13 +191,10 @@ export function Settings() {
     <div className="page settings">
       <div className="page-inner settings-inner">
         <nav className="set-nav" aria-label="Settings sections">
-          <div className="display h2" style={{ margin: '0 0 18px 10px' }}>
-            Settings
-          </div>
           {TABS.map((t) => (
             <button key={t.id} aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}>
-              <Icon name={t.icon} size={14} />
-              {t.label}
+              <Icon name={t.icon} size={20} />
+              <span>{t.label}</span>
             </button>
           ))}
         </nav>
@@ -459,7 +456,7 @@ export function Settings() {
             <Section title="Keyboard shortcuts">
               {SHORTCUTS.map((g) => (
                 <div key={g.group} className="col" style={{ gap: 0 }}>
-                  <div className="eyebrow" style={{ margin: '6px 0 6px' }}>
+                  <div className="set-title" style={{ margin: '6px 0 6px' }}>
                     {g.group}
                   </div>
                   <table className="keys">
@@ -540,8 +537,8 @@ export function Settings() {
             <>
               <Section title="Cutaway">
                 <div className="row" style={{ gap: 14 }}>
-                  <div className="display h1" style={{ fontSize: 40 }}>
-                    Cut<em>away</em>
+                  <div className="display h2">
+                    Cutaway
                   </div>
                   <div className="tiny dim mono">
                     version {info?.version ?? '—'}

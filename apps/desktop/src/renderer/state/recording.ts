@@ -67,6 +67,10 @@ export async function takeToSources(manifest: TakeManifest, takeDir: string, pro
       // Only the screen can carry a cursor; cameras never have one burned in.
       cursorBaked: s.role === 'screen' ? !!s.cursorBaked : false,
       cursorFile: s.role === 'screen' && !s.cursorBaked && manifest.cursor?.file ? `${rel}/${manifest.cursor.file}` : undefined,
+      // Keyboard telemetry (shortcuts and typing ticks, never characters) belongs to the screen source.
+      keysFile: s.role === 'screen' && manifest.keys?.file ? `${rel}/${manifest.keys.file}` : undefined,
+      // A USB iPhone / iPad recorded as the screen: no cursor data, optional device frame.
+      deviceKind: s.role === 'screen' ? (s.deviceKind ?? undefined) : undefined,
       pointWidth: s.pointWidth,
       pointHeight: s.pointHeight,
       sync: { offset: s.start, rate: 1, method: 'recorded-clock', confidence: null, status: 'aligned', checkpoints: [], calibration: [], confirmedByCreator: true },

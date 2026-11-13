@@ -6,10 +6,8 @@ import { Preview, type PreviewPoint } from '../engine/Preview';
 import { Icon } from '../ui/icons';
 import { Button, Segmented, Slider } from '../ui/kit';
 import { Timeline } from './editor/Timeline';
-import { Transcript } from './editor/Transcript';
-import { History, Review } from './editor/Review';
 import { Inspector } from './editor/Inspector';
-import { cutRange, lockRange, patchItem, playheadSource, removeSelected, seekSource, selectedRange, splitSelected } from './editor/ops';
+import { addMask, addOverlay, addZoom, cutRange, lockRange, patchItem, playheadSource, removeSelected, seekSource, selectedRange, setLayout, splitSelected } from './editor/ops';
 import './editor/editor.css';
 
 type Pick = 'zoom' | 'mask' | 'callout' | null;
@@ -124,10 +122,68 @@ function CropPopover() {
   );
 }
 
-function Controls({ zoom, onZoom, onScissors }: { zoom: number; onZoom(z: number): void; onScissors(): void }) {
-  const playing = usePlayback((s) => s.playing);
+function TopControls() {
   const project = useShownProject();
   const expanded = project.ui.expandedTimeline;
+  return (
+    <div className="ed-top">
+      <div className="row" style={{ gap: 8 }}>
+        <AspectMenu />
+        <CropPopover />
+      </div>
+      <div className="row" style={{ gap: 8 }}>
+        <button className={`btn${expanded ? ' on' : ''}`} onClick={() => useApp.getState().patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: !p.ui.expandedTimeline } }))} title="Show or hide the layout, graphics and mask timelines (⌘T)" aria-pressed={expanded}>
+          {expanded ? '3 visible timelines' : '1 visible timeline'} <Icon name="chevronDown" size={13} style={{ color: 'var(--text-3)' }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Floating tool pill on the left edge of the stage: add a zoom, a camera layout or a mask at the playhead. */
+function PreviewToolbar({ pickMask }: { pickMask(): void }) {
+  const project = useShownProject();
+  const hasScreen = project.sources.some((s) => s.role === 'screen');
+  const hasCam = project.sources.some((s) => s.role === 'cameraA' || s.role === 'cameraB');
+  const range = (len: number) => {
+    const t = playheadSource(project);
+    return { start: t, end: Math.min(project.duration, t + len) };
+  };
+  const tool = (icon: Parameters<typeof Icon>[0]['name'], label: string, run: () => void) => (
+    <button key={label} className="tbtn" title={label} aria-label={label} onClick={run}>
+      <Icon name={icon} size={19} />
+    </button>
+  );
+  const groups = [
+    hasScreen ? [tool('zoom', 'Add zoom at the playhead', () => addZoom(range(3)))] : [],
+    hasCam
+      ? [
+          tool('camera', 'Fullscreen camera from the playhead', () => setLayout(range(4), 'camera')),
+          ...(hasScreen ? [tool('split', 'Split screen from the playhead', () => setLayout(range(4), 'split')), tool('layout', 'Camera overlay from the playhead', () => setLayout(range(4), 'overlay')), tool('screen', 'Screen only from the playhead', () => setLayout(range(4), 'screen'))] : []),
+        ]
+      : [],
+    hasScreen
+      ? [
+          tool('mask', 'Hide sensitive content: drag over it on the preview', () => (addMask(range(5), 'screen'), pickMask())),
+          tool('text', 'Add a callout at the playhead', () => addOverlay(range(4), 'callout', 'Callout')),
+        ]
+      : [],
+  ].filter((g) => g.length);
+  if (!groups.length) return null;
+  return (
+    <div className="ed-tools" role="toolbar" aria-label="Add to the video">
+      {groups.map((g, i) => (
+        <div key={i} className="ed-tools-group">
+          {g}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Transport({ zoom, onZoom, onScissors, cutting }: { zoom: number; onZoom(z: number): void; onScissors(): void; cutting: boolean }) {
+  const playing = usePlayback((s) => s.playing);
+  const project = useShownProject();
   const jump = (dir: 1 | -1) => {
     const map = timeMapOf(project);
     const t = usePlayback.getState().time;
@@ -138,9 +194,8 @@ function Controls({ zoom, onZoom, onScissors }: { zoom: number; onZoom(z: number
   };
   return (
     <div className="ed-controls">
-      <div className="row ed-controls-left">
-        <AspectMenu />
-        <CropPopover />
+      <div className="row">
+        <button className={`tbtn${cutting ? ' on' : ''}`} onClick={onScissors} title="Cut: removes the selected range, or marks in and out points at the playhead" aria-label="Cut" aria-pressed={cutting}><Icon name="scissors" size={19} /></button>
       </div>
       <div className="row ed-transport">
         <Timecode />
@@ -150,10 +205,8 @@ function Controls({ zoom, onZoom, onScissors }: { zoom: number; onZoom(z: number
         <Timecode total />
       </div>
       <div className="row ed-controls-right">
-        <button className="tbtn" onClick={onScissors} title="Cut: removes the selected range, or marks in and out points at the playhead" aria-label="Cut"><Icon name="scissors" size={19} /></button>
-        <button className={`tbtn${expanded ? ' on' : ''}`} onClick={() => useApp.getState().patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: !p.ui.expandedTimeline } }))} title="Show or hide the layout and graphics tracks (⌘T)" aria-label="More tracks" aria-pressed={expanded}><Icon name="layout" size={18} /></button>
-        <Icon name="width" size={16} style={{ color: 'var(--text-3)', marginLeft: 4 }} />
-        <input className="slider" style={{ width: 84, ['--p' as string]: `${zoom * 100}%` }} type="range" min={0} max={1} step={0.01} value={zoom} onChange={(e) => onZoom(Number(e.target.value))} aria-label="Timeline zoom" title="Timeline zoom" />
+        <Icon name="width" size={16} style={{ color: 'var(--text-3)' }} />
+        <input className="slider grey" style={{ width: 110, ['--p' as string]: `${zoom * 100}%` }} type="range" min={0} max={1} step={0.01} value={zoom} onChange={(e) => onZoom(Number(e.target.value))} aria-label="Timeline zoom" title="Timeline zoom" />
       </div>
     </div>
   );
@@ -185,15 +238,31 @@ export function Editor() {
   const project = useShownProject();
   const selection = useApp((s) => s.selection);
   const comparing = useApp((s) => !!s.comparison);
-  const drawer = useApp((s) => s.panels.drawer);
   const inspector = useApp((s) => s.panels.inspector);
-  const setPanels = useApp((s) => s.setPanels);
   const [zoom, setZoom] = useState(0);
   const [pick, setPick] = useState<Pick>(null);
   const [revising, setRevising] = useState(false);
   const [mark, setMark] = useState<number | null>(null);
   const dragStart = useRef<PreviewPoint | null>(null);
-  const openSuggestions = project.edit.suggestions.filter((s) => s.status === 'open').length;
+
+  // Keep the library card's poster current: grab the preview when leaving the editor.
+  useEffect(
+    () => () => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.preview-canvas');
+      const path = useApp.getState().projectPath;
+      if (!canvas || !path || canvas.width < 16) return;
+      try {
+        const small = document.createElement('canvas');
+        small.width = 640;
+        small.height = Math.round((640 * canvas.height) / canvas.width);
+        small.getContext('2d')!.drawImage(canvas, 0, 0, small.width, small.height);
+        small.toBlob((blob) => blob && void blob.arrayBuffer().then((b) => window.cutaway.library.savePoster(path, new Uint8Array(b)).catch(() => {})), 'image/jpeg', 0.82);
+      } catch {
+        /* a poster is a nicety; never block navigation on it */
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const onRevise = (e: Event) => {
@@ -224,10 +293,21 @@ export function Editor() {
     const onKey = (e: KeyboardEvent) => {
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const app = useApp.getState();
       const p = app.project;
       if (!p || app.comparison) return;
+      // ⌃L camera, ⌃S screen, ⌃B both: add a layout at the playhead
+      if (e.ctrlKey && !e.metaKey && !e.altKey && ['l', 's', 'b'].includes(e.key.toLowerCase())) {
+        const t = playheadSource(p);
+        const r = selectedRange(app.selection) ?? { start: t, end: Math.min(p.duration, t + 4) };
+        const hasCam = p.sources.some((x) => x.role === 'cameraA' || x.role === 'cameraB');
+        const hasScreen = p.sources.some((x) => x.role === 'screen');
+        const mode = e.key.toLowerCase() === 'l' ? 'camera' : e.key.toLowerCase() === 's' ? 'screen' : 'overlay';
+        if ((mode !== 'screen' && !hasCam) || (mode !== 'camera' && !hasScreen)) return;
+        e.preventDefault();
+        return setLayout(r, mode);
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const fps = p.edit.appearance.output.fps;
       const pb = usePlayback.getState();
       switch (e.key) {
@@ -321,43 +401,25 @@ export function Editor() {
     }
   };
   return (
-    <div className={`editor${drawer ? ' with-drawer' : ''}${inspector ? '' : ' no-inspector'}`}>
-      {drawer ? (
-        <aside className="ed-drawer" aria-label="Transcript and review">
-          <div className="ed-drawer-head">
-            <Segmented
-              full
-              value={drawer}
-              onChange={(v) => setPanels({ drawer: v })}
-              options={[
-                { value: 'transcript', label: 'Transcript' },
-                { value: 'review', label: openSuggestions ? `Review · ${openSuggestions}` : 'Review' },
-                { value: 'history', label: 'History' },
-              ]}
-            />
-            <Button variant="ghost" icon="x" onClick={() => setPanels({ drawer: null })} aria-label="Close panel" />
-          </div>
-          {drawer === 'transcript' ? <Transcript /> : drawer === 'review' ? <Review /> : <History />}
-        </aside>
-      ) : null}
-
+    <div className={`editor${inspector ? '' : ' no-inspector'}`}>
       <section className="ed-stage">
+        <TopControls />
         {!project.firstCut && !comparing ? (
           <div className="stage-note">
             <span className="row" style={{ gap: 8 }}>
-              <Icon name="sparkle" size={14} style={{ color: 'var(--ai)' }} />
+              <Icon name="sparkle" size={14} style={{ color: 'var(--accent-2)' }} />
               <span className="muted">This is the raw recording. Edit by hand, or let Cutaway assemble a first cut.</span>
             </span>
-            <Button size="sm" variant="ai" onClick={() => useApp.getState().setView('brief')}>Create first cut</Button>
+            <Button size="sm" onClick={() => useApp.getState().setView('brief')}>Create first cut</Button>
           </div>
         ) : null}
         <CompareBar />
         <div className="stage-preview">
+          {!comparing ? <PreviewToolbar pickMask={() => setPick('mask')} /> : null}
           <Preview onPointer={pick ? onPointer : undefined} cursorStyle={pick ? 'crosshair' : undefined} selectedMaskId={selection?.kind === 'mask' ? selection.id : null} />
           {pick ? (
             <div className="pick-hint">
-              <Icon name={pick === 'mask' ? 'region' : 'cursor'} size={13} />
-              {pick === 'mask' ? 'Drag a rectangle over what to hide' : pick === 'zoom' ? 'Click the point to zoom into' : 'Click where the callout should sit'}
+              {pick === 'mask' ? 'Drag to select the area for the new mask' : pick === 'zoom' ? 'Click the point to zoom into' : 'Click where the callout should sit'}
               <button className="btn ghost sm" onClick={() => setPick(null)}>Done</button>
             </div>
           ) : null}
@@ -368,13 +430,13 @@ export function Editor() {
           ) : null}
           {selRange && !pick ? (
             <div className="pick-hint">
-              <Icon name="region" size={13} /> {fmtTime(selRange.start, true)} – {fmtTime(selRange.end, true)} selected
+              {fmtTime(selRange.start, true)} – {fmtTime(selRange.end, true)} selected
               <button className="btn sm" onClick={() => cutRange(selRange)}><Icon name="scissors" size={12} /> Cut</button>
               <button className="btn ghost sm" onClick={() => lockRange(selRange)}><Icon name="lock" size={12} /> Keep</button>
             </div>
           ) : null}
         </div>
-        <Controls zoom={zoom} onZoom={setZoom} onScissors={scissors} />
+        <Transport zoom={zoom} onZoom={setZoom} onScissors={scissors} cutting={mark !== null} />
       </section>
 
       {inspector ? <Inspector pickTarget={setPick} /> : null}

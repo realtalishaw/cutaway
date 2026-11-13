@@ -8,10 +8,10 @@ assembles a real, playable first cut, lets you correct it by text, timeline or
 plain-language request, and exports one folder with the video, thumbnail,
 title, captions and chapters.
 
-It is an independent build with its own name, design and code. It reproduces
-the useful functional baseline of Screen Studio from public documentation; it
-contains no Screen Studio code or assets and does not read Screen Studio
-projects.
+It is an independent build with its own name, icons, artwork and code. Its
+layout and controls deliberately follow Screen Studio's editor, studied from
+public documentation and screenshots; it contains no Screen Studio code or
+assets and does not read Screen Studio projects.
 
 ## Run it
 
@@ -73,7 +73,7 @@ still yours.
 ## Tests
 
 ```bash
-pnpm test                               # 71 unit tests (core, AI layer, jobs)
+pnpm test                               # 91 unit tests (core, AI layer, jobs)
 ./fixtures/make.sh                      # generate test footage (needs ffmpeg + say)
 pnpm --filter @cutaway/desktop build
 pnpm --filter @cutaway/desktop e2e      # journeys through the real app and helper
@@ -97,6 +97,7 @@ Captured from the running app with generated test footage.
 
 ![Library](docs/screenshots/01-library.png)
 ![Editor](docs/screenshots/02-editor.png)
-![Package](docs/screenshots/03-package.png)
-![Export](docs/screenshots/04-export.png)
-![Sync review](docs/screenshots/05-sync.png)
+![Transcript editing](docs/screenshots/03-transcript.png)
+![Zoom editor](docs/screenshots/04-zoom-editor.png)
+![Package](docs/screenshots/05-package.png)
+![Export](docs/screenshots/06-export.png)

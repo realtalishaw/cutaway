@@ -27,7 +27,7 @@ before it can touch a project.
 
 ## 2. What was verified, with numbers
 
-Unit tests: 71 passing (core 27, AI layer 31, jobs 13).
+Unit tests: 91 passing (core 47, AI layer 31, jobs 13).
 
 | Journey (real app + real helper) | Result |
 | --- | --- |
@@ -82,31 +82,51 @@ complete export.
 
 ## 5. Screen Studio parity
 
-Built (launch scope of the parity map): display, window and area capture;
-camera, microphone and system audio as separate tracks; pause, resume,
-countdown, global shortcut (⌃⌥⌘R); crash recovery; MP4/MOV import; trim, cuts
-and segment speed; transcript cuts; filler and pause cleanup; crop; manual and
-click-based zooms with animation; cursor smoothing, size, idle hiding and
-click ripple (recordings only); screen, camera, picture-in-picture and split
-layouts with animated transitions; camera shape, size, corner and mirror;
-gradient, solid and image backgrounds; padding, corners, inset and shadow;
-blur, cover and spotlight masks; style presets; music and levels; captions
-and SRT; MP4 export; recent projects, autosave and backups.
+**Design.** The interface follows Screen Studio 4's editor, from values measured
+on its public screenshots (see the research notes summarised in the commit
+history): one flat `#08090d` surface, 59 px top bar with folder, trash,
+centred title, command menu, undo/redo, Presets and an indigo Export; shape and
+crop above the preview; a floating tool pill; transport under the preview; a
+60 px icon rail beside a 360 px inspector card; a dotted ruler, amber clip
+track and indigo zoom track with two-line block labels; contextual editors
+that replace the card ("Close Zoom editor"); a glass recorder bar; and an
+export sheet with Format, Frame rate, Resolution, Compression and Export to.
+Names, icons, wallpapers and device bezels are Cutaway's own.
 
-**Not built** (the package's "later parity" list): motion blur, loupe and
-upscaled zoom, camera cutout, face tracking, looks/LUTs and sharpening,
-iPhone/iPad capture and device frames, per-app audio routing, speaker notes,
-window resize presets, desktop icon and notification hiding, shortcut overlay,
-click sounds, typing speed-up detection, cursor loop/rotation/shake removal,
-other aspect ratios, Unsplash backgrounds, GIF and clipboard export, shareable
-links, shared projects, AI voiceover, command palette. This is not a
-feature-for-feature clone yet; do not describe it as complete parity.
+**Built in the first pass:** display, window and area capture; camera,
+microphone and system audio as separate tracks; pause, resume, countdown,
+global shortcut; crash recovery; MP4/MOV import; cuts and segment speed;
+transcript cuts; filler and pause cleanup; crop; manual and click-based zooms;
+cursor smoothing, size, idle hiding and click ripple; four layouts with
+animated transitions; camera shape, size, corner and mirror; backgrounds;
+padding, corners, inset and shadow; masks; presets; music and levels; captions
+and SRT; MP4 export; autosave and backups.
+
+**Added in the parity pass** (each verified in exported pixels or files by
+`e2e/render-parity.mjs` 23/23 and `e2e/package-ui.mjs` 27/27 unless noted):
+motion blur; magnifier (loupe) and instant zoom styles; cursor types, rotate
+while moving, shake removal, loop position, click sound; keyboard-shortcut key
+caps (shortcuts only: typed characters are never recorded); typing speed-up;
+camera looks; face framing and background removal (render path verified with
+seeded data only: no footage with a person was available); generic device
+frames; Vertical, Square, Classic and Tall output shapes; iPhone/iPad capture
+(code only: no device attached); per-app system audio; hide desktop icons and
+notifications; window size presets (needs Accessibility; not exercised);
+speaker notes with prompter; GIF export; copy to clipboard; compression tiers;
+project sharing as a zip; on-device voiceover with system voices; ⌘K command
+menu; ⌘1–8 tab shortcuts; "Remove N filler words" and "Tighten N pauses".
+
+**Still not built:** hosted shareable links and view analytics (there is no
+Cutaway server), Unsplash backgrounds (needs an API account), LUT import,
+sharpening, automatic sensitive-data detection for masks, ProRes export, the
+quick-share widget after recording, flags during recording, a standalone
+crop window, and editable shortcut bindings. Screen Studio's own wallpapers,
+cursor art, click sounds and device artwork were not copied.
 
 No Screen Studio binary was inspected: the app is not installed on this Mac
-and it was not downloaded. The only local evidence used was the leftover
-preferences file (setting names such as countdown, automatic zooms, voice
-enhancement and the record shortcut), alongside the public documentation
-cited in `docs/prd/feature-research.md`.
+and it was not downloaded. Evidence used: the public site and guides, the
+three reference screenshots supplied by the owner, and the leftover
+preferences file on this Mac.
 
 ## 6. Decisions that are yours
 

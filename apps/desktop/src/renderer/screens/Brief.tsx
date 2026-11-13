@@ -37,8 +37,8 @@ export function Brief() {
     <div className="page brief">
       <div className="page-inner" style={{ maxWidth: 980 }}>
         <div className="brief-head rise">
-          <div className="eyebrow">Step 2 · The brief</div>
-          <h1 className="display h1">
+          <div className="eyebrow">First cut</div>
+          <h1 className="display h2">
             What should the <em>first cut</em> feel like?
           </h1>
           <p className="muted lede">These defaults work as they are. Change anything you care about, then let Cutaway assemble a cut you can play.</p>

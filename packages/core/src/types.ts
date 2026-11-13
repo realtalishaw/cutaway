@@ -74,6 +74,10 @@ export interface MediaSource {
    */
   cursorBaked: boolean;
   cursorFile?: string;
+  /** Keyboard telemetry (shortcuts and anonymous typing ticks) of a recording, when it was captured. */
+  keysFile?: string;
+  /** Set when the screen source is a recorded iPhone or iPad. */
+  deviceKind?: 'iphone' | 'ipad' | null;
   /** Logical size of the captured area in points (for cursor scale). */
   pointWidth?: number;
   pointHeight?: number;
@@ -154,6 +158,13 @@ export interface Zoom extends Range {
   /** Target in normalised screen-source coordinates. */
   x: number;
   y: number;
+  /**
+   * 'zoom' (default) scales the whole picture, 'magnifier' keeps the frame at
+   * 1× and shows a round lens over the target, 'instant' zooms without animation.
+   */
+  style?: 'zoom' | 'magnifier' | 'instant';
+  /** Magnifier lens diameter as a fraction of the screen picture's height. */
+  lensSize?: number;
   meta: DecisionMeta;
 }
 
@@ -229,11 +240,50 @@ export interface Appearance {
   frame: { padding: number; radius: number; shadow: number; inset: number };
   /** Crop of the screen source, normalised. */
   crop: Rect;
-  cursor: { visible: boolean; size: number; smoothing: number; hideWhenIdle: boolean; clickEffect: 'ripple' | 'none' };
-  camera: { shape: 'rounded' | 'circle' | 'square'; size: number; corner: 'tl' | 'tr' | 'bl' | 'br'; mirror: boolean; radius: number; shadow: number };
+  cursor: {
+    visible: boolean;
+    size: number;
+    smoothing: number;
+    hideWhenIdle: boolean;
+    clickEffect: 'ripple' | 'none';
+    /** 'auto' follows the recorded cursor type (arrow, hand, I-beam); 'arrow' always shows the default pointer. */
+    style?: 'auto' | 'arrow';
+    rotate?: boolean;
+    antiShake?: boolean;
+    loop?: boolean;
+    clickSound?: { enabled: boolean; volume: number };
+  };
+  camera: {
+    shape: 'rounded' | 'circle' | 'square';
+    size: number;
+    corner: 'tl' | 'tr' | 'bl' | 'br';
+    mirror: boolean;
+    radius: number;
+    shadow: number;
+    look?: CameraLook;
+    face?: { zoom: boolean; follow: boolean };
+    cutout?: { enabled: boolean; backdrop: 'none' | 'blur' | 'color'; color: string };
+  };
+  /** 0 = off. Applies a shutter-style smear to moving parts. */
+  motionBlur?: { amount: number; cursor: boolean; animation: boolean };
+  /** Key-cap labels for shortcuts pressed while recording. */
+  shortcuts?: { show: boolean; size: number; position: 'bottom' | 'top'; hidden: string[] };
+  /** Generic phone/tablet bezel around a portrait or device screen source. */
+  device?: { frame: boolean; color: 'graphite' | 'silver' | 'midnight' };
   captions: { burnIn: boolean; size: number; position: 'bottom' | 'top'; style: 'pill' | 'plain' | 'bold' };
   motion: 'calm' | 'balanced' | 'lively';
 }
+
+export interface CameraLook {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  /** −1 cool … +1 warm. */
+  warmth: number;
+}
+
+/** Keyboard telemetry. Typed characters are never recorded. */
+export type KeyStroke = { t: Seconds; e: 'shortcut'; keys: string[] } | { t: Seconds; e: 'type' };
 
 export interface EditState {
   cuts: Cut[];

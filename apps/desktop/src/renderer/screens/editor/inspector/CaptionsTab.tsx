@@ -35,7 +35,7 @@ export function CaptionsTab() {
         <Segmented full value={ap.captions.position} onChange={(v) => captions({ position: v }, 'Caption position', 'cappos')} options={[{ value: 'bottom', label: 'Bottom' }, { value: 'top', label: 'Top' }]} />
       </Section>
       <Section title="Transcript" icon="captions">
-        <button className="btn block" onClick={() => useApp.getState().setPanels({ drawer: 'transcript' })}>
+        <button className="btn block" onClick={() => useApp.getState().setPanels({ tab: 'transcript' })}>
           Edit transcript
         </button>
         <button className="btn block" onClick={exportTranscript} disabled={!t?.hasSpeech}>

@@ -21,15 +21,15 @@ if (!existing.length) {
 await shot('01-library', 1200);
 await page.evaluate((p) => window.__cutaway.actions.openProjectAt(p), existing[0].path);
 const S = () => page.evaluate(() => 0);
-await page.evaluate(() => { const { useApp, usePlayback, timeMapOf } = window.__cutaway; const s = useApp.getState(); s.setView('edit'); s.select(null); s.setPanels({ inspector: true, tab: 'background', drawer: null }); s.patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: false } })); usePlayback.getState().seek(timeMapOf(useApp.getState().project).toOutput(5.6)); });
+await page.evaluate(() => { const { useApp, usePlayback, timeMapOf } = window.__cutaway; const s = useApp.getState(); s.setView('edit'); s.select(null); s.setPanels({ inspector: true, tab: 'background' }); s.patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: false } })); usePlayback.getState().seek(timeMapOf(useApp.getState().project).toOutput(5.6)); });
 await shot('02-editor', 2500);
-await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: true } })); s.setPanels({ tab: 'captions', drawer: 'transcript' }); });
+await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: true } })); s.setPanels({ tab: 'transcript' }); });
 await shot('03-editor-transcript');
-await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.setPanels({ drawer: 'review', tab: 'camera' }); });
+await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.setPanels({ tab: 'review' }); });
 await shot('04-editor-review');
-await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.setPanels({ drawer: null }); s.select({ kind: 'zoom', id: s.project.edit.zooms[0].id }); });
+await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.setPanels({ tab: 'background' }); s.select({ kind: 'zoom', id: s.project.edit.zooms[0].id }); });
 await shot('05-editor-zoom-selected');
-for (const tab of ['cursor', 'audio', 'shortcuts', 'motion']) { await page.evaluate((t) => { const s = window.__cutaway.useApp.getState(); s.select(null); s.setPanels({ tab: t }); }, tab); await shot(`06-tab-${tab}`, 400); }
+for (const tab of ['cursor', 'camera', 'captions', 'audio', 'shortcuts', 'motion']) { await page.evaluate((t) => { const s = window.__cutaway.useApp.getState(); s.select(null); s.setPanels({ tab: t }); }, tab); await shot(`06-tab-${tab}`, 400); }
 for (const view of ['sources', 'brief', 'package', 'export']) { await page.evaluate((v) => window.__cutaway.useApp.getState().setView(v), view); await shot(`07-${view}`, 1500); }
 await page.evaluate(() => window.__cutaway.useApp.getState().go('settings'));
 await shot('08-settings');

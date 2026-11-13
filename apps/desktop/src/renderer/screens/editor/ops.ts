@@ -50,6 +50,7 @@ export function cutRange(range: Range, kind: 'manual' | 'transcript' = 'manual')
   const before = app().project;
   app().edit((e, p) => manualCut(e, range, p.revision + 1, kind), kind === 'transcript' ? 'Cut text' : 'Cut');
   app().select(null);
+  app().toast(`Removed ${(range.end - range.start).toFixed(1)}s — ⌘Z to undo`);
   // keep the playhead on the same content where possible
   const p = app().project;
   if (p && before) {

@@ -1,8 +1,9 @@
 import { ALL_FORMATS, AudioSampleSink, CanvasSource, Input, Mp4OutputFormat, Output, StreamTarget, UrlSource, VideoSampleSink, type InputAudioTrack, type StreamTargetChunk, type VideoSample } from 'mediabunny';
-import { TimeMap, buildCues, buildCursorTrack, coverage, cueAt, estimateVideoBitrate, evaluateFrame, toSourceTime, type CursorSample, type MediaSource, type Project } from '@cutaway/core';
+import { TimeMap, buildCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, estimateVideoBitrate, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorSample, type FaceTrackSmooth, type KeyStroke, type MediaSource, type Project } from '@cutaway/core';
 import { resolveSourcePath } from '@shared/api';
 import { drawFrame, neededSources, type Drawable, type FrameResources } from './compositor';
 import { loadCursor, voiceGain } from './media';
+import { ensureFaces, ensureKeys, ensureMatte } from './parityData';
 
 export interface RenderProgress {
   stage: 'prepare' | 'video' | 'audio' | 'finalize';
@@ -34,7 +35,12 @@ export interface RenderArgs {
   fileName: string;
   onProgress(p: RenderProgress): void;
   signal: AbortSignal;
+  /** Video bitrate in bits per second. Defaults to YouTube's recommendation for the size and frame rate. */
+  bitrate?: number | null;
 }
+
+/** The renderer honours RenderArgs.bitrate. */
+export const RENDER_SUPPORTS_BITRATE = true;
 
 class RenderError extends Error {
   constructor(public code: 'cancelled' | 'disk-full' | 'missing-source' | 'encode-failed', message: string) {
@@ -247,7 +253,7 @@ function ipcError(e: unknown): RenderError {
   return new RenderError('encode-failed', (e as Error).message);
 }
 
-async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string): Promise<boolean> {
+async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clickTimes: number[] = []): Promise<boolean> {
   const { project, projectPath } = args;
   const audio = project.edit.audio;
   const plans: AudioTrackPlan[] = [];
@@ -279,7 +285,11 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string): Pro
       input,
     });
   }
-  if (plans.length === 0) return false;
+  // click sound: the same synthesised tick the preview plays, at each kept click's output position
+  const cs = clickSoundOf(project.edit.appearance);
+  const tickData = clickTick(SAMPLE_RATE);
+  const tickAt = cs.enabled ? clickTimes.filter((t) => map.isKept(t)).map((t) => Math.round(map.toOutput(t) * SAMPLE_RATE)).sort((a, b) => a - b) : [];
+  if (plans.length === 0 && tickAt.length === 0) return false;
 
   const totalFrames = Math.round(map.outDuration * SAMPLE_RATE);
   const speech = (project.transcript?.words ?? []).map((w) => ({ start: w.start - 0.25, end: w.end + 0.35 }));
@@ -338,6 +348,18 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string): Pro
             }
             mixL[i] = mixL[i]! + l[i]! * g;
             mixR[i] = mixR[i]! + r[i]! * g;
+          }
+        }
+        if (tickAt.length) {
+          const blockStart = Math.round(seg.outStart * SAMPLE_RATE) + off;
+          for (const at of tickAt) {
+            if (at >= blockStart + n || at + tickData.length <= blockStart) continue;
+            for (let k = Math.max(0, blockStart - at); k < tickData.length; k++) {
+              const i = at + k - blockStart;
+              if (i >= n) break;
+              mixL[i] = mixL[i]! + tickData[k]! * cs.volume;
+              mixR[i] = mixR[i]! + tickData[k]! * cs.volume;
+            }
           }
         }
         const pcm = new Int16Array(n * 2);
@@ -406,21 +428,48 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
     cursors.set(s.id, new FrameCursor(new VideoSampleSink(track)));
   };
 
+  let clickTimes: number[] = [];
   const tmpVideo = `.${args.fileName}.video.mp4`;
   const tmpAudio = `.${args.fileName}.audio.wav`;
   let output: Output | null = null;
   try {
     await document.fonts.ready;
-    await Promise.all([document.fonts.load("400 40px 'Instrument Serif'"), document.fonts.load("600 40px 'Hanken Grotesk Variable'")]).catch(() => {});
+    await Promise.all([document.fonts.load("650 40px 'Inter Variable'"), document.fonts.load("500 40px 'Inter Variable'")]).catch(() => {});
     for (const s of [screen, camA, camB]) await open(s);
     for (const id of new Set(project.edit.broll.map((b) => b.assetId))) await open(project.sources.find((s) => s.id === id));
     let backgroundImage: Drawable | null = null;
     if (ap.background.type === 'image') backgroundImage = await loadImage(window.cutaway.media.url(ap.background.path));
 
     const samples: CursorSample[] = screen && !screen.cursorBaked && screen.cursorFile ? await loadCursor(projectPath, screen) : [];
-    const cursorTrack = samples.length ? buildCursorTrack(samples, ap.cursor.smoothing) : null;
+    const extra = cursorExtrasOf(ap);
+    const cursorTrack = samples.length ? buildCursorTrack(samples, ap.cursor.smoothing, 120, { antiShake: extra.antiShake, loop: extra.loop }) : null;
     const followTrack = samples.length ? buildCursorTrack(samples, 0.97) : null;
-    const ctxFrame = { project, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * ap.crop.w) / (screen.height * ap.crop.h) : null };
+    clickTimes = cursorTrack ? cursorTrack.clicks.map((c) => c.t) : [];
+    // derived data the preview may still be computing: wait for it so the export matches what was approved
+    const keys: KeyStroke[] = shortcutsOf(ap).show ? await ensureKeys(projectPath, screen) : [];
+    const faceOpt = faceOf(ap);
+    const faces: Partial<Record<CameraSlot, FaceTrackSmooth | null>> = {};
+    const mattes: Partial<Record<CameraSlot, FrameCursor>> = {};
+    for (const [slot, cam] of [['A', camA], ['B', camB]] as [CameraSlot, MediaSource | undefined][]) {
+      if (!cam) continue;
+      if (faceOpt.zoom || faceOpt.follow) faces[slot] = await ensureFaces(projectPath, cam);
+      if (cutoutOf(ap).enabled) {
+        const mp = await ensureMatte(projectPath, cam);
+        if (mp) {
+          const input = new Input({ source: new UrlSource(window.cutaway.media.url(mp)), formats: ALL_FORMATS });
+          inputs.push(input);
+          const track = await input.getPrimaryVideoTrack();
+          if (track && (await track.canDecode())) {
+            const fc = new FrameCursor(new VideoSampleSink(track));
+            mattes[slot] = fc;
+            cursors.set(`matte:${cam.id}`, fc);
+          }
+        }
+      }
+    }
+    check();
+    const device = deviceOf(ap).frame ? deviceKindFor(screen) : null;
+    const ctxFrame = { project, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * ap.crop.w) / (screen.height * ap.crop.h) : null, keys, faces, quality: 'export' as const, device };
     const cues = ap.captions.burnIn ? buildCues(project.transcript, project.edit, map) : [];
 
     const canvas = new OffscreenCanvas(W, H);
@@ -437,7 +486,7 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
       },
     });
     output = new Output({ format: new Mp4OutputFormat({ fastStart: false }), target: new StreamTarget(writable, { chunked: true, chunkSize: 4 * 1024 * 1024 }) });
-    const videoSource = new CanvasSource(canvas, { codec: 'avc', bitrate: estimateVideoBitrate(W, H, fps), keyFrameInterval: 2, latencyMode: 'quality' });
+    const videoSource = new CanvasSource(canvas, { codec: 'avc', bitrate: args.bitrate ?? estimateVideoBitrate(W, H, fps), keyFrameInterval: 2, latencyMode: 'quality' });
     output.addVideoTrack(videoSource, { frameRate: fps });
     await output.start();
 
@@ -462,8 +511,15 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
       if (need.screen && screen) res.screen = await grab(screen, toSourceTime(screen.sync, state.src));
       if (need.cameras.includes('A') && camA) res.cameraA = await grab(camA, toSourceTime(camA.sync, state.src));
       if (need.cameras.includes('B') && camB) res.cameraB = await grab(camB, toSourceTime(camB.sync, state.src));
+      for (const [slot, cam] of [['A', camA], ['B', camB]] as [CameraSlot, MediaSource | undefined][]) {
+        const mc = mattes[slot];
+        if (!mc || !cam || !need.cameras.includes(slot)) continue;
+        const sample = await mc.at(Math.max(0, Math.min(cam.duration - 1e-3, toSourceTime(cam.sync, state.src))));
+        if (slot === 'A') res.matteA = sample ? sampleDrawable(sample) : null;
+        else res.matteB = sample ? sampleDrawable(sample) : null;
+      }
       if (need.broll && state.broll) res.broll = await grab(project.sources.find((s) => s.id === need.broll), state.broll.assetTime);
-      drawFrame(ctx, state, res, { appearance: ap, screenPoints: screen?.pointWidth && screen.pointHeight ? { width: screen.pointWidth, height: screen.pointHeight } : null, cue: cues.length ? cueAt(cues, out) : null });
+      drawFrame(ctx, state, res, { appearance: ap, screenPoints: screen?.pointWidth && screen.pointHeight ? { width: screen.pointWidth, height: screen.pointHeight } : null, cue: cues.length ? cueAt(cues, out) : null, device });
       await videoSource.add(i / fps, 1 / fps);
       if (i % 5 === 0 || i === totalFrames - 1) {
         const elapsed = (performance.now() - started) / 1000;
@@ -476,7 +532,7 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
     if (writeError) throw ipcError(writeError);
 
     args.onProgress({ stage: 'audio', frames: totalFrames, totalFrames, fps: 0 });
-    const hasAudio = await renderAudio(args, map, tmpAudio);
+    const hasAudio = await renderAudio(args, map, tmpAudio, clickTimes);
     check();
 
     args.onProgress({ stage: 'finalize', frames: totalFrames, totalFrames, fps: 0 });

@@ -101,7 +101,11 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
     return (
       <Section title="Zoom" action={<div className="row gap-2">{lockBtn('zooms', z.meta)}{del}</div>}>
         <TimesRow project={project} range={z} />
+        <Field label="Zoom style" hint={{ zoom: 'The whole picture moves in.', magnifier: 'The picture stays put; a round lens enlarges what is under it.', instant: 'Jumps in and out with no animation.' }[z.style ?? 'zoom']}>
+          <Segmented full value={z.style ?? 'zoom'} onChange={(v) => patchItem('zooms', z.id, { style: v }, 'Zoom style', false)} options={[{ value: 'zoom', label: 'Zoom in' }, { value: 'magnifier', label: 'Magnifier' }, { value: 'instant', label: 'Instant' }]} />
+        </Field>
         <Slider label="Magnification" min={1.1} max={4} step={0.05} value={z.scale} format={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchItem('zooms', z.id, { scale: v }, 'Zoom level')} />
+        {z.style === 'magnifier' ? <Slider label="Lens size" min={0.15} max={0.8} step={0.01} value={z.lensSize ?? 0.34} format={pct} onChange={(v) => patchItem('zooms', z.id, { lensSize: v }, 'Lens size')} /> : null}
         <Toggle label="Follow the cursor" hint={hasCursor ? 'The view tracks the recorded pointer.' : 'Only for recordings made in Cutaway; this screen source has no cursor data.'} checked={z.follow && hasCursor} onChange={(v) => hasCursor && patchItem('zooms', z.id, { follow: v }, 'Zoom follow', false)} />
         {!z.follow || !hasCursor ? <Button icon="cursor" onClick={() => pickTarget('zoom')}>Click the preview to set the target</Button> : null}
         <Why meta={z.meta} />

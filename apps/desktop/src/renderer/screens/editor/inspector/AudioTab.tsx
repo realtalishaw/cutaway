@@ -1,9 +1,12 @@
 import { setMasterVoice, type EditState } from '@cutaway/core';
 import { useProject } from '../../../state/store';
 import { Button, Slider, Toggle } from '../../../ui/kit';
+import { useState } from 'react';
+import { VoiceoverSheet } from '../../Voiceover';
 import { Section, app, pct } from './shared';
 
 export function AudioTab() {
+  const [voiceover, setVoiceover] = useState(false);
   const project = useProject();
   const audio = project.edit.audio;
   const tracks = project.sources.filter((s) => s.hasAudio && audio.music?.sourceId !== s.id && s.role !== 'music' && s.role !== 'broll');
@@ -63,6 +66,13 @@ export function AudioTab() {
           </>
         )}
       </Section>
+      <Section title="AI voiceover">
+        <button className="btn block" onClick={() => setVoiceover(true)}>
+          Add voiceover…
+        </button>
+        <div className="tiny dim">Reads your script with a system voice, on this Mac. It is a synthetic voice, not a copy of yours.</div>
+      </Section>
+      {voiceover ? <VoiceoverSheet onClose={() => setVoiceover(false)} /> : null}
     </>
   );
 }

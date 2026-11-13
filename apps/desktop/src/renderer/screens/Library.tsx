@@ -135,32 +135,17 @@ export function Library() {
       }}
     >
       <div className="page-inner">
-        <section className="hero">
-          <div className="hero-copy rise">
-            <div className="eyebrow">Recorder · AI editor · YouTube package</div>
-            <h1 className="display h1">
-              Record once.
-              <br />
-              Get the <em>first cut.</em>
-            </h1>
-            <p className="muted lede">Capture your screen and up to two cameras, or bring footage you already have. Cutaway assembles a real edit you can play, correct and export with its thumbnail and title.</p>
+        <section className="lib-head">
+          <div>
+            <h1 className="display h2" style={{ margin: 0 }}>Projects</h1>
+            <p className="muted" style={{ margin: '6px 0 0' }}>Record your screen and up to two cameras, or bring footage you already have.</p>
           </div>
-          <div className="hero-actions">
-            <button className="action record rise" style={{ animationDelay: '80ms' }} onClick={() => void newRecording()}>
-              <span className="action-icon"><span className="rec-dot" /></span>
-              <span className="col" style={{ gap: 2, alignItems: 'flex-start' }}>
-                <span className="action-title">New recording</span>
-                <span className="action-sub">Screen, camera A and B, mic, system audio</span>
-              </span>
-              <span className="kbd">⌘N</span>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn lg" onClick={() => void pickAndImport(true)} title="Import footage (⌘I)">
+              <Icon name="import" size={16} /> Import
             </button>
-            <button className="action rise" style={{ animationDelay: '140ms' }} onClick={() => void pickAndImport(true)}>
-              <span className="action-icon"><Icon name="import" size={18} /></span>
-              <span className="col" style={{ gap: 2, alignItems: 'flex-start' }}>
-                <span className="action-title">Import footage</span>
-                <span className="action-sub">MP4 or MOV, WAV or M4A, JPG or PNG. Or drop files here.</span>
-              </span>
-              <span className="kbd">⌘I</span>
+            <button className="btn lg primary" onClick={() => void newRecording()} title="New recording (⌘N)">
+              <span className="rec-dot" style={{ background: '#fff', boxShadow: 'none', width: 8, height: 8 }} /> New recording
             </button>
           </div>
         </section>
@@ -193,9 +178,9 @@ export function Library() {
           </section>
         ) : null}
 
-        <section style={{ marginTop: 36 }}>
+        <section style={{ marginTop: 22 }}>
           <div className="row between" style={{ marginBottom: 14 }}>
-            <div className="eyebrow">Projects{projects?.length ? ` · ${projects.length}` : ''}</div>
+            <div className="eyebrow">{projects?.length ? `${projects.length} project${projects.length === 1 ? '' : 's'}` : 'Recent'}</div>
             {info ? (
               <button className="btn ghost sm" onClick={() => void window.cutaway.app.reveal(info.libraryDir)} title={info.libraryDir}>
                 <Icon name="folder" size={12} /> Stored on this Mac

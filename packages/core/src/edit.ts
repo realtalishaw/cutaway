@@ -38,7 +38,7 @@ export interface Wallpaper {
 }
 
 /** Original abstract wallpapers, drawn procedurally (no image files, nobody else's artwork). */
-export const WALLPAPERS: Wallpaper[] = [
+const BASE_WALLPAPERS: Wallpaper[] = [
   { id: 'dusk-1', name: 'Violet hour', group: 'Dusk', base: '#1a1040', blobs: [{ color: '#7c3aed', x: 0.2, y: 0.25, r: 0.7 }, { color: '#ec4899', x: 0.85, y: 0.8, r: 0.6 }, { color: '#2563eb', x: 0.75, y: 0.1, r: 0.5 }] },
   { id: 'dusk-2', name: 'Lagoon', group: 'Dusk', base: '#0a1a3a', blobs: [{ color: '#2563eb', x: 0.15, y: 0.8, r: 0.7 }, { color: '#22d3ee', x: 0.8, y: 0.2, r: 0.55 }, { color: '#7c3aed', x: 0.55, y: 0.55, r: 0.45 }] },
   { id: 'dusk-3', name: 'Orchid', group: 'Dusk', base: '#2a0f3d', blobs: [{ color: '#d946ef', x: 0.8, y: 0.25, r: 0.65 }, { color: '#6366f1', x: 0.2, y: 0.7, r: 0.65 }, { color: '#fb7185', x: 0.5, y: 1.0, r: 0.4 }] },
@@ -52,6 +52,13 @@ export const WALLPAPERS: Wallpaper[] = [
   { id: 'mono-2', name: 'Paper', group: 'Mono', base: '#d9d4cb', blobs: [{ color: '#f5f1ea', x: 0.25, y: 0.2, r: 0.7 }, { color: '#bdb5a8', x: 0.9, y: 0.9, r: 0.6 }] },
   { id: 'mono-3', name: 'Ink', group: 'Mono', base: '#0a0d1a', blobs: [{ color: '#1e2a55', x: 0.75, y: 0.25, r: 0.7 }, { color: '#111936', x: 0.15, y: 0.85, r: 0.6 }] },
 ];
+
+/** Each base wallpaper plus a mirrored and a flipped variant, so every group fills a row. */
+export const WALLPAPERS: Wallpaper[] = BASE_WALLPAPERS.flatMap((w) => [
+  w,
+  { ...w, id: `${w.id}-m`, name: `${w.name} II`, blobs: w.blobs.map((b) => ({ ...b, x: 1 - b.x })) },
+  { ...w, id: `${w.id}-f`, name: `${w.name} III`, blobs: w.blobs.map((b, i) => ({ ...b, y: 1 - b.y, r: b.r * (i === 0 ? 0.85 : 1.1) })) },
+]);
 
 export function defaultAppearance(): Appearance {
   return {

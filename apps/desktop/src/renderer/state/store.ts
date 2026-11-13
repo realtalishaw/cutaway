@@ -12,7 +12,7 @@ export type Selection =
   | { kind: 'words'; ids: string[]; range: Range }
   | null;
 
-export type InspectorTab = 'background' | 'cursor' | 'camera' | 'captions' | 'audio' | 'shortcuts' | 'motion';
+export type InspectorTab = 'background' | 'cursor' | 'camera' | 'captions' | 'transcript' | 'audio' | 'shortcuts' | 'motion' | 'device' | 'review' | 'history';
 export type DrawerTab = 'transcript' | 'review' | 'history';
 
 export interface Toast {
@@ -99,7 +99,16 @@ export const useApp = create<AppState>((set, get) => ({
   toasts: [],
   comparison: null,
   panels: { inspector: true, tab: 'background', drawer: null },
-  setPanels: (patch) => set({ panels: { ...get().panels, ...patch } }),
+  // The transcript, review and history panels live in the inspector card; `drawer` is kept as an alias for older callers.
+  setPanels: (patch) => {
+    const next = { ...get().panels, ...patch };
+    if (patch.drawer) {
+      next.tab = patch.drawer;
+      next.inspector = true;
+    }
+    next.drawer = null;
+    set({ panels: next });
+  },
 
   go: (route) => set({ route }),
   setSettings: (settings) => set({ settings }),

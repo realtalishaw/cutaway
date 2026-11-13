@@ -18,7 +18,7 @@ export interface MicInfo { id: string; name: string; default?: boolean }
 export interface DeviceList {
   permissions: Record<PermissionKind, Permission> & Partial<Record<ExtraPermission, Permission>>;
   /** USB iPhone / iPad screens that can be recorded as the screen source. */
-  externalDevices?: { id: string; name: string; width: number; height: number }[];
+  externalDevices?: { id: string; name: string; width: number; height: number; kind?: 'iphone' | 'ipad' | null }[];
   /** Running apps, for recording audio from selected apps only. */
   apps?: { bundleId: string; name: string; pid: number }[];
   displays: DisplayInfo[];
@@ -56,7 +56,7 @@ export interface RecordConfig {
 
 export interface PreflightResult {
   ok: boolean;
-  issues: { code: string; source?: string; message: string; alternatives?: string[] }[];
+  issues: { code: string; source?: string; message: string; alternatives?: string[]; /** false = a warning; recording can still start. */ blocking?: boolean }[];
   estimatedBytesPerMinute: number;
   freeBytes: number;
 }

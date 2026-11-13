@@ -1,8 +1,9 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
-import { buildCues, buildCursorTrack, coverage, cueAt, evaluateFrame, toSourceTime, type CursorTrack, type FrameState, type MediaSource, type Project } from '@cutaway/core';
+import { buildCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorTrack, type FaceTrackSmooth, type FrameState, type MediaSource, type Project } from '@cutaway/core';
 import { timeMapOf, useApp, usePlayback, useShownProject } from '../state/store';
 import { drawFrame, drawableFromElement, type FrameResources } from './compositor';
 import { loadCursor, sourceUrl, voiceGain } from './media';
+import { ensureFaces, ensureKeys, ensureMatte, peekFaces, peekKeys, peekMatte } from './parityData';
 
 export interface PreviewPoint {
   /** 0…1 across the output frame. */
@@ -48,6 +49,9 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
     let followTrack: CursorTrack | null = null;
     let cuesKey: unknown = null;
     let cues: ReturnType<typeof buildCues> = [];
+    const matteEls = new Map<string, HTMLVideoElement>();
+    let tick_: AudioBuffer | null = null;
+    let prevSrc = -1;
     let raf = 0;
     let last = performance.now();
     let seenSeek = -1;
@@ -112,6 +116,40 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       if (audioCtx?.state === 'suspended') void audioCtx.resume();
     };
 
+    /** Short click tick through WebAudio; the export mixer adds the identical samples. */
+    const playClick = (volume: number) => {
+      try {
+        audioCtx ??= new AudioContext();
+        if (!tick_) {
+          const data = clickTick(audioCtx.sampleRate);
+          tick_ = audioCtx.createBuffer(1, data.length, audioCtx.sampleRate);
+          tick_.getChannelData(0).set(data);
+        }
+        const node = audioCtx.createBufferSource();
+        node.buffer = tick_;
+        const g = audioCtx.createGain();
+        g.gain.value = volume * usePlayback.getState().volume;
+        node.connect(g).connect(audioCtx.destination);
+        node.start();
+      } catch {
+        /* audio device unavailable: the preview stays silent, export is unaffected */
+      }
+    };
+
+    const matteEl = (path: string): HTMLVideoElement => {
+      let el = matteEls.get(path);
+      if (!el) {
+        el = document.createElement('video');
+        el.crossOrigin = 'anonymous';
+        el.preload = 'auto';
+        el.muted = true;
+        el.playsInline = true;
+        el.src = window.cutaway.media.url(path);
+        matteEls.set(path, el);
+      }
+      return el;
+    };
+
     const tick = (now: number) => {
       if (disposed) return;
       raf = requestAnimationFrame(tick);
@@ -143,7 +181,8 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
 
       // cursor telemetry (recordings only)
       const screen = p.sources.find((s) => s.role === 'screen');
-      const key = screen && !screen.cursorBaked && screen.cursorFile ? `${pp}|${screen.cursorFile}|${p.edit.appearance.cursor.smoothing}` : '';
+      const extra = cursorExtrasOf(p.edit.appearance);
+      const key = screen && !screen.cursorBaked && screen.cursorFile ? `${pp}|${screen.cursorFile}|${p.edit.appearance.cursor.smoothing}|${extra.antiShake}|${extra.loop}` : '';
       if (key !== cursorKey) {
         cursorKey = key;
         cursorTrack = followTrack = null;
@@ -151,15 +190,34 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
           const smoothing = p.edit.appearance.cursor.smoothing;
           void loadCursor(pp, screen).then((samples) => {
             if (cursorKey !== key || samples.length === 0) return;
-            cursorTrack = buildCursorTrack(samples, smoothing);
+            cursorTrack = buildCursorTrack(samples, smoothing, 120, { antiShake: extra.antiShake, loop: extra.loop });
             followTrack = buildCursorTrack(samples, 0.97);
           });
         }
       }
 
-      const ctxFrame = { project: p, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * p.edit.appearance.crop.w) / (screen.height * p.edit.appearance.crop.h) : null };
+      // derived data: shortcuts, face tracks (requested lazily, drawn once ready)
+      if (screen?.keysFile && shortcutsOf(p.edit.appearance).show) void ensureKeys(pp, screen);
+      const faceOpt = faceOf(p.edit.appearance);
+      const faces: Partial<Record<CameraSlot, FaceTrackSmooth | null>> = {};
+      if (faceOpt.zoom || faceOpt.follow) {
+        for (const slot of ['A', 'B'] as CameraSlot[]) {
+          const cam = p.sources.find((s) => s.role === (slot === 'A' ? 'cameraA' : 'cameraB'));
+          if (!cam || !cam.available) continue;
+          void ensureFaces(pp, cam);
+          faces[slot] = peekFaces(pp, cam).value;
+        }
+      }
+      const ctxFrame = { project: p, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * p.edit.appearance.crop.w) / (screen.height * p.edit.appearance.crop.h) : null, keys: peekKeys(pp, screen), faces, quality: 'preview' as const, device: deviceOf(p.edit.appearance).frame ? deviceKindFor(screen) : null };
       const state = evaluateFrame(ctxFrame, out);
       lastState.current = state;
+
+      // click sound: every click the playhead passes while playing
+      const cs = clickSoundOf(p.edit.appearance);
+      if (pb.playing && cs.enabled && cursorTrack && prevSrc >= 0 && src > prevSrc && src - prevSrc < 0.5) {
+        for (const c of cursorTrack.clicks) if (c.t > prevSrc && c.t <= src) playClick(cs.volume);
+      }
+      prevSrc = src;
 
       // ── slave media elements to the clock ──
       const wanted = new Set<string>();
@@ -209,6 +267,26 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
         if (s.role === 'screen') res.screen = d;
         else if (s.role === 'cameraA') res.cameraA = d;
         else if (s.role === 'cameraB') res.cameraB = d;
+        // background removal: a matte video kept in step with its camera
+        if ((s.role === 'cameraA' || s.role === 'cameraB') && cutoutOf(p.edit.appearance).enabled) {
+          void ensureMatte(pp, s);
+          const mp = peekMatte(pp, s).value;
+          if (mp) {
+            const m = matteEl(mp);
+            const want = e.el.currentTime;
+            if (pb.playing) {
+              if (Math.abs(m.playbackRate - e.el.playbackRate) > 1e-3) m.playbackRate = e.el.playbackRate;
+              if (Math.abs(m.currentTime - want) > 0.06) m.currentTime = want;
+              if (m.paused) void m.play().catch(() => {});
+            } else {
+              if (!m.paused) m.pause();
+              if (Math.abs(m.currentTime - want) > 0.012 && !m.seeking) m.currentTime = want;
+            }
+            const md = drawableFromElement(m);
+            if (s.role === 'cameraA') res.matteA = md;
+            else res.matteB = md;
+          }
+        }
       }
       if (state.broll) {
         const asset = p.sources.find((s) => s.id === state.broll!.insert.assetId);
@@ -256,6 +334,7 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
         appearance: live.current.showCaptions ? ap : { ...ap, captions: { ...ap.captions, burnIn: false } },
         screenPoints: screen?.pointWidth && screen.pointHeight ? { width: screen.pointWidth, height: screen.pointHeight } : null,
         cue: ap.captions.burnIn ? cueAt(cues, out) : null,
+        device: deviceOf(ap).frame ? deviceKindFor(screen) : null,
         editor: { selectedMaskId: live.current.selectedMaskId },
       });
     };
@@ -267,6 +346,11 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
         e.el.pause();
         e.el.removeAttribute('src');
         e.el.load();
+      }
+      for (const m of matteEls.values()) {
+        m.pause();
+        m.removeAttribute('src');
+        m.load();
       }
       void audioCtx?.close();
     };

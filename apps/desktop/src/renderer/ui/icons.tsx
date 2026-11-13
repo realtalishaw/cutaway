@@ -69,6 +69,9 @@ const PATHS = {
   aspect: '<rect x="3" y="5" width="18" height="14" rx="2.500"/><path d="M3 9h18M12 9v10"/>',
   phone: '<rect x="7" y="3" width="10" height="18" rx="2.500"/><path d="M10.500 6h3"/>',
   width: '<path d="M4 12h16M4 12l3-3M4 12l3 3M20 12l-3-3M20 12l-3 3"/>',
+  transcript: '<path d="M5 6h14M5 10h14M5 14h9M5 18h6"/>',
+  arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  zoomOut: '<circle cx="10.500" cy="10.500" r="6"/><path d="M15 15l5 5M8 10.500h5"/>',
   film: '<path d="M5 4h14v16H5zM9 4v16M15 4v16M5 8h4M5 12h4M5 16h4M15 8h4M15 12h4M15 16h4"/>',
 } as const;
 

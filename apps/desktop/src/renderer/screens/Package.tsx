@@ -521,7 +521,7 @@ function Layers({ concept, selectedId, onSelect }: { concept: PackagingConcept; 
   return (
     <section className="col" style={{ gap: 8 }}>
       <div className="row between">
-        <div className="eyebrow">Layers</div>
+        <div className="pkg-heading">Layers</div>
         <div className="row gap-2">
           <Button size="sm" variant="ghost" icon="text" onClick={addText} title="Add text" aria-label="Add text" />
           <Button size="sm" variant="ghost" icon="layout" onClick={addShape} title="Add a shape" aria-label="Add a shape" />
@@ -598,7 +598,7 @@ function Inspector({ concept, selectedId, onSelect }: { concept: PackagingConcep
   return (
     <aside className="pkg-right scroll" aria-label="Thumbnail inspector">
       <section className="col" style={{ gap: 8 }}>
-        <div className="eyebrow">Layout</div>
+        <div className="pkg-heading">Layout</div>
         <Segmented
           full
           label="Thumbnail layout"
@@ -624,7 +624,7 @@ function Inspector({ concept, selectedId, onSelect }: { concept: PackagingConcep
       <hr className="hr" />
       {layer ? (
         <section className="col" style={{ gap: 12 }} key={layer.id}>
-          <div className="eyebrow">{layer.kind === 'scrim' ? 'Shade' : layer.kind}</div>
+          <div className="pkg-heading" style={{ textTransform: 'capitalize' }}>{layer.kind === 'scrim' ? 'Shade' : layer.kind}</div>
           {layer.kind === 'text' ? <TextInspector l={layer} set={set} /> : null}
           {layer.kind === 'shape' ? <ShapeInspector l={layer} set={set} /> : null}
           {layer.kind === 'frame' ? <FrameInspector l={layer} set={set} sources={sources} /> : null}
@@ -800,7 +800,7 @@ function BrowsePreview({ concept, duration }: { concept: PackagingConcept; durat
   return (
     <section className="col" style={{ gap: 8 }}>
       <div className="row between">
-        <div className="eyebrow">At browsing size</div>
+        <div className="pkg-heading">At browsing size</div>
         <span className="tiny dim">168 × 94 points, as in a results list</span>
       </div>
       <div className="browse">
@@ -1048,14 +1048,11 @@ export function Package() {
     return (
       <div className="page pkg-empty">
         <div className="page-inner" style={{ maxWidth: 860 }}>
-          <div className="eyebrow rise">Step 04 · Package</div>
-          <h1 className="display h1 rise" style={{ margin: '14px 0 14px', fontSize: 'clamp(40px, 4.6vw, 60px)' }}>
-            A thumbnail and title that <em>match the video.</em>
-          </h1>
-          <p className="muted lede rise" style={{ fontSize: 15, maxWidth: 600, lineHeight: 1.55, margin: 0 }}>
-            Cutaway proposes three pairs built from real frames of your {fmtTime(map.outDuration)} cut and the words you actually said. Pick one, then change the text, framing, colours and layout yourself.
+          <h1 className="display h2" style={{ margin: 0 }}>Thumbnail and title</h1>
+          <p className="muted" style={{ maxWidth: 620, lineHeight: 1.5, margin: '8px 0 0' }}>
+            Three pairs built from real frames of your {fmtTime(map.outDuration)} cut and the words you said. Pick one, then change the text, framing, colours and layout.
           </p>
-          <div className="card empty-card rise" style={{ animationDelay: '90ms' }}>
+          <div className="card empty-card">
             {progress ?? (
               <>
                 <div className="ghost-row" aria-hidden>
@@ -1103,7 +1100,7 @@ export function Package() {
     <div className="pkg">
       <aside className="pkg-left scroll" aria-label="Concepts">
         <div className="row between">
-          <div className="eyebrow">Concepts · {pkg.concepts.length}</div>
+          <div className="pkg-heading">Concepts <span className="dim">{pkg.concepts.length}</span></div>
           <Button size="sm" variant="ai" icon="sparkle" busy={running} onClick={() => void create()} title="Adds new concepts. The ones you edited or chose are kept.">
             New concepts
           </Button>
@@ -1139,7 +1136,7 @@ export function Package() {
           <section className="pkg-center scroll">
             <div className="row between">
               <div className="row" style={{ gap: 8 }}>
-                <div className="eyebrow">Thumbnail</div>
+                <div className="pkg-heading">Thumbnail</div>
                 {focused.id === pkg.selectedId ? (
                   <span className="pill accent">
                     <Icon name="check" size={10} /> Chosen for export

@@ -1,6 +1,7 @@
-import type { Appearance, BrollInsert, CameraSlot, CursorSample, LayoutMode, LayoutSegment, Mask, Overlay, Project, Rect, Seconds, Zoom } from './types';
+import type { Appearance, BrollInsert, CameraSlot, CursorSample, KeyStroke, LayoutMode, LayoutSegment, Mask, Overlay, Project, Rect, Seconds, Zoom } from './types';
 import { at, clamp } from './ranges';
-import { cameraSource, covers, sourceByRole } from './sync';
+import { cameraSource, covers, sourceByRole, toSourceTime } from './sync';
+import { DEVICE_BEZEL, activeShortcuts, cursorExtrasOf, faceAt, faceCrop, faceOf, motionBlurOf, shortcutsOf, type CameraCrop, type FaceTrackSmooth, type ShownShortcut } from './parity';
 import { defaultLayoutMode } from './edit';
 import type { TimeMap } from './timemap';
 
@@ -33,21 +34,51 @@ export interface CursorTrack {
   ys: Float32Array;
   clicks: { t: Seconds; x: number; y: number }[];
   lastMove: Float32Array;
+  /** Cursor type per sample: 0 arrow, 1 pointing hand, 2 I-beam. */
+  kinds: Uint8Array;
+}
+
+export type CursorKind = 'arrow' | 'pointer' | 'ibeam';
+const KIND_CODE: Record<string, number> = { pointer: 1, ibeam: 2 };
+const KIND_NAME: CursorKind[] = ['arrow', 'pointer', 'ibeam'];
+
+export interface CursorTrackOptions {
+  /** Ignore tiny hand tremor: the pointer only follows once it has really moved. */
+  antiShake?: boolean;
+  /** Ease back to the starting position over the last second, so a looping video is seamless. */
+  loop?: boolean;
+}
+
+/** Dead-zone filter: positions within `radius` of the last accepted one are treated as no movement. */
+export function suppressShake(samples: CursorSample[], radius = 0.004): CursorSample[] {
+  if (samples.length === 0) return samples;
+  let ax = samples[0]!.x;
+  let ay = samples[0]!.y;
+  return samples.map((s) => {
+    if (s.e !== 'move' || Math.hypot(s.x - ax, s.y - ay) > radius) {
+      ax = s.x;
+      ay = s.y;
+      return s;
+    }
+    return { ...s, x: ax, y: ay };
+  });
 }
 
 /**
  * Precompute a spring-smoothed cursor path. Being a pure function of the
  * recorded samples, preview and export draw the identical cursor.
  */
-export function buildCursorTrack(samples: CursorSample[], smoothing: number, hz = 120): CursorTrack {
-  const clicks = samples.filter((s) => s.e === 'down').map((s) => ({ t: s.t, x: s.x, y: s.y }));
-  if (samples.length === 0) return { hz, t0: 0, xs: new Float32Array(0), ys: new Float32Array(0), clicks, lastMove: new Float32Array(0) };
+export function buildCursorTrack(raw: CursorSample[], smoothing: number, hz = 120, opts: CursorTrackOptions = {}): CursorTrack {
+  const clicks = raw.filter((s) => s.e === 'down').map((s) => ({ t: s.t, x: s.x, y: s.y }));
+  const samples = opts.antiShake ? suppressShake(raw) : raw;
+  if (samples.length === 0) return { hz, t0: 0, xs: new Float32Array(0), ys: new Float32Array(0), clicks, lastMove: new Float32Array(0), kinds: new Uint8Array(0) };
   const t0 = samples[0]!.t;
   const t1 = samples[samples.length - 1]!.t;
   const n = Math.max(1, Math.ceil((t1 - t0) * hz) + 1);
   const xs = new Float32Array(n);
   const ys = new Float32Array(n);
   const lastMove = new Float32Array(n);
+  const kinds = new Uint8Array(n);
   const omega = lerp(90, 9, clamp(smoothing, 0, 1)); // rad/s, critically damped
   let px = samples[0]!.x;
   let py = samples[0]!.y;
@@ -83,18 +114,38 @@ export function buildCursorTrack(samples: CursorSample[], smoothing: number, hz 
     xs[i] = px;
     ys[i] = py;
     lastMove[i] = lastMoveT;
+    kinds[i] = KIND_CODE[a.c ?? ''] ?? 0;
   }
-  return { hz, t0, xs, ys, clicks, lastMove };
+  if (opts.loop && n > 2) {
+    const span = Math.min(n - 1, Math.round(hz));
+    for (let i = n - span; i < n; i++) {
+      const p = ease((i - (n - span)) / span);
+      xs[i] = lerp(xs[i]!, xs[0]!, p);
+      ys[i] = lerp(ys[i]!, ys[0]!, p);
+    }
+  }
+  return { hz, t0, xs, ys, clicks, lastMove, kinds };
 }
 
-export function cursorAt(track: CursorTrack, t: Seconds): { x: number; y: number; idleFor: Seconds } | null {
+export function cursorAt(track: CursorTrack, t: Seconds): { x: number; y: number; idleFor: Seconds; kind: CursorKind; vx: number; vy: number } | null {
   const n = track.xs.length;
   if (n === 0) return null;
   const f = clamp((t - track.t0) * track.hz, 0, n - 1);
   const i = Math.floor(f);
   const k = Math.min(n - 1, i + 1);
   const u = f - i;
-  return { x: lerp(track.xs[i]!, track.xs[k]!, u), y: lerp(track.ys[i]!, track.ys[k]!, u), idleFor: Math.max(0, t - track.lastMove[i]!) };
+  // velocity over a short window, in normalised units per second
+  const a = Math.max(0, i - 3);
+  const b = Math.min(n - 1, i + 3);
+  const dt = Math.max(1, b - a) / track.hz;
+  return {
+    x: lerp(track.xs[i]!, track.xs[k]!, u),
+    y: lerp(track.ys[i]!, track.ys[k]!, u),
+    idleFor: Math.max(0, t - track.lastMove[i]!),
+    kind: KIND_NAME[track.kinds[i] ?? 0] ?? 'arrow',
+    vx: (track.xs[b]! - track.xs[a]!) / dt,
+    vy: (track.ys[b]! - track.ys[a]!) / dt,
+  };
 }
 
 // ───────────────────────────── layout geometry ─────────────────────────────
@@ -111,10 +162,15 @@ export interface LayoutGeometry {
 }
 
 /** Where screen and camera sit, in output pixels, for one layout mode. */
-export function layoutGeometry(mode: LayoutMode, ap: Appearance, screenAspect: number | null): LayoutGeometry {
+export function layoutGeometry(mode: LayoutMode, ap: Appearance, screenAspect: number | null, device: 'phone' | 'tablet' | null = null): LayoutGeometry {
   const W = ap.output.width;
   const H = ap.output.height;
-  const pad = ap.frame.padding * H;
+  // Sizes follow the short side, so portrait and square outputs keep sensible proportions (equal to H for 16:9).
+  const M = Math.min(W, H);
+  const portrait = H > W * 1.05;
+  const pad = ap.frame.padding * M;
+  // With a device frame the picture is drawn smaller, so the bezel around it stays inside its box.
+  const bezel = device ? DEVICE_BEZEL[device].edge : 0;
   const fit = (box: Rect, aspect: number): Rect => {
     let w = box.w;
     let h = w / aspect;
@@ -122,14 +178,19 @@ export function layoutGeometry(mode: LayoutMode, ap: Appearance, screenAspect: n
       h = box.h;
       w = h * aspect;
     }
+    if (bezel) {
+      const k = 1 / (1 + 2 * bezel * Math.max(1, aspect));
+      w *= k;
+      h *= k;
+    }
     return { x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h };
   };
   const aspect = screenAspect ?? W / H;
   const screenFull = fit({ x: pad, y: pad, w: W - 2 * pad, h: H - 2 * pad }, aspect);
-  const screenRadius = pad > 0 ? ap.frame.radius * H : 0;
+  const screenRadius = pad > 0 ? ap.frame.radius * M : 0;
 
-  const side = ap.camera.size * H;
-  const margin = Math.max(pad * 0.55, 0.035 * H);
+  const side = ap.camera.size * M * (portrait ? 1.25 : 1);
+  const margin = Math.max(pad * 0.55, 0.035 * M);
   const cx = ap.camera.corner.endsWith('r') ? W - margin - side : margin;
   const cy = ap.camera.corner.startsWith('b') ? H - margin - side : margin;
   const camOverlay: Rect = { x: cx, y: cy, w: side, h: side };
@@ -144,12 +205,20 @@ export function layoutGeometry(mode: LayoutMode, ap: Appearance, screenAspect: n
     case 'camera':
       return { screen: { rect: shrink(screenFull, 1.06), opacity: 0, radius: screenRadius }, camera: { rect: { x: 0, y: 0, w: W, h: H }, opacity: 1, radius: 0 } };
     case 'split': {
-      const outer = Math.max(pad, 0.045 * H);
+      const outer = Math.max(pad, 0.045 * M);
+      if (portrait || W / H < 1.2) {
+        // stacked: screen on top, camera below
+        const gap = 0.022 * H;
+        const camH = (H - 2 * outer - gap) * (portrait ? 0.42 : 0.4);
+        const camBox: Rect = { x: outer, y: H - outer - camH, w: W - 2 * outer, h: camH };
+        const screenBox: Rect = { x: outer, y: outer, w: W - 2 * outer, h: H - 2 * outer - camH - gap };
+        return { screen: { rect: fit(screenBox, aspect), opacity: 1, radius: ap.frame.radius * M }, camera: { rect: camBox, opacity: 1, radius: 0.03 * M } };
+      }
       const gap = 0.022 * W;
       const camW = W * 0.3;
       const camBox: Rect = { x: W - outer - camW, y: outer, w: camW, h: H - 2 * outer };
       const screenBox: Rect = { x: outer, y: outer, w: W - 2 * outer - camW - gap, h: H - 2 * outer };
-      return { screen: { rect: fit(screenBox, aspect), opacity: 1, radius: ap.frame.radius * H }, camera: { rect: camBox, opacity: 1, radius: 0.03 * H } };
+      return { screen: { rect: fit(screenBox, aspect), opacity: 1, radius: ap.frame.radius * M }, camera: { rect: camBox, opacity: 1, radius: 0.03 * M } };
     }
   }
 }
@@ -208,16 +277,51 @@ export function resolveLayout(project: PLayout, t: Seconds): ResolvedLayout {
   return { mode, camera, transition: seg?.transition ?? 'smooth', start: seg?.start ?? 0, unresolved, fellBack, segment: seg };
 }
 
+export type ZoomPose = { scale: number; cx: number; cy: number };
+
+export interface LensState {
+  /** Centre in screen-source coordinates. */
+  x: number;
+  y: number;
+  /** Diameter as a fraction of the screen picture's height. */
+  size: number;
+  magnification: number;
+  /** 0…1 appear/disappear. */
+  amount: number;
+}
+
+/** One instant of the moving parts; several of these inside the shutter window make motion blur. */
+export interface Pose {
+  screen: Placement & { zoom: ZoomPose };
+  cameras: (Placement & { slot: CameraSlot })[];
+}
+
 export interface FrameState {
   out: Seconds;
   src: Seconds;
   layout: ResolvedLayout;
-  screen: (Placement & { zoom: { scale: number; cx: number; cy: number } }) | null;
-  cameras: (Placement & { slot: CameraSlot })[];
+  screen: (Placement & { zoom: ZoomPose }) | null;
+  cameras: (Placement & { slot: CameraSlot; crop?: CameraCrop })[];
   broll: { insert: BrollInsert; opacity: number; assetTime: Seconds } | null;
   overlays: { overlay: Overlay; enter: number; exit: number }[];
   masks: Mask[];
-  cursor: { x: number; y: number; opacity: number; ripples: { x: number; y: number; age: number }[] } | null;
+  cursor: {
+    x: number;
+    y: number;
+    opacity: number;
+    ripples: { x: number; y: number; age: number }[];
+    kind: CursorKind;
+    /** Tilt in radians from sideways movement. */
+    angle: number;
+    /** Earlier positions inside the shutter window, oldest first (motion blur). */
+    trail: { x: number; y: number }[];
+  } | null;
+  /** Magnifier lens over the screen picture. */
+  lens: LensState | null;
+  /** Key-cap labels to show. */
+  shortcuts: ShownShortcut[];
+  /** Earlier poses inside the shutter window, oldest first; empty when nothing is moving or blur is off. */
+  blur: Pose[];
   unresolved: boolean;
 }
 
@@ -229,30 +333,43 @@ export interface FrameContext {
   /** Heavily smoothed pointer the zoom viewport follows. */
   follow: CursorTrack | null;
   screenAspect: number | null;
+  /** Shortcut telemetry on the session clock. */
+  keys?: KeyStroke[] | null;
+  /** Smoothed face tracks per camera slot (camera-source time). */
+  faces?: Partial<Record<CameraSlot, FaceTrackSmooth | null>>;
+  /** Export uses more motion-blur sub-samples than the live preview. */
+  quality?: 'preview' | 'export';
+  /** Device frame drawn around the screen picture (leaves room for the bezel). */
+  device?: 'phone' | 'tablet' | null;
 }
 
 function zoomAmount(z: Zoom, out: Seconds, map: TimeMap, tIn: number, tOut: number): number {
   const a = map.toOutput(z.start);
   const b = map.toOutput(z.end);
   if (b - a < 0.05) return 0;
+  if (z.style === 'instant') return out >= a && out < b ? 1 : 0;
   const half = (b - a) / 2;
   const pin = (out - a) / Math.min(tIn, half);
   const pout = (b - out) / Math.min(tOut, half);
   return ease(Math.min(pin, pout));
 }
 
-/**
- * Everything the compositor needs for one output frame. Pure: the same
- * project and output time always produce the same frame, which is what keeps
- * the preview and the export identical.
- */
-export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
+function zoomTarget(ctx: FrameContext, z: Zoom, src: Seconds): { x: number; y: number } {
+  if (z.follow && ctx.follow) {
+    const c = cursorAt(ctx.follow, clamp(src, z.start, z.end));
+    if (c) return { x: c.x, y: c.y };
+  }
+  return { x: z.x, y: z.y };
+}
+
+/** Layout placement and zoom at one output time. */
+function poseAt(ctx: FrameContext, out: Seconds): { src: Seconds; layout: ResolvedLayout; pose: Pose; lens: LensState | null } {
   const { project, map } = ctx;
   const ap = project.edit.appearance;
   const mo = MOTION[ap.motion];
   const src = map.toSource(out);
   const layout = resolveLayout(project, src);
-  const geo = layoutGeometry(layout.mode, ap, ctx.screenAspect);
+  const geo = layoutGeometry(layout.mode, ap, ctx.screenAspect, ctx.device ?? null);
 
   // Blend from the layout the viewer saw just before this decision started.
   let screenP: Placement = geo.screen;
@@ -263,7 +380,7 @@ export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
     const prevSrc = map.toSource(Math.max(0, startOut - 1 / ap.output.fps));
     const prev = resolveLayout(project, Math.min(prevSrc, layout.start - 1e-3));
     if (prev.mode !== layout.mode || prev.camera !== layout.camera) {
-      const pg = layoutGeometry(prev.mode, ap, ctx.screenAspect);
+      const pg = layoutGeometry(prev.mode, ap, ctx.screenAspect, ctx.device ?? null);
       const p = ease(sinceStart / mo.layout);
       screenP = { rect: lerpRect(pg.screen.rect, geo.screen.rect, p), opacity: lerp(pg.screen.opacity, geo.screen.opacity, p), radius: lerp(pg.screen.radius, geo.screen.radius, p) };
       const camRect = lerpRect(pg.camera.rect, geo.camera.rect, p);
@@ -281,25 +398,64 @@ export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
   }
 
   // Zoom: strongest active zoom wins; the viewport stays inside the source.
-  let zoom = { scale: 1, cx: 0.5, cy: 0.5 };
+  let zoom: ZoomPose = { scale: 1, cx: 0.5, cy: 0.5 };
+  let lens: LensState | null = null;
   let best = 0;
   for (const z of project.edit.zooms) {
     if (src < z.start - 2 || src > z.end + 2) continue;
+    if (z.style === 'magnifier') {
+      const amt = zoomAmount(z, out, map, 0.3, 0.3);
+      if (amt > (lens?.amount ?? 0)) {
+        const t = zoomTarget(ctx, z, src);
+        lens = { x: t.x, y: t.y, size: clamp(z.lensSize ?? 0.34, 0.12, 0.8), magnification: z.scale, amount: amt };
+      }
+      continue;
+    }
     const amt = zoomAmount(z, out, map, mo.zoomIn, mo.zoomOut);
     if (amt <= best) continue;
     best = amt;
-    let tx = z.x;
-    let ty = z.y;
-    if (z.follow && ctx.follow) {
-      const c = cursorAt(ctx.follow, clamp(src, z.start, z.end));
-      if (c) {
-        tx = c.x;
-        ty = c.y;
-      }
-    }
+    const t = zoomTarget(ctx, z, src);
     const scale = 1 + (z.scale - 1) * amt;
     const half = 0.5 / scale;
-    zoom = { scale, cx: lerp(0.5, clamp(tx, half, 1 - half), amt), cy: lerp(0.5, clamp(ty, half, 1 - half), amt) };
+    zoom = { scale, cx: lerp(0.5, clamp(t.x, half, 1 - half), amt), cy: lerp(0.5, clamp(t.y, half, 1 - half), amt) };
+  }
+  return { src, layout, pose: { screen: { ...screenP, zoom }, cameras: cams }, lens };
+}
+
+function poseMoved(a: Pose, b: Pose, W: number): boolean {
+  const r = (x: Rect, y: Rect) => Math.abs(x.x - y.x) + Math.abs(x.y - y.y) + Math.abs(x.w - y.w) + Math.abs(x.h - y.h);
+  if (r(a.screen.rect, b.screen.rect) > W * 0.0015) return true;
+  const za = a.screen.zoom;
+  const zb = b.screen.zoom;
+  if (Math.abs(za.scale - zb.scale) > 0.004 || Math.abs(za.cx - zb.cx) + Math.abs(za.cy - zb.cy) > 0.0015) return true;
+  if (a.cameras.length !== b.cameras.length) return true;
+  return a.cameras.some((c, i) => r(c.rect, b.cameras[i]!.rect) > W * 0.0015);
+}
+
+/** Longest shutter (seconds) at motion-blur amount 1. */
+export const MAX_SHUTTER = 0.045;
+
+/**
+ * Everything the compositor needs for one output frame. Pure: the same
+ * project and output time always produce the same frame, which is what keeps
+ * the preview and the export identical.
+ */
+export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
+  const { project, map } = ctx;
+  const ap = project.edit.appearance;
+  const { src, layout, pose, lens } = poseAt(ctx, out);
+  const mb = motionBlurOf(ap);
+  const subs = mb.amount > 0.01 ? (ctx.quality === 'export' ? 9 : 4) : 0;
+  const shutter = mb.amount * MAX_SHUTTER;
+
+  // motion blur of layout/zoom: earlier poses within the shutter window
+  let blur: Pose[] = [];
+  if (subs && mb.animation) {
+    const oldest = poseAt(ctx, Math.max(0, out - shutter)).pose;
+    if (poseMoved(oldest, pose, ap.output.width)) {
+      blur = [oldest];
+      for (let i = 1; i < subs; i++) blur.push(poseAt(ctx, Math.max(0, out - shutter * (1 - i / subs))).pose);
+    }
   }
 
   // B-roll covers the frame while narration continues underneath.
@@ -324,29 +480,69 @@ export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
   const masks = project.edit.masks.filter((m) => src >= m.start && src < m.end);
 
   let cursor: FrameState['cursor'] = null;
-  if (ctx.cursor && ap.cursor.visible && screenP.opacity > 0.01) {
+  if (ctx.cursor && ap.cursor.visible && pose.screen.opacity > 0.01) {
     const c = cursorAt(ctx.cursor, src);
     if (c) {
+      const extra = cursorExtrasOf(ap);
       const idleFade = ap.cursor.hideWhenIdle ? clamp(1 - (c.idleFor - 2.5) / 0.5, 0, 1) : 1;
       const ripples =
         ap.cursor.clickEffect === 'ripple'
           ? ctx.cursor.clicks.filter((k) => src >= k.t && src - k.t < 0.6).map((k) => ({ x: k.x, y: k.y, age: (src - k.t) / 0.6 }))
           : [];
-      cursor = { x: c.x, y: c.y, opacity: idleFade, ripples };
+      const trail: { x: number; y: number }[] = [];
+      if (subs && mb.cursor) {
+        // the pointer is cheap to draw, so its smear gets many more samples than the picture
+        const n = ctx.quality === 'export' ? 24 : 10;
+        for (let i = 0; i < n; i++) {
+          const p = cursorAt(ctx.cursor, map.toSource(Math.max(0, out - shutter * (1 - i / n))));
+          if (p) trail.push({ x: p.x, y: p.y });
+        }
+        // a still cursor needs no smear
+        const first = trail[0];
+        if (!first || Math.hypot(first.x - c.x, first.y - c.y) < 0.0012) trail.length = 0;
+      }
+      cursor = {
+        x: c.x,
+        y: c.y,
+        opacity: idleFade,
+        ripples,
+        kind: extra.style === 'arrow' ? 'arrow' : c.kind,
+        // lean into horizontal movement, up to about 14°
+        angle: extra.rotate ? clamp(c.vx * 0.28, -0.25, 0.25) : 0,
+        trail,
+      };
     }
   }
+
+  // camera framing from face tracking
+  const face = faceOf(ap);
+  const cameras: FrameState['cameras'] = pose.cameras
+    .filter((c) => c.opacity > 0.003 && !!cameraSource(project, c.slot))
+    .map((c) => {
+      const track = face.zoom || face.follow ? ctx.faces?.[c.slot] : null;
+      if (!track) return c;
+      const camSrc = cameraSource(project, c.slot)!;
+      const f = faceAt(track, Math.max(0, toSourceTime(camSrc.sync, src)));
+      return { ...c, crop: faceCrop(f, face, track.median) };
+    });
+
+  const sc = shortcutsOf(ap);
+  const shortcuts = sc.show && ctx.keys?.length ? activeShortcuts(ctx.keys, src, sc.hidden) : [];
 
   const hasScreen = !!sourceByRole(project, 'screen');
   return {
     out,
     src,
     layout,
-    screen: hasScreen ? { ...screenP, zoom } : null,
-    cameras: cams.filter((c) => c.opacity > 0.003 && !!cameraSource(project, c.slot)),
+    screen: hasScreen ? pose.screen : null,
+    cameras,
     broll,
     overlays,
     masks,
     cursor,
+    lens: hasScreen && lens && pose.screen.opacity > 0.5 ? lens : null,
+    shortcuts,
+    blur: hasScreen || blur.length === 0 ? blur : blur,
     unresolved: layout.unresolved,
   };
 }

@@ -191,9 +191,32 @@ function buildMenu() {
   const item = (label: string, cmd: string, accelerator?: string): MenuItemConstructorOptions => ({ label, accelerator, click: () => sendMenu(cmd) });
   const template: MenuItemConstructorOptions[] = [
     { label: 'Cutaway', submenu: [{ role: 'about' }, { type: 'separator' }, item('Settings…', 'settings', 'Cmd+,'), { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
-    { label: 'File', submenu: [item('New Recording', 'record', 'Cmd+N'), item('Import Media…', 'import', 'Cmd+I'), { type: 'separator' }, item('Project Library', 'library', 'Cmd+Shift+L'), item('Save', 'save', 'Cmd+S'), { type: 'separator' }, item('Export YouTube Package…', 'export', 'Cmd+E'), { type: 'separator' }, { role: 'close' }] },
+    { label: 'File', submenu: [item('New Recording', 'record', 'Cmd+N'), item('Import Media…', 'import', 'Cmd+I'), { type: 'separator' }, item('Project Library', 'library', 'Cmd+Shift+L'), item('Save', 'save', 'Cmd+S'), { type: 'separator' }, item('Export…', 'export', 'Shift+Cmd+E'), { type: 'separator' }, { role: 'close' }] },
     { label: 'Edit', submenu: [item('Undo', 'undo', 'Cmd+Z'), item('Redo', 'redo', 'Shift+Cmd+Z'), { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' }, item('Split at Playhead', 'split', 'Cmd+B'), item('Lock Selection', 'lock', 'Cmd+L')] },
-    { label: 'View', submenu: [item('Edit', 'view-edit', 'Cmd+1'), item('Package', 'view-package', 'Cmd+2'), item('Export', 'view-export', 'Cmd+3'), { type: 'separator' }, item('Expanded Timeline', 'toggle-timeline', 'Cmd+T'), { type: 'separator' }, { role: 'togglefullscreen' }, ...(app.isPackaged ? [] : ([{ role: 'reload' }, { role: 'toggleDevTools' }] as MenuItemConstructorOptions[]))] },
+    {
+      label: 'View',
+      submenu: [
+        item('Command Menu…', 'palette', 'Cmd+K'),
+        { type: 'separator' },
+        item('Background', 'tab:background', 'Cmd+1'),
+        item('Cursor', 'tab:cursor', 'Cmd+2'),
+        item('Camera', 'tab:camera', 'Cmd+3'),
+        item('Captions', 'tab:captions', 'Cmd+4'),
+        item('Transcript', 'tab:transcript', 'Cmd+5'),
+        item('Audio', 'tab:audio', 'Cmd+6'),
+        item('Keyboard Shortcuts', 'tab:shortcuts', 'Cmd+7'),
+        item('Animations', 'tab:motion', 'Cmd+8'),
+        { type: 'separator' },
+        item('Sources', 'view-sources'),
+        item('Edit', 'view-edit'),
+        item('Package', 'view-package'),
+        item('Show or Hide Sidebar', 'toggle-sidebar', 'Cmd+\\'),
+        item('More Timelines', 'toggle-timeline', 'Cmd+T'),
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+        ...(app.isPackaged ? [] : ([{ role: 'reload' }, { role: 'toggleDevTools' }] as MenuItemConstructorOptions[])),
+      ],
+    },
     { role: 'windowMenu' },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -273,9 +296,11 @@ function registerIpc() {
         .map((s) => ({ kind: s.id.startsWith('screen') ? ('display' as const) : ('window' as const), id: Number(s.id.split(':')[1]), displayId: s.display_id ? Number(s.display_id) : null, name: s.name, dataUrl: s.thumbnail.toDataURL() }));
     },
     copyFile: async (p: string) => {
-      // Finder-style file copy: pasteable into Slack, Mail, Messages, Finder…
+      // Finder-style file copy through NSPasteboard: pasteable into Slack, Mail, Messages, Finder…
       const { execFile } = await import('node:child_process');
-      await new Promise<void>((res, rej) => execFile('/usr/bin/osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => (err ? rej(err) : res())));
+      const script = 'function run(argv){ObjC.import("AppKit");var pb=$.NSPasteboard.generalPasteboard;pb.clearContents;return pb.writeObjects($.NSArray.arrayWithObject($.NSURL.fileURLWithPath(argv[0])))}';
+      const out = await new Promise<string>((res, rej) => execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script, p], (err, stdout) => (err ? rej(err) : res(stdout.trim()))));
+      if (out !== 'true') throw new Error('The file could not be placed on the clipboard.');
     },
     notesWindow: (show: boolean) => (show ? showNotes() : hideNotes()),
     recordingMode: (on: boolean) => {

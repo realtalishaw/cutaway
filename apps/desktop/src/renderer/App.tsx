@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { saveNow, startAutosave, useApp, usePlayback, type ProjectView } from './state/store';
+import { saveNow, startAutosave, useApp, usePlayback, type InspectorTab, type ProjectView } from './state/store';
 import { backToLibrary, newRecording, pickAndImport } from './state/actions';
 import { Icon, Logo } from './ui/icons';
 import { Button, Modal, fmtAgo } from './ui/kit';
@@ -13,6 +13,8 @@ import { Package } from './screens/Package';
 import { ExportScreen } from './screens/Export';
 import { Settings } from './screens/Settings';
 import { Processing } from './screens/Processing';
+import { Palette } from './ui/Palette';
+import { Notes } from './screens/Notes';
 
 const STEPS: { view: ProjectView; label: string }[] = [
   { view: 'sources', label: 'Sources' },
@@ -39,12 +41,10 @@ function SaveStatus() {
       </button>
     );
   }
+  // Autosave is silent, as in Screen Studio; the state is still announced to assistive tech and shown on hover.
   const text = save.state === 'saving' ? 'Saving…' : save.state === 'dirty' ? 'Edited' : save.at ? `Saved ${fmtAgo(save.at)}` : 'Saved';
   return (
-    <span className="tiny dim row gap-2" aria-live="polite">
-      {save.state === 'saved' ? <Icon name="check" size={12} /> : <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5 }} />}
-      {text}
-    </span>
+    <span className="save-dot no-drag" data-state={save.state} title={text} aria-live="polite" aria-label={text} role="status" />
   );
 }
 
@@ -144,7 +144,6 @@ function Titlebar() {
   const projectPath = useApp((s) => s.projectPath);
   const canUndo = useApp((s) => s.past.length > 0);
   const canRedo = useApp((s) => s.future.length > 0);
-  const inspector = useApp((s) => s.panels.inspector);
   const setView = useApp((s) => s.setView);
   const [confirmTrash, setConfirmTrash] = useState(false);
   const inProject = route === 'project' && !!project;
@@ -165,20 +164,21 @@ function Titlebar() {
           </nav>
           <ProjectName />
           <div className="grow" />
+          <SaveStatus />
+          <Button className="no-drag" variant="ghost" icon="gear" onClick={() => useApp.getState().go('settings')} title="Settings (⌘,)" aria-label="Settings" />
+          <Button className="no-drag" variant="ghost" icon="command" onClick={() => window.dispatchEvent(new CustomEvent('cutaway-palette'))} title="Command menu (⌘K)" aria-label="Command menu" />
+          <span className="tb-sep" />
           <div className="row no-drag" style={{ gap: 2 }}>
-            <SaveStatus />
             <Button variant="ghost" icon="undo" disabled={!canUndo} onClick={() => useApp.getState().undo()} title="Undo (⌘Z)" aria-label="Undo" />
             <Button variant="ghost" icon="redo" disabled={!canRedo} onClick={() => useApp.getState().redo()} title="Redo (⇧⌘Z)" aria-label="Redo" />
           </div>
           <span className="tb-sep" />
           <PresetsMenu />
           <span className="tb-sep" />
-          <Button className="no-drag" variant="ghost" icon="sidebar" on={inspector && view === 'edit'} disabled={view !== 'edit'} onClick={() => useApp.getState().setPanels({ inspector: !inspector })} title="Show or hide the sidebar" aria-label="Toggle sidebar" />
-          <Button className="no-drag" variant="ghost" icon="gear" onClick={() => useApp.getState().go('settings')} title="Settings (⌘,)" aria-label="Settings" />
-          <Button className="no-drag" variant="ghost" icon="sparkle" disabled={!hasMedia} on={view === 'brief'} onClick={() => setView('brief')} title="Create or redo the AI first cut" style={{ color: 'var(--ai)' }}>
+          <Button className="no-drag" variant="ghost" icon="sparkle" disabled={!hasMedia} on={view === 'brief'} onClick={() => setView('brief')} title="Create or redo the AI first cut" style={{ color: 'var(--text)' }}>
             First cut
           </Button>
-          <Button className="no-drag" variant="primary" icon="upload" disabled={!hasMedia} onClick={() => setView('export')} title="Export (⌘E)">
+          <Button className="no-drag" variant="primary" icon="upload" disabled={!hasMedia} onClick={() => setView('export')} title="Export (⇧⌘E)" style={{ marginLeft: 8 }}>
             Export
           </Button>
         </>
@@ -270,13 +270,15 @@ export function App() {
   const project = useApp((s) => s.project);
   const reduce = useApp((s) => s.settings?.reduceMotion ?? false);
   const isController = window.location.hash === '#controller';
+  const isNotes = window.location.hash === '#notes';
+  const [palette, setPalette] = useState(false);
 
   useEffect(() => {
     document.body.classList.toggle('reduce-motion', reduce);
   }, [reduce]);
 
   useEffect(() => {
-    if (isController) {
+    if (isController || isNotes) {
       document.body.classList.add('controller-body');
       return;
     }
@@ -285,6 +287,8 @@ export function App() {
     void api.app.info().then((info) => useApp.setState({ info }));
     void api.ai.status().then((claude) => useApp.setState({ claude })).catch(() => {});
     startAutosave();
+    const onPalette = () => setPalette(true);
+    window.addEventListener('cutaway-palette', onPalette);
     const offMenu = api.app.onMenu((cmd) => {
       const app = useApp.getState();
       const typing = isTyping();
@@ -295,6 +299,8 @@ export function App() {
           return typing ? document.execCommand('redo') : app.redo();
         case 'save':
           return void saveNow().then(() => app.toast('Saved'));
+        case 'palette':
+          return setPalette((v) => !v);
         case 'settings':
           return app.go('settings');
         case 'library':
@@ -310,7 +316,17 @@ export function App() {
         case 'view-export':
         case 'export':
           return app.project && app.project.sources.length ? (app.go('project'), app.setView('export')) : undefined;
+        case 'view-sources':
+          return app.project ? (app.go('project'), app.setView('sources')) : undefined;
+        case 'toggle-sidebar':
+          return app.setPanels({ inspector: !app.panels.inspector });
         default:
+          if (cmd.startsWith('tab:') && app.project && app.project.sources.length) {
+            app.go('project');
+            app.setView('edit');
+            app.select(null);
+            return app.setPanels({ inspector: true, tab: cmd.slice(4) as InspectorTab });
+          }
           // editor-specific commands (split, lock, toggle-timeline) are handled by the editor
           window.dispatchEvent(new CustomEvent('cutaway-command', { detail: cmd }));
       }
@@ -329,14 +345,16 @@ export function App() {
     window.addEventListener('dragover', stop);
     window.addEventListener('drop', stop);
     return () => {
+      window.removeEventListener('cutaway-palette', onPalette);
       offMenu();
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('dragover', stop);
       window.removeEventListener('drop', stop);
     };
-  }, [isController]);
+  }, [isController, isNotes]);
 
   if (isController) return <Controller />;
+  if (isNotes) return <Notes />;
 
   return (
     <div className="app">
@@ -345,6 +363,7 @@ export function App() {
         {route === 'settings' ? <Settings /> : route === 'record' && project ? <Record /> : route === 'project' && project ? <Workspace /> : <Library />}
       </main>
       <Toasts />
+      {palette ? <Palette onClose={() => setPalette(false)} /> : null}
     </div>
   );
 }

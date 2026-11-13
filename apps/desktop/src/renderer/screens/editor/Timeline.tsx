@@ -4,7 +4,7 @@ import { timeMapOf, useApp, usePlayback, useShownProject, type Selection } from 
 import { Icon, type IconName } from '../../ui/icons';
 import { addZoom, patchItem, retime, seekSource } from './ops';
 
-const GUTTER = 14;
+const GUTTER = 20;
 const VIEW_LABEL: Record<string, { label: string; icon: IconName }> = {
   screen: { label: 'Screen', icon: 'screen' },
   camera: { label: 'Camera', icon: 'camera' },
@@ -81,7 +81,7 @@ function Item({ kind, id, range, pps, duration, meta, selected, className = '', 
   );
 }
 
-function Lane({ kind, height = 44, children, onBackground, hint, onAdd, pps }: { kind: string; height?: number; children: ReactNode; onBackground?: { down(e: RP): void; move(e: RP): void; up(e: RP): void }; hint?: string; onAdd?: (t: number) => void; pps?: number }) {
+function Lane({ kind, height = 48, children, onBackground, hint, onAdd, pps }: { kind: string; height?: number; children: ReactNode; onBackground?: { down(e: RP): void; move(e: RP): void; up(e: RP): void }; hint?: string; onAdd?: (t: number) => void; pps?: number }) {
   const [ghost, setGhost] = useState<number | null>(null);
   const x = (e: RP | React.MouseEvent) => e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left;
   return (
@@ -138,28 +138,33 @@ function ClipCanvas({ project, pps, scrollLeft, width, height }: { project: Proj
       const w = Math.max(2, (k.end - k.start) * pps - 1);
       ctx.save();
       ctx.beginPath();
-      ctx.roundRect(x0, 0.5, w, height - 1, 9);
-      ctx.fillStyle = '#8a6516';
+      ctx.roundRect(x0, 0, w, height, 10);
+      const grad = ctx.createLinearGradient(0, 0, 0, height);
+      grad.addColorStop(0, '#97640b');
+      grad.addColorStop(1, '#c07e11');
+      ctx.fillStyle = grad;
       ctx.fill();
       ctx.clip();
+      // thin lighter dividers at each second (when there is room for them)
+      if (pps >= 14) {
+        ctx.fillStyle = 'rgba(255, 220, 150, 0.16)';
+        for (let sec = Math.ceil(Math.max(k.start, t0)); sec < Math.min(k.end, t1); sec++) ctx.fillRect(Math.round(x(sec)), 0, 1, height);
+      }
       // waveform, bottom-anchored like a filled area
       if (wf && wf.length) {
-        ctx.fillStyle = 'rgba(214, 166, 72, 0.75)';
+        ctx.fillStyle = '#cd9029';
         ctx.beginPath();
         const a = Math.max(0, Math.floor(Math.max(k.start, t0) * hz));
         const b = Math.min(wf.length, Math.ceil(Math.min(k.end, t1) * hz));
         ctx.moveTo(x(a / hz), height);
-        for (let i = a; i < b; i++) ctx.lineTo(x(i / hz), height - 3 - wf[i]! * (height * 0.55));
+        for (let i = a; i < b; i++) ctx.lineTo(x(i / hz), height - 2 - wf[i]! * (height * 0.45));
         ctx.lineTo(x(b / hz), height);
         ctx.closePath();
         ctx.fill();
       }
       ctx.restore();
-      ctx.strokeStyle = '#d19c2c';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(x0 + 0.5, 1, w - 1, height - 2, 9);
-      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 214, 140, 0.22)';
+      ctx.fillRect(x0 + 8, 0.5, Math.max(0, w - 16), 1);
       // label: Clip · duration · speed
       const speed = map.segments.find((sg) => sg.srcStart >= k.start - 1e-6 && sg.srcEnd <= k.end + 1e-6 && sg.speed !== 1)?.speed;
       const label = `${fmtDuration(k.end - k.start)}   ${speed ? `${speed}x` : '1x'}`;
@@ -168,11 +173,11 @@ function ClipCanvas({ project, pps, scrollLeft, width, height }: { project: Proj
         ctx.textAlign = 'center';
         const cx = Math.min(Math.max(x0 + w / 2, 60), width - 60);
         if (cx > x0 + 44 && cx < x0 + w - 44) {
-          ctx.font = '500 10.5px "Inter Variable", sans-serif';
-          ctx.fillStyle = 'rgba(255, 236, 196, 0.75)';
+          ctx.font = '500 11.5px "Inter Variable", sans-serif';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
           ctx.fillText('Clip', cx, height / 2 - 8);
-          ctx.font = '600 11.5px "Inter Variable", sans-serif';
-          ctx.fillStyle = 'rgba(255, 246, 228, 0.98)';
+          ctx.font = '500 12px "Inter Variable", sans-serif';
+          ctx.fillStyle = '#fff';
           ctx.fillText(label, cx, height / 2 + 8);
         }
       }
@@ -276,8 +281,11 @@ export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): vo
       const d = rangeDrag.current;
       rangeDrag.current = null;
       if (d && !d.moved) {
+        const t = timeAt(e.clientX);
+        const slice = e.detail >= 2 ? map.keptRanges().find((k) => t >= k.start && t < k.end) : undefined;
+        if (slice) return select({ kind: 'range', range: slice });
         select(null);
-        seekSource(project, timeAt(e.clientX));
+        seekSource(project, t);
       }
     },
   };
@@ -306,14 +314,19 @@ export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): vo
           <div className="tl-ruler" onPointerDown={rulerHandlers.down} onPointerMove={rulerHandlers.move} onPointerUp={rulerHandlers.up}>
             {rulerTicks.filter((t) => t.major).map((t) => (
               <span key={t.t.toFixed(3)} className="tick" style={{ left: t.t * scale }}>
-                <b>{labelEvery < 1 ? `${t.t.toFixed(1)}s` : t.t < 60 ? `${Math.round(t.t)}s` : fmtTime(t.t)}</b>
+                <b>{labelEvery < 1 ? fmtTime(t.t, true).replace(/0$/, '') : fmtTime(t.t)}</b>
+                <i />
+              </span>
+            ))}
+            {rulerTicks.filter((t) => t.major && t.t + major / 2 <= duration).map((t) => (
+              <span key={`h${t.t.toFixed(3)}`} className="tick half" style={{ left: (t.t + major / 2) * scale }}>
                 <i />
               </span>
             ))}
           </div>
 
-          <Lane kind="clip" height={52} onBackground={ro ? undefined : clipHandlers}>
-            <ClipCanvas project={project} pps={scale} scrollLeft={scrollLeft} width={Math.max(0, width - GUTTER)} height={52} />
+          <Lane kind="clip" height={48} onBackground={ro ? undefined : clipHandlers}>
+            <ClipCanvas project={project} pps={scale} scrollLeft={scrollLeft} width={Math.max(0, width - GUTTER)} height={48} />
             {e.speeds.map((s) => (
               <Item key={s.id} kind="speed" id={s.id} range={s} pps={scale} duration={duration} meta={s.meta} selected={isSel('speed', s.id)} title={`${s.speed}× speed`} onSelect={() => select({ kind: 'speed', id: s.id })} onChange={(r, k) => retime('speeds', s.id, r, k)}>
                 <Icon name="speed" size={10} /> {s.speed}x
@@ -340,7 +353,7 @@ export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): vo
             {rangeSel ? <div className="tl-range" style={{ left: rangeSel.start * scale, width: Math.max(2, (rangeSel.end - rangeSel.start) * scale) }} /> : null}
           </Lane>
 
-          <Lane kind="zoom" pps={scale} hint="Add zoom" onAdd={ro || !project.sources.some((s) => s.role === 'screen') ? undefined : (t) => addZoom({ start: Math.max(0, t - 0.3), end: Math.min(duration, t + 2.7) })}>
+          <Lane kind="zoom" pps={scale} hint="Zoom" onAdd={ro || !project.sources.some((s) => s.role === 'screen') ? undefined : (t) => addZoom({ start: Math.max(0, t - 0.3), end: Math.min(duration, t + 2.7) })}>
             {e.zooms.map((z) => (
               <Item key={z.id} kind="zoom" id={z.id} range={z} pps={scale} duration={duration} meta={z.meta} minLength={0.6} selected={isSel('zoom', z.id)} title={`Zoom ${z.scale.toFixed(1)}×${z.follow ? ' · follows cursor' : ''}${z.meta.reason ? ` · ${z.meta.reason}` : ''}`} onSelect={() => select({ kind: 'zoom', id: z.id })} onChange={(r, k) => retime('zooms', z.id, r, k)}>
                 <span className="tl-two">
@@ -349,7 +362,7 @@ export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): vo
                 </span>
               </Item>
             ))}
-            {e.zooms.length === 0 && !ro ? <span className="tl-empty">Click here to add a zoom</span> : null}
+            {e.zooms.length === 0 && !ro ? <span className="tl-empty">Click to add zoom on cursor</span> : null}
           </Lane>
 
           {expanded ? (

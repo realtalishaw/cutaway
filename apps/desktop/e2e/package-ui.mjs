@@ -13,7 +13,8 @@ const FFMPEG = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ff
 const FFPROBE = fs.existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe';
 const shots = path.resolve(process.argv[2] ?? path.join(os.tmpdir(), 'cutaway-package-ui'));
 fs.mkdirSync(shots, { recursive: true });
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cutaway-pkg-e2e-'));
+// Canonical path: os.tmpdir() goes through the /var → /private/var symlink.
+const profile = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cutaway-pkg-e2e-')));
 const libraryDir = path.join(profile, 'Library');
 const projectDir = path.join(libraryDir, 'Fixture demo.cutaway');
 const DURATION = 36;
@@ -137,10 +138,13 @@ try {
   await page.getByRole('button', { name: 'Redo' }).click();
 
   // ── export ──
-  await page.locator('.steps button', { hasText: 'Export' }).click();
+  await page.locator('.titlebar .btn.primary').click();
   await page.waitForSelector('.export .checks', { timeout: 10000 });
   await page.waitForTimeout(800);
-  const pills = await page.locator('.export .card .pill').allInnerTexts();
+  await shot('06a-export-sheet');
+  await page.locator('.ex-sheet .seg button', { hasText: 'YouTube package' }).click();
+  await page.waitForTimeout(400);
+  const pills = await page.locator('.export .ex-card .pill').allInnerTexts();
   await shot('06-export-preflight');
   console.log('  preflight:', pills.join(' | '));
 
@@ -152,9 +156,9 @@ try {
   await go.click();
   await page.waitForTimeout(1500);
   await shot('07-export-running');
-  await page.waitForFunction(() => /Package complete|Partial export|Export failed|Export cancelled/.test(document.querySelector('.export-status .eyebrow')?.textContent ?? ''), null, { timeout: 300000 });
+  await page.waitForFunction(() => /Package complete|Partial export|Export failed|Export stopped|Video exported|GIF exported|Copied to the clipboard|Exported, but not copied/.test(document.querySelector('.ex-progress > .ex-title, .ex-progress > .row > .ex-title')?.textContent ?? '') && !/^Exporting/.test(document.querySelector('.ex-progress .ex-title')?.textContent ?? ''), null, { timeout: 300000 });
   await page.waitForTimeout(500);
-  const outcome = await page.locator('.export-status .eyebrow').innerText();
+  const outcome = await page.locator('.ex-progress .ex-title').first().innerText();
   await shot('08-export-outcome');
   console.log('  outcome:', outcome);
   if (/complete/i.test(outcome)) {
@@ -179,36 +183,109 @@ try {
     // a second export must not overwrite the first
     await page.getByRole('button', { name: 'Done' }).click();
     await page.waitForTimeout(600);
-    const name2 = await page.locator('.export .dest span').last().innerText();
+    const name2 = await page.locator('.ex-dest .dest-name').innerText();
     check('the next export gets a new folder name', name2 !== folders[0], name2);
     await page.getByRole('button', { name: /Export (YouTube|draft) package/ }).click();
     await page.waitForTimeout(1200);
-    await page.getByRole('button', { name: 'Cancel export' }).click();
-    await page.waitForFunction(() => /Package complete|Partial export|Export failed|Export cancelled/.test(document.querySelector('.export-status .eyebrow')?.textContent ?? ''), null, { timeout: 120000 });
-    const outcome2 = await page.locator('.export-status .eyebrow').innerText();
+    await page.getByRole('button', { name: 'Stop export' }).click();
+    await page.waitForFunction(() => /Package complete|Partial export|Export failed|Export stopped|Video exported|GIF exported|Copied to the clipboard|Exported, but not copied/.test(document.querySelector('.ex-progress > .ex-title, .ex-progress > .row > .ex-title')?.textContent ?? '') && !/^Exporting/.test(document.querySelector('.ex-progress .ex-title')?.textContent ?? ''), null, { timeout: 120000 });
+    const outcome2 = await page.locator('.ex-progress .ex-title').first().innerText();
     await page.waitForTimeout(400);
     await shot('09-export-cancelled');
     const after = fs.readdirSync(exportDir);
-    check('cancelling leaves no half-written folder and keeps the first package', /cancelled/i.test(outcome2) && after.filter((n) => !n.startsWith('.')).length === 1 && after.filter((n) => n.includes('.working-')).length === 0, `${outcome2} · ${after.join(', ')}`);
+    check('cancelling leaves no half-written folder and keeps the first package', /stopped/i.test(outcome2) && after.filter((n) => !n.startsWith('.')).length === 1 && after.filter((n) => n.includes('.working-')).length === 0, `${outcome2} · ${after.join(', ')}`);
   } else {
-    const msg = await page.locator('.export-status .banner').first().innerText();
+    const msg = await page.locator('.ex-progress .banner').first().innerText();
     console.log('  failure message:', msg.replace(/\s+/g, ' '));
     const after = fs.existsSync(exportDir) ? fs.readdirSync(exportDir) : [];
     check('a failed export leaves no folder with the final name', !after.some((n) => /-youtube(-rev\d+)?$/.test(n)), after.join(', ') || 'export dir empty');
+  }
+
+  // ── single-file exports: MP4 at 720p (shape kept), GIF, clipboard ──
+  const outcomeOf = async () => (await page.locator('.ex-progress .ex-title').first().innerText()).replace(/\s+/g, ' ').trim();
+  const waitDone = () => page.waitForFunction(() => /Package complete|Partial export|Export failed|Export stopped|Video exported|GIF exported|Copied to the clipboard|Exported, but not copied/.test(document.querySelector('.ex-progress > .ex-title, .ex-progress > .row > .ex-title')?.textContent ?? '') && !/^Exporting/.test(document.querySelector('.ex-progress .ex-title')?.textContent ?? ''), null, { timeout: 300000 });
+  const back = async () => { const b = page.getByRole('button', { name: /^(Back|Done)$/ }); if (await b.count()) await b.first().click(); await page.waitForSelector('.ex-foot', { timeout: 10000 }); };
+  const probeV = (f) => execFileSync(FFPROBE, ['-v', 'error', '-show_entries', 'stream=codec_name,width,height,nb_frames', '-of', 'csv=p=0', f]).toString().trim().replace(/\n/g, ' | ');
+  await back();
+  await page.locator('.ex-sheet .seg button', { hasText: /^File$/ }).click();
+  await page.locator('.ex-sheet .seg button', { hasText: '720p' }).click();
+  await page.waitForTimeout(400);
+  const hint720 = await page.locator('.ex-row', { hasText: 'Resolution' }).locator('.ex-hint').innerText();
+  check('720p keeps the project shape', /1280 × 720/.test(hint720), hint720);
+  await page.getByRole('button', { name: /Export to file/ }).click();
+  await waitDone();
+  const o3 = await outcomeOf();
+  await page.waitForTimeout(300);
+  await shot('09b-export-file-done');
+  const mp4 = path.join(exportDir, 'fixture-demo-video', 'fixture-demo.mp4');
+  const mp4Info = fs.existsSync(mp4) ? probeV(mp4) : 'missing';
+  check('MP4 export to file writes one H.264 + AAC file at 1280×720', /Video exported/.test(o3) && /h264,1280,720/.test(mp4Info) && /aac/.test(mp4Info) && fs.readdirSync(path.dirname(mp4)).length === 1, `${o3} · ${mp4Info}`);
+
+  await back();
+  await page.locator('.ex-sheet .seg button', { hasText: /^GIF$/ }).click();
+  await page.waitForTimeout(300);
+  await shot('09c-export-gif-sheet');
+  await page.getByRole('button', { name: /Export to file/ }).click();
+  await waitDone();
+  const o4 = await outcomeOf();
+  await shot('09d-export-gif-done');
+  const gif = path.join(exportDir, 'fixture-demo-gif', 'fixture-demo.gif');
+  const gifKind = fs.existsSync(gif) ? execFileSync('/usr/bin/file', ['-b', gif]).toString().trim() : 'missing';
+  const gifInfo = fs.existsSync(gif) ? probeV(gif) : '';
+  check('GIF export writes an animated GIF and nothing else', /GIF exported/.test(o4) && /^GIF image data/.test(gifKind) && fs.readdirSync(path.dirname(gif)).length === 1, `${o4} · ${gifKind} · ${gifInfo} · ${fs.existsSync(gif) ? fs.statSync(gif).size : 0} bytes`);
+
+  await back();
+  await page.locator('.ex-sheet .seg button', { hasText: /^MP4$/ }).click();
+  await page.locator('.ex-sheet .seg button', { hasText: /^Clipboard$/ }).click();
+  await page.getByRole('button', { name: /Export to clipboard/ }).click();
+  await waitDone();
+  const o5 = await outcomeOf();
+  await shot('09e-export-clipboard-done');
+  const clipInfo = execFileSync('/usr/bin/osascript', ['-e', 'clipboard info']).toString().trim();
+  let clipPath = '';
+  try { clipPath = execFileSync('/usr/bin/osascript', ['-e', 'POSIX path of (the clipboard as «class furl»)']).toString().trim(); } catch (e) { clipPath = `unreadable: ${e.message.split('\n')[0]}`; }
+  check('Export to clipboard puts the exported file on the clipboard', /Copied to the clipboard/.test(o5) && /furl/.test(clipInfo) && /fixture-demo-video-2\/fixture-demo\.mp4$/.test(clipPath), `${o5} · ${clipPath} · ${clipInfo.slice(0, 80)}`);
+  await back();
+  await page.locator('.ex-sheet .seg button', { hasText: '1080p' }).click();
+
+  // ── share bundle (the UI button opens a native folder dialog, so the same IPC is called directly) ──
+  const shareDir = path.join(profile, 'Shared');
+  const bundle = await page.evaluate(async (dir) => { const st = window.__cutaway.useApp.getState(); await window.__cutaway.saveNow(); return window.cutaway.library.exportBundle(st.projectPath, dir); }, shareDir).catch((e) => ({ error: e.message }));
+  let listing = '';
+  if (bundle.path) listing = execFileSync('/usr/bin/unzip', ['-l', bundle.path]).toString();
+  check('Share project writes a zip holding project.json and the media', !!bundle.path && /Fixture demo\.cutaway\/project\.json/.test(listing) && /media\/imports\/screen\.mp4/.test(listing) && !/\/cache\/./.test(listing), bundle.error ?? `${path.basename(bundle.path)} · ${bundle.bytes} bytes`);
+
+  // ── voiceover (synthetic system voice, on-device) ──
+  await page.getByRole('button', { name: 'Voiceover…' }).click();
+  await page.waitForSelector('.vo', { timeout: 10000 });
+  const gotVoices = await page.waitForSelector('.vo-voices button', { timeout: 20000 }).then(() => true).catch(() => false);
+  if (gotVoices) {
+    await page.locator('.vo-script').fill('This is a short narration for the fixture demo.');
+    await page.waitForTimeout(300);
+    await shot('09f-voiceover');
+    await page.getByRole('button', { name: 'Add to project' }).click();
+    await page.waitForSelector('.vo', { state: 'detached', timeout: 60000 }).catch(() => {});
+    const vo = await page.evaluate(() => { const p = window.__cutaway.useApp.getState().project; const s = p.sources.find((x) => x.name.startsWith('Voiceover')); return s ? { role: s.role, path: s.path, duration: s.duration, music: p.edit.audio.music?.sourceId === s.id, master: p.edit.audio.masterVoiceId === s.id } : null; });
+    const voFile = vo ? path.join(projectDir, vo.path) : '';
+    check('voiceover is synthesised on this Mac and added as a supporting track', !!vo && vo.role === 'music' && vo.music && !vo.master && vo.duration > 1 && fs.existsSync(voFile), vo ? `${vo.path} · ${vo.duration.toFixed(2)}s · ${fs.existsSync(voFile) ? fs.statSync(voFile).size : 0} bytes` : 'no voiceover source');
+  } else {
+    const why = await page.locator('.vo .banner').innerText().catch(() => 'no voices listed');
+    check('voiceover: system voices are listed', false, why.replace(/\s+/g, ' ').slice(0, 160));
+    await page.keyboard.press('Escape');
   }
   await page.locator('.page.export').evaluate((el) => el.scrollTo(0, el.scrollHeight));
   await page.waitForTimeout(400);
   await shot('10-export-history');
 
   // ── settings ──
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.evaluate(() => window.__cutaway.useApp.getState().go('settings'));
   await page.waitForSelector('.settings', { timeout: 10000 });
   await page.waitForTimeout(600);
   await shot('11-settings-storage');
   await page.locator('.set-nav button', { hasText: 'Processing' }).click();
   await page.waitForTimeout(1500);
   await shot('12-settings-processing');
-  await page.locator('.set-nav button', { hasText: 'Style presets' }).click();
+  await page.locator('.set-nav button', { hasText: 'Presets' }).click();
   await page.getByRole('textbox', { name: 'Preset name' }).fill('Channel look');
   await page.getByRole('button', { name: 'Save preset' }).click();
   await page.waitForSelector('.presets li', { timeout: 5000 });
@@ -252,22 +329,23 @@ try {
   await page2.locator('.project-card', { hasText: 'Missing media' }).click();
   await page2.waitForSelector('.export .checks', { timeout: 10000 });
   await page2.waitForTimeout(700);
-  const blockedBtn = page2.getByRole('button', { name: /Export (YouTube|draft) package/ });
+  const blockedBtn = page2.locator('.ex-foot .btn.primary');
   const relink = await page2.getByRole('button', { name: 'Relink in Sources' }).count();
   check('missing media blocks export and offers relink', (await blockedBtn.isDisabled()) && relink >= 1, `${relink} relink action(s)`);
   await shot2('16-export-blocked-missing-media');
 
-  await page2.locator('.wordmark').click();
+  await page2.getByRole('button', { name: 'Show previous projects' }).click();
   await page2.waitForSelector('.project-card', { timeout: 10000 });
   await page2.locator('.project-card', { hasText: 'Fixture demo' }).click();
   await page2.waitForSelector('.steps', { timeout: 10000 });
-  await page2.locator('.steps button', { hasText: 'Export' }).click();
+  await page2.locator('.titlebar .btn.primary').click();
   await page2.waitForSelector('.export .checks', { timeout: 10000 });
   await page2.waitForTimeout(500);
+  await page2.locator('.ex-sheet .seg button', { hasText: 'YouTube package' }).click();
   await page2.getByRole('button', { name: /Export (YouTube|draft) package/ }).click();
-  await page2.waitForFunction(() => /Package complete|Partial export|Export failed|Export cancelled/.test(document.querySelector('.export-status .eyebrow')?.textContent ?? ''), null, { timeout: 60000 });
-  const failedOutcome = await page2.locator('.export-status .eyebrow').innerText();
-  const msg = (await page2.locator('.export-status .banner').first().innerText()).replace(/\s+/g, ' ');
+  await page2.waitForFunction(() => /Package complete|Partial export|Export failed|Export stopped|Video exported|GIF exported|Copied to the clipboard|Exported, but not copied/.test(document.querySelector('.ex-progress > .ex-title, .ex-progress > .row > .ex-title')?.textContent ?? '') && !/^Exporting/.test(document.querySelector('.ex-progress .ex-title')?.textContent ?? ''), null, { timeout: 60000 });
+  const failedOutcome = await page2.locator('.ex-progress .ex-title').first().innerText();
+  const msg = (await page2.locator('.ex-progress .banner').first().innerText()).replace(/\s+/g, ' ');
   await page2.waitForTimeout(400);
   await shot2('17-export-failed');
   check('an unwritable destination produces the failed state, not a package', /failed/i.test(failedOutcome) && (await page2.getByRole('button', { name: 'Export again' }).count()) === 1, `${failedOutcome} · ${msg.slice(0, 120)}`);

@@ -2,8 +2,9 @@
 //   node e2e/capture-ui.mjs [outDir] [--record]
 // Generates fixtures (a "screen" MP4, a "camera" MOV that starts 1.5 s late with the
 // same narration, and a corrupt file), drives Record → Sources → sync review, and
-// writes screenshots. With --record it also makes a short real screen + microphone
-// recording through the UI (needs Screen Recording and Microphone access).
+// writes screenshots. With --record it also makes a take through the UI: a real screen
+// + microphone recording by default (needs Screen Recording and Microphone access), or,
+// with --synthetic, the helper's generated test sources (two cameras, keys; no permissions).
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,6 +13,7 @@ import { launch, root } from './harness.mjs';
 
 const args = process.argv.slice(2);
 const doRecord = args.includes('--record');
+const synthetic = args.includes('--synthetic');
 const out = path.resolve(args.find((a) => !a.startsWith('--')) ?? path.join(os.tmpdir(), 'cutaway-capture-ui'));
 fs.mkdirSync(out, { recursive: true });
 const FFMPEG = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg';
@@ -45,52 +47,112 @@ const { app, page, dir, libraryDir } = await launch({ settings: { countdownSecon
 const results = {};
 try {
   // 1 ── recorder setup
-  await page.click('.action.record');
-  await page.waitForSelector('.record', { timeout: 15000 });
-  await page.waitForFunction(() => !document.querySelector('.stage .spinner'), null, { timeout: 20000 }).catch(() => {});
+  await page.click('button:has-text("New recording")');
+  await page.waitForSelector('.record .rec-bar', { timeout: 15000 });
+  await page.waitForFunction(() => !document.querySelector('.rec-stage .spinner'), null, { timeout: 20000 }).catch(() => {});
   await page.waitForTimeout(1500);
+  const menu = async (id) => {
+    await page.click(`[data-testid="${id}"]`);
+    await page.waitForSelector('.rb-pop', { timeout: 5000 });
+    await page.waitForTimeout(150);
+  };
+  const closeMenu = async () => { await page.keyboard.press('Escape'); await page.waitForTimeout(150); };
+  await menu('camera-a');
+  const cameraRows = await page.evaluate(() => [...document.querySelectorAll('.rb-pop [role="menuitemradio"]')].map((b) => ({ text: b.textContent.trim(), checked: b.getAttribute('aria-checked') === 'true', disabled: b.disabled })));
+  await closeMenu();
+  await menu('microphone');
+  const micRows = await page.evaluate(() => [...document.querySelectorAll('.rb-pop [role="menuitemradio"]')].map((b) => b.textContent.trim()));
+  await shot(page, '01b-microphone-menu');
+  await closeMenu();
   results.record = await page.evaluate(() => ({
-    startLabel: document.querySelector('.record-bar .btn.primary')?.textContent?.trim(),
+    startLabel: document.querySelector('[data-testid="start-recording"]')?.textContent?.trim(),
+    startDisabled: document.querySelector('[data-testid="start-recording"]')?.disabled,
+    target: document.querySelector('.target-name')?.textContent,
+    dims: document.querySelector('.target-dims')?.textContent,
+    modes: [...document.querySelectorAll('.rb-mode')].map((b) => `${b.textContent}${b.getAttribute('aria-pressed') === 'true' ? '*' : ''}`),
     displays: document.querySelectorAll('.picker .pick').length,
-    cameras: document.querySelectorAll('select[aria-label="Camera A"] option').length - 1,
-    microphones: document.querySelectorAll('select[aria-label="Microphone"] option').length - 1,
-    summary: document.querySelector('.record-bar .tiny')?.textContent?.trim(),
+    pills: [...document.querySelectorAll('.rec-bar .rb-pill-label')].map((l) => l.textContent),
+    summary: document.querySelector('.rec-status')?.textContent?.trim(),
   }));
+  results.record.cameras = cameraRows.length - 1;
+  results.record.microphones = micRows.length - 1;
   await shot(page, '01-record-setup');
-  // duplicate-device guard: the device chosen for A is disabled in B
-  results.duplicateGuard = await page.evaluate(() => {
-    const a = document.querySelector('select[aria-label="Camera A"]');
-    const b = document.querySelector('select[aria-label="Camera B"]');
-    const first = a?.options[1]?.value;
-    if (!first) return 'no camera connected';
-    return { cameraA: a.value || '(off)', optionDisabledInB: a.value ? [...b.options].find((o) => o.value === a.value)?.disabled : 'A is off' };
-  });
-  await page.click('button[aria-pressed="false"]:has-text("Area")');
+  // duplicate-device guard: whatever is chosen for A is disabled in B's menu
+  await menu('camera-b');
+  results.duplicateGuard = await page.evaluate((a) => {
+    const chosen = a.find((r) => r.checked && !/Don.t record/.test(r.text));
+    if (a.length <= 1) return 'no camera connected';
+    if (!chosen) return 'Camera A is off (camera permission not granted here), so nothing is reserved';
+    const row = [...document.querySelectorAll('.rb-pop [role="menuitemradio"]')].find((b) => b.textContent.includes(chosen.text));
+    return { cameraA: chosen.text, disabledInB: !!row?.disabled };
+  }, cameraRows);
+  await shot(page, '01c-camera-b-menu');
+  await closeMenu();
+  // system audio: all apps / selected apps
+  await menu('system-audio');
+  await page.click('.rb-pop [role="menuitemradio"]:has-text("selected apps")');
+  await page.waitForTimeout(250);
+  results.systemAudioApps = await page.evaluate(() => [...document.querySelectorAll('.rb-apps label')].map((l) => l.textContent.trim()));
+  if (results.systemAudioApps.length) await page.click('.rb-apps label >> nth=0');
+  await page.waitForTimeout(200);
+  await shot(page, '01d-system-audio-apps');
+  await page.click('.rb-pop [role="menuitemradio"]:has-text("No system audio")');
+  // options: the new capture toggles
+  await menu('options');
+  results.options = await page.evaluate(() => [...document.querySelectorAll('.rb-options [role="switch"]')].map((t) => `${t.getAttribute('aria-label')}=${t.getAttribute('aria-checked')}`));
+  results.keysHint = await page.evaluate(() => [...document.querySelectorAll('.rb-options .tiny')].map((t) => t.textContent).find((t) => /Input Monitoring|never stored/.test(t)) ?? null);
+  await shot(page, '01e-options');
+  await closeMenu();
+  await page.click('.rb-mode[data-mode="window"]');
+  await page.waitForTimeout(500);
+  const firstWindow = page.locator('.picker .pick').first();
+  if (await firstWindow.count()) {
+    await firstWindow.click();
+    await page.waitForTimeout(300);
+    await menu('resize-menu');
+    results.windowSizes = await page.evaluate(() => [...document.querySelectorAll('.rb-pop [role="menuitemradio"]')].map((b) => b.textContent.trim()));
+    await shot(page, '02a-record-window-resize');
+    await closeMenu();
+  } else results.windowSizes = 'no windows listed';
+  await page.click('.rb-mode[data-mode="region"]');
   await page.waitForTimeout(400);
   await shot(page, '02-record-area');
-  await page.click('button:has-text("Camera only")');
+  await page.click('.rb-mode[data-mode="device"]');
+  await page.waitForTimeout(400);
+  results.device = await page.evaluate(() => document.querySelector('.rec-stage .stage-title')?.textContent ?? `${document.querySelectorAll('.picker .pick').length} device(s) listed`);
+  await shot(page, '02b-record-device');
+  await page.click('.rb-mode[data-mode="none"]');
   await page.waitForTimeout(400);
   await shot(page, '03-record-camera-only');
-  await page.click('button:has-text("Display")');
+  await page.click('.rb-mode[data-mode="display"]');
+  await page.waitForTimeout(300);
 
   if (doRecord) {
     // 1b ── a real, short screen + microphone take through the UI
     const perms = await page.evaluate(async () => ({ screen: await window.cutaway.app.permission('screen'), microphone: await window.cutaway.app.permission('microphone'), camera: await window.cutaway.app.permission('camera') }));
     results.permissions = perms;
-    if (perms.screen !== 'granted') {
+    if (!synthetic && perms.screen !== 'granted') {
       results.recording = `skipped: screen permission is ${perms.screen}`;
     } else {
-      await page.click('.record-bar .btn.primary');
+      if (synthetic) {
+        // Same recorder UI and event handling, fed by the helper's generated sources
+        // (screen + two cameras + microphone + system audio + keyboard data). No permissions needed.
+        await page.evaluate(() => {
+          const real = window.cutaway.record.start;
+          window.cutaway.record.start = (projectPath, config) => real(projectPath, { ...config, synthetic: true, screen: { ...(config.screen ?? { type: 'display', displayId: 1, showCursor: false }) }, cameras: [{ slot: 'A', deviceId: 'synthetic-a', width: 1280, height: 720, fps: 30 }, { slot: 'B', deviceId: 'synthetic-b', width: 1280, height: 720, fps: 30 }], microphone: { deviceId: '' }, systemAudio: true, captureKeys: true });
+        });
+      }
+      await page.click('[data-testid="start-recording"]');
       await page.waitForSelector('.countdown', { timeout: 15000 });
       await shot(page, '04-countdown');
       await page.waitForSelector('.rec-live', { timeout: 30000 });
-      await page.waitForFunction(() => /Recording/.test(document.querySelector('.rec-live .eyebrow')?.textContent ?? ''), null, { timeout: 30000 });
+      await page.waitForFunction(() => /Recording/.test(document.querySelector('.rec-live .rec-state')?.textContent ?? ''), null, { timeout: 30000 });
       await page.waitForTimeout(2500);
       const controller = app.windows().find((w) => w.url().includes('#controller'));
       if (controller) {
         await controller.waitForSelector('.controller-pill', { timeout: 5000 }).catch(() => {});
         await controller.screenshot({ path: path.join(out, '05-controller.png'), omitBackground: true }).then(() => console.log('shot', path.join(out, '05-controller.png'))).catch((e) => console.log('controller shot failed', e.message));
-        results.controller = await controller.evaluate(() => ({ time: document.querySelector('.controller-pill .time')?.textContent, chips: [...document.querySelectorAll('.controller-pill .chip')].map((c) => c.getAttribute('title')) })).catch(() => null);
+        results.controller = await controller.evaluate(() => ({ time: document.querySelector('.controller-pill .time')?.textContent, chips: [...document.querySelectorAll('.controller-pill .chip')].map((c) => c.getAttribute('title')), order: [...document.querySelector('.controller-pill').children].map((c) => c.className.split(' ')[0]) })).catch(() => null);
         await controller.click('button[aria-label="Pause recording"]').catch(() => {});
         await page.waitForTimeout(1200);
         await controller.click('button[aria-label="Resume recording"]').catch(() => {});
@@ -101,10 +163,17 @@ try {
       await page.waitForSelector('.source-row', { timeout: 30000 });
       await page.waitForTimeout(800);
       await shot(page, '07-sources-after-recording');
-      results.recording = await page.evaluate(() => [...document.querySelectorAll('.source-row')].map((r) => ({ name: r.querySelector('.source-name')?.textContent, meta: [...r.querySelectorAll('.mono span')].map((s) => s.textContent).join(' | '), sync: r.querySelector('.cov + .row .pill')?.textContent?.trim() })));
+      await page.waitForTimeout(1800);
+      {
+        const bundle = fs.readdirSync(libraryDir).find((n) => n.endsWith('.cutaway'));
+        const saved = JSON.parse(fs.readFileSync(path.join(libraryDir, bundle, 'project.json'), 'utf8'));
+        const takeDir = path.join(libraryDir, bundle, 'media', 'take-001');
+        results.take = { files: fs.existsSync(takeDir) ? fs.readdirSync(takeDir).sort() : null, manifestKeys: fs.existsSync(path.join(takeDir, 'manifest.json')) ? JSON.parse(fs.readFileSync(path.join(takeDir, 'manifest.json'), 'utf8')).keys ?? null : null, sources: saved.sources.map((x) => ({ role: x.role, keysFile: x.keysFile ?? null, cursorFile: x.cursorFile ?? null, deviceKind: x.deviceKind ?? null })) };
+      }
+      results.recording = await page.evaluate(() => [...document.querySelectorAll('.source-row')].map((r) => ({ name: r.querySelector('.source-name')?.textContent, badges: [...r.querySelectorAll('.source-name ~ .pill')].map((p) => p.textContent.trim()), meta: [...r.querySelectorAll('.mono span')].map((s) => s.textContent).join(' | '), sync: r.querySelector('.cov + .row .pill')?.textContent?.trim() })));
     }
   } else {
-    await page.click('button:has-text("Import instead")');
+    await page.click('[data-testid="import-instead"]');
     await page.waitForSelector('.sources', { timeout: 10000 });
     await shot(page, '04-sources-empty');
   }
@@ -171,6 +240,26 @@ try {
       await shot(page, '12-sync-no-shared-audio');
       await page.keyboard.press('Escape');
     } else results.unrelated.note = 'no Review sync button was offered';
+  }
+
+  // 4b ── speaker notes window (opened by the app's own IPC, as the recorder's toggle does)
+  {
+    const notesOpened = app.waitForEvent('window', { timeout: 15000 }).catch(() => null);
+    await page.evaluate(() => window.cutaway.app.notesWindow(true));
+    const notes = await notesOpened;
+    if (notes) {
+      await notes.waitForSelector('.notes-window', { timeout: 10000 }).catch(() => {});
+      results.notes = await notes.evaluate(() => ({ rendered: !!document.querySelector('.notes-window'), badge: document.querySelector('.notes-badge')?.textContent?.trim(), transparentBody: document.body.classList.contains('controller-body') })).catch((e) => ({ error: e.message }));
+      if (results.notes.rendered) {
+        await notes.fill('.notes-text', 'Intro: what we are building today.\nStep 1: open the export panel.\nStep 2: choose the format.\nDo not forget the frame rate.');
+        await notes.click('button[aria-label="Notes settings"]');
+        await notes.waitForTimeout(300);
+        await notes.screenshot({ path: path.join(out, '14-speaker-notes.png'), omitBackground: true });
+        console.log('shot', path.join(out, '14-speaker-notes.png'));
+        results.notes.persisted = await notes.evaluate(() => new Promise((r) => setTimeout(() => r(localStorage.getItem('cutaway.notes.text')?.startsWith('Intro')), 500)));
+      }
+      await page.evaluate(() => window.cutaway.app.notesWindow(false));
+    } else results.notes = 'notes window did not open';
   }
 
   // 5 ── controller window on its own (layout check only; no recorder events arrive)

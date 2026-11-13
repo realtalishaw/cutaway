@@ -21,16 +21,25 @@ settings and never waits on a permission prompt for more than 60 s.
 
 ## One-shot commands
 
-### `devices`
+### `devices [--wait-external 0.4]`
 ```json
 {
-  "permissions": { "screen": "granted|undetermined", "camera": "granted|denied|undetermined", "microphone": "…" },
+  "permissions": { "screen": "granted|undetermined", "camera": "granted|denied|undetermined", "microphone": "…",
+                   "accessibility": "granted|undetermined", "inputMonitoring": "granted|denied|undetermined" },
   "displays": [{ "id": 1, "name": "Built-in Retina Display", "width": 1728, "height": 1117, "scale": 2, "x": 0, "y": 0, "main": true }],
   "windows":  [{ "id": 4242, "title": "Docs", "app": "Safari", "bundleId": "com.apple.Safari", "x": 0, "y": 0, "width": 1200, "height": 800, "displayId": 1 }],
   "cameras":  [{ "id": "<AVCaptureDevice.uniqueID>", "name": "FaceTime HD Camera", "formats": [{ "width": 1920, "height": 1080, "maxFps": 30 }] }],
-  "microphones": [{ "id": "<uniqueID>", "name": "MacBook Pro Microphone", "default": true }]
+  "microphones": [{ "id": "<uniqueID>", "name": "MacBook Pro Microphone", "default": true }],
+  "externalDevices": [{ "id": "<uniqueID>", "name": "Talisha's iPhone", "width": 1170, "height": 2532, "kind": "iphone|ipad|null" }],
+  "apps": [{ "bundleId": "com.google.Chrome", "name": "Google Chrome", "pid": 812 }]
 }
 ```
+`accessibility` and `inputMonitoring` are read without prompting; macOS cannot
+tell "never asked" from "denied" for Accessibility. `externalDevices` are
+iPhones and iPads connected by cable (unlocked and trusted) that can be
+recorded as the screen source; they appear a moment after the helper opts in,
+so `--wait-external <seconds>` (default 0.4, max 10) sets how long to wait.
+`apps` are the running regular apps, for per-app audio.
 Windows are listed only when screen permission is granted; never prompt from `devices`.
 macOS cannot tell "never asked" from "denied" for screen recording, so `screen`
 is `granted` or `undetermined`. Display and window coordinates are global
@@ -39,7 +48,10 @@ devices (an iPhone) appear in `cameras`.
 
 ### `preflight --config <file>`
 Same config as `record`. Validates without recording or prompting:
-`{ "ok": true|false, "issues": [{ "code": "duplicate-camera|unsupported-format|missing-device|permission-denied|low-disk|multicam-unsupported|no-sources", "source": "cameraB"|null, "message": "…", "alternatives": ["1280x720@30"] }], "estimatedBytesPerMinute": 123456789, "freeBytes": 1234567890 }`
+`{ "ok": true|false, "issues": [{ "code": "duplicate-camera|unsupported-format|missing-device|permission-denied|low-disk|multicam-unsupported|no-sources|keys-unavailable|app-audio-unavailable", "source": "cameraB"|null, "message": "…", "alternatives": ["1280x720@30"], "blocking": true|false }], "estimatedBytesPerMinute": 123456789, "freeBytes": 1234567890 }`
+
+`blocking: false` marks a warning (`keys-unavailable`, `app-audio-unavailable`):
+the take can still be recorded, and `ok` only reflects blocking issues.
 
 `alternatives` lists other camera formats (`unsupported-format`) or other
 device names (`duplicate-camera`, `missing-device`). A built-in camera behind a
@@ -108,7 +120,53 @@ Validates a take left behind by a crash. Fragmented movies are readable up to
 the last checkpoint. Rewrites `manifest.json` with real durations and
 `"complete": false, "recovered": true`. Prints the manifest. Each source gains
 `"readable": true|false`; the manifest gains `"usableSources": n`. A take that
-is already complete is returned unchanged.
+is already complete is returned unchanged. A torn last line of `keys.jsonl` is
+trimmed the same way as `cursor.jsonl`, and `keys.events` is recounted.
+
+### `resize-window --window-id <id> --width <w> --height <h> [--x <x> --y <y>]`
+Resizes (and optionally moves) another app's window through the Accessibility
+API, in global display points. Prints
+`{ "windowId": 4242, "x": 0, "y": 25, "width": 1280, "height": 720, "exact": true }`
+with the size the app actually accepted (`exact:false` when it clamped it).
+Errors: `permission-denied` (Accessibility is not granted; never prompts),
+`not-found`, `resize-failed`.
+
+### `faces <video> [--fps 5]`
+Largest face per sampled frame (Vision), for keeping a camera crop on the
+speaker. Rects are normalised to the upright picture with a top-left origin.
+```json
+{ "fps": 5, "found": 2,
+  "samples": [{ "t": 0.0, "x": 0.41, "y": 0.22, "w": 0.2, "h": 0.3 }, { "t": 0.2, "none": true }] }
+```
+
+### `matte <video> --out <mov> [--fps 30] [--quality fast|balanced|accurate]`
+Person-segmentation matte (white = person) as a greyscale, full-range H.264
+`.mov` in the upright orientation, long side at most 720 px. Frames keep the
+input's own timestamps and the file has the input's duration; `--fps` only
+caps how many frames are analysed (skipped frames hold the previous matte).
+Progress lines (`progress 0.35`) go to stderr. Prints
+`{ "path": "…", "duration": 36.634, "frames": 1099, "width": 720, "height": 404, "quality": "balanced", "framesWithPerson": 0 }`.
+Refuses to overwrite (`exists`).
+
+### `gif --video <mp4> --out <gif> [--fps 15] [--width 800] [--start s --duration s]`
+Looping GIF with per-frame delays (ImageIO). Prints
+`{ "path": "…", "frames": 60, "sizeBytes": 9845, "width": 640, "height": 360, "fps": 12, "duration": 5 }`.
+Errors: `too-long` (more than 3000 frames), `exists`, `no-video`.
+
+### `voices`
+On-device system voices:
+`[{ "id": "com.apple.voice.compact.en-US.Samantha", "name": "Samantha", "language": "en-US", "quality": "default|enhanced|premium" }]`
+
+### `speak --text-file <txt> --out <wav> [--voice <id>] [--rate 0.5]`
+Synthesises speech on this Mac (AVSpeechSynthesizer) into a 16-bit WAV. `rate`
+is 0…1 (0.5 is normal). Prints
+`{ "path": "…", "duration": 3.912, "sampleRate": 22050, "channels": 1, "voice": "<id>", "marks": [{ "word": "Cutaway", "start": 0.0, "end": 0.54 }] }`.
+`marks` is present only when the voice reports word positions; the system
+voices tested do not, so run `transcribe` on the WAV when word timings are needed.
+Errors: `voice-unavailable`, `exists`, `speak-failed`.
+
+### `version`
+`{ "version": "0.2.0", "protocol": 1, "features": ["device-screen", "hide-desktop-icons", "hide-notifications", "app-audio", "keys", "resize-window", "faces", "matte", "gif", "voices", "speak"] }`
 
 ## `record --config <file> [--duration <seconds>]` (long-running)
 
@@ -117,13 +175,15 @@ Config:
 {
   "outDir": "/…/My Project.cutaway/media/take-001",
   "fps": 60,
-  "screen": { "type": "display|window|region", "displayId": 1, "windowId": 4242,
+  "screen": { "type": "display|window|region|device", "displayId": 1, "windowId": 4242, "deviceId": "<externalDevices id>",
               "rect": { "x": 100, "y": 100, "width": 1280, "height": 720 },
-              "showCursor": false, "excludeBundleIds": ["studio.cutaway.app"], "maxHeight": 2160 },
+              "showCursor": false, "excludeBundleIds": ["studio.cutaway.app"], "maxHeight": 2160,
+              "hideDesktopIcons": false, "hideNotifications": false },
   "cameras": [{ "slot": "A", "deviceId": "…", "width": 1920, "height": 1080, "fps": 30 },
               { "slot": "B", "deviceId": "…", "width": 1920, "height": 1080, "fps": 30 }],
   "microphone": { "deviceId": "…" },
   "systemAudio": true,
+  "captureKeys": false,
   "checkpointSeconds": 2,
   "minFreeBytes": 2000000000,
   "waitForStart": false,
@@ -136,6 +196,30 @@ Config:
 `width`/`height`/`fps` are optional (default: the largest format up to 1080p at
 30 fps). An empty microphone `deviceId` means the system default.
 
+* `screen.type: "device"` records a connected iPhone or iPad (`deviceId` from
+  `devices.externalDevices`) as `screen.mov`. macOS guards it with Camera
+  permission. There is no pointer to record, so no `cursor.jsonl` is written and
+  the manifest source has `"cursorBaked": true, "captureType": "device",
+  "deviceKind": "iphone"|"ipad"|null`. Device audio is not recorded.
+* `screen.hideDesktopIcons` leaves Finder's desktop-icon windows out of a display
+  or region capture; `screen.hideNotifications` leaves Notification Centre
+  banners out. Both only change what is captured: nothing on the desktop or in
+  System Settings is touched. With icons hidden, a Finder window opened during
+  the take is re-admitted within about a second.
+* `systemAudio` is `true`, `false`, or `{ "apps": ["bundle.id", …] }` to record
+  sound from those apps only (a second audio-only stream; the manifest's system
+  source lists `"apps"`). If none of them is running the take continues without
+  a system track and a non-fatal `app-audio-unavailable` error is emitted.
+* `captureKeys: true` writes `keys.jsonl` from a listen-only event tap, for the
+  shortcut overlay and typing detection. **Typed characters are never read or
+  stored.** Only two kinds of line exist:
+  `{"t":1.2,"e":"shortcut","keys":["cmd","shift","4"]}` when ⌘, ⌃ or ⌥ is held or
+  the key is return/enter/tab/escape/delete/an arrow/home/end/page/F-key (names
+  come from a fixed key-code table, modifiers first in the order cmd, ctrl,
+  alt, shift), and `{"t":1.3,"e":"type"}` for any other key press, with no key.
+  Without Input Monitoring permission nothing is tapped (macOS is never made to
+  prompt), a non-fatal `keys-unavailable` error is emitted and the take
+  continues with `"keys": null`.
 * `waitForStart: true` opens devices, emits `ready`, and waits for a `start`
   command, so the app can spawn the helper during its countdown and begin on
   the beat. Otherwise recording starts right after `ready`.
@@ -146,7 +230,9 @@ Config:
   sweeps once per 2 s of host time and every audio source beeps for 100 ms at
   each host-clock second, so alignment can be measured. In this mode the
   commands `simulate-lost <sourceId>` and `simulate-restore <sourceId>` imitate
-  an unplugged device.
+  an unplugged device. Synthetic mode also honours `captureKeys` (a made-up
+  repeating pattern of shortcuts and typing ticks) and `screen.type: "device"`
+  (a 590×1280 portrait picture, `deviceKind: "iphone"`, no cursor file).
 
 Control: newline-terminated commands on **stdin**: `start` (only with
 `waitForStart`), `pause`, `resume`, `stop`, `cancel`. SIGTERM/SIGINT behave like
@@ -172,7 +258,8 @@ Events: one JSON object per line on **stdout**.
   the last line and the process exits 1 without leaving an empty take folder.
 * Non-fatal codes: `microphone-silent` (3 s of pure digital silence: muted
   input, closed lid or blocked permission), `writer-failed`, `camera-error`,
-  `microphone-error`, `screen-stopped`.
+  `microphone-error`, `screen-stopped`, `device-error`, `keys-unavailable`,
+  `app-audio-unavailable`.
 * After `cancel` the last line is `{"type":"stopped","cancelled":true,"manifest":null}`.
 * A lost source never stops the others. Its file keeps growing again when it
   comes back; the missing stretch is listed in `gaps`.
@@ -186,6 +273,7 @@ take-001/
   mic.mov         AAC-LC 48 kHz microphone, own file
   system.mov      AAC-LC 48 kHz stereo system audio, own file
   cursor.jsonl    {"t":1.234,"x":0.51,"y":0.42,"c":"arrow|ibeam|pointer|grab|resize|other","e":"move|down|up|rdown|rup"}
+  keys.jsonl      only with captureKeys: {"t":1.2,"e":"shortcut","keys":["cmd","k"]} | {"t":1.3,"e":"type"}
   manifest.json
 ```
 Video is **always H.264** (never HEVC) so the files decode inside Chromium. The
@@ -218,8 +306,14 @@ followed when it moves.
     { "id": "system", "role": "systemAudio", "file": "system.mov", "start": 0.0, "duration": 62.4, "channels": 2, "sampleRate": 48000, "gaps": [] }
   ],
   "cursor": { "file": "cursor.jsonl", "samples": 7421 },
+  "keys": { "file": "keys.jsonl", "events": 212 },
   "stopReason": "disk-low" }
 ```
+`cursor` is `null` when no pointer is recorded (camera-only takes, device
+screens). `keys` is `null` unless `captureKeys` was on and Input Monitoring was
+granted. The screen source also carries `hideDesktopIcons` / `hideNotifications`
+as recorded, and for device screens `deviceKind`, `deviceName`, `deviceId`. The
+system source carries `"apps": […]` when it was limited to selected apps.
 `start` is each file's first-sample position on the session clock, taken from
 the capture host-time stamps, so two cameras recorded together are aligned by
 construction: file time `t` of a source sits at session time `start + t`.

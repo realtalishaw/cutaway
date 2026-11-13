@@ -9,3 +9,4 @@ export * from './captions';
 export * from './analysis';
 export * from './packaging';
 export * from './project';
+export * from './parity';

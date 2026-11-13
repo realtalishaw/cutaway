@@ -10,7 +10,7 @@ const NAME: Record<string, string> = { screen: 'Screen', cameraA: 'Camera A', ca
 const ORDER = ['screen', 'cameraA', 'cameraB', 'microphone', 'system'];
 
 /**
- * The floating recording controller: a small always-on-top window that is
+ * The floating recording control: a small always-on-top window that is
  * excluded from capture. It only reflects recorder events and sends
  * pause / resume / stop; the main window turns the finished take into sources.
  */
@@ -92,9 +92,12 @@ export function Controller() {
 
   return (
     <div className="controller">
-      <div className="controller-pill" role="toolbar" aria-label="Recording controls" title={note ?? 'Drag to move. This controller is not recorded.'}>
-        <span className={`rec-dot${paused ? '' : ' live'}`} style={paused ? { background: 'var(--ai)', boxShadow: 'none' } : undefined} aria-hidden />
-        <span className="time mono" aria-live="off">{fmtTime(elapsed, true)}</span>
+      <div className="controller-pill" role="toolbar" aria-label="Recording controls" title={note ?? 'Drag to move. This control is not recorded.'}>
+        <button className="stop" onClick={stop} disabled={busy === 'stop'} title="Stop recording (⌃⌥⌘R)" aria-label="Stop recording">
+          {busy === 'stop' ? <span className="spinner" style={{ borderTopColor: '#fff' }} /> : <Icon name="stop" size={16} />}
+        </button>
+        <span className={`time${paused ? ' paused' : ''}`} aria-live="off">{fmtTime(elapsed, true)}</span>
+        <span className="sep" aria-hidden />
         <div className="chips">
           {sources.map((id) => {
             const isLost = lost.has(id);
@@ -102,7 +105,7 @@ export function Controller() {
             const idle = !isLost && video && !paused && flow[id] === false;
             return (
               <span key={id} className={`chip${isLost ? ' lost' : idle ? ' idle' : ''}`} title={`${NAME[id] ?? id}: ${isLost ? 'lost' : paused ? 'paused' : idle ? 'no new frames' : 'recording'}`} aria-label={`${NAME[id] ?? id} ${isLost ? 'lost' : 'recording'}`}>
-                <Icon name={ICON[id] ?? 'film'} size={13} />
+                <Icon name={ICON[id] ?? 'film'} size={14} />
               </span>
             );
           })}
@@ -112,11 +115,9 @@ export function Controller() {
             </span>
           ) : null}
         </div>
+        <span className="sep" aria-hidden />
         <button className="ctl" onClick={togglePause} disabled={busy !== null} title={paused ? 'Resume' : 'Pause'} aria-label={paused ? 'Resume recording' : 'Pause recording'}>
-          <Icon name={paused ? 'record' : 'pause'} size={16} />
-        </button>
-        <button className="ctl stop" onClick={stop} disabled={busy === 'stop'} title="Stop recording (⌃⌥⌘R)" aria-label="Stop recording">
-          {busy === 'stop' ? <span className="spinner" style={{ borderTopColor: 'var(--accent-ink)' }} /> : <Icon name="stop" size={16} />}
+          <Icon name={paused ? 'play' : 'pause'} size={17} />
         </button>
       </div>
     </div>

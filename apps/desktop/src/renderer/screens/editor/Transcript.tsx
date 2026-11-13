@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { fmtTime, sentences, type Project, type Range, type Word } from '@cutaway/core';
+import { applyOps, fmtTime, proposePacing, sentences, type EditOp, type Project, type Range, type Word } from '@cutaway/core';
 import { timeMapOf, useApp, usePlayback, useShownProject } from '../../state/store';
 import { Icon } from '../../ui/icons';
 import { Button, Empty } from '../../ui/kit';
@@ -14,9 +14,11 @@ interface WordView {
 const WordSpan = memo(function WordSpan({ w, text, selected, size }: { w: WordView; text: string; selected: boolean; size: number }) {
   const cls = ['w', w.cut ? 'cut' : '', w.word.kind === 'filler' ? 'filler' : '', selected ? 'sel' : '', w.locked ? 'locked' : '', text !== w.word.text ? 'fixed' : ''].filter(Boolean).join(' ');
   return (
-    <span className={cls} data-w={w.word.id} style={{ fontSize: size }}>
-      {text}
-    </span>
+    <>
+      <span className={cls} data-w={w.word.id} style={{ fontSize: size }}>
+        {text}
+      </span>{' '}
+    </>
   );
 });
 
@@ -64,6 +66,21 @@ export function Transcript() {
     }
     return out;
   }, [t]);
+
+  // "Remove N filler words" / "Tighten N pauses": the same safe rules as the first cut, applied on request.
+  const tidy = useMemo(() => {
+    if (!t?.hasSpeech) return { fillers: [] as EditOp[], pauses: [] as EditOp[] };
+    const a = project.analysis;
+    const ops = proposePacing({ duration: project.duration, words: t.words, hasSpeech: true, brief: { pacing: project.brief.pacing }, activity: a?.activity ?? [], activityHz: a?.activityHz || 4, clicks: a?.clicks ?? [], silences: a?.voiceLevelDb != null ? a.silences : undefined });
+    const locks = project.edit.locks;
+    const fresh = ops.filter((o) => o.op === 'cut' && map.isKept((o.start + o.end) / 2) && !locks.some((l) => o.start < l.end && o.end > l.start));
+    return { fillers: fresh.filter((o) => o.op === 'cut' && o.kind === 'filler'), pauses: fresh.filter((o) => o.op === 'cut' && o.kind !== 'filler') };
+  }, [t, project.analysis, project.duration, project.brief.pacing, project.edit.locks, map]);
+  const applyTidy = (ops: EditOp[], label: string) => {
+    const seconds = ops.reduce((s, o) => s + (o.end - o.start), 0);
+    useApp.getState().edit((e, p) => applyOps(e, ops, 'creator', p.revision + 1), label);
+    useApp.getState().toast(`Removed ${seconds.toFixed(1)}s — ⌘Z to undo`);
+  };
 
   const selIds = selection?.kind === 'words' ? new Set(selection.ids) : null;
 
@@ -164,6 +181,23 @@ export function Transcript() {
 
   return (
     <div className="transcript">
+      <div className="transcript-head">
+        <div className="insp-group" style={{ margin: 0 }}>Edit by transcript</div>
+        {tidy.fillers.length || tidy.pauses.length ? (
+          <div className="col" style={{ gap: 6 }}>
+            {tidy.fillers.length ? (
+              <button className="btn block" disabled={comparing} title="Cuts stand-alone filler words such as um and uh. Words around them are untouched." onClick={() => applyTidy(tidy.fillers, 'Remove filler words')}>
+                Remove {tidy.fillers.length} filler word{tidy.fillers.length === 1 ? '' : 's'}
+              </button>
+            ) : null}
+            {tidy.pauses.length ? (
+              <button className="btn block" disabled={comparing} title="Shortens silent pauses where nothing happens on screen. Waits with a visible result are kept." onClick={() => applyTidy(tidy.pauses, 'Tighten pauses')}>
+                Tighten {tidy.pauses.length} pause{tidy.pauses.length === 1 ? '' : 's'}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       <div
         className="transcript-body"
         ref={bodyRef}

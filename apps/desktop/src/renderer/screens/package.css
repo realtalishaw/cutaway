@@ -2,7 +2,6 @@
   height: 100%;
   display: grid;
   grid-template-columns: 318px minmax(0, 1fr) 304px;
-  background: radial-gradient(760px 340px at 60% -12%, rgba(245, 200, 75, 0.05), transparent 60%);
 }
 .pkg-left,
 .pkg-right {
@@ -13,10 +12,12 @@
   background: var(--bg-1);
 }
 .pkg-left {
-  border-right: 1px solid var(--line);
+  margin: 12px 0 12px 12px;
+  border-radius: var(--r-3);
 }
 .pkg-right {
-  border-left: 1px solid var(--line);
+  margin: 12px 12px 12px 0;
+  border-radius: var(--r-3);
 }
 .pkg-center {
   display: flex;
@@ -60,7 +61,7 @@
   box-shadow: var(--shadow-1);
 }
 .concept.selected {
-  border-color: rgba(255, 90, 54, 0.6);
+  border-color: var(--accent-2);
 }
 .concept-thumb {
   position: relative;
@@ -137,8 +138,8 @@
   gap: 9px;
   padding: 12px;
   border-radius: var(--r-2);
-  border: 1px solid rgba(245, 200, 75, 0.25);
-  background: var(--ai-wash);
+  border: 0;
+  background: var(--accent-wash);
   flex: none;
 }
 
@@ -148,9 +149,8 @@
   aspect-ratio: 16 / 9;
   border-radius: var(--r-3);
   overflow: hidden;
-  background: #0a0908;
+  background: #000;
   border: 1px solid var(--line-2);
-  box-shadow: var(--shadow-2);
   outline: none;
   touch-action: none;
 }
@@ -454,7 +454,6 @@
 
 /* ───────── empty state ───────── */
 .pkg-empty {
-  background: radial-gradient(820px 400px at 80% -8%, rgba(245, 200, 75, 0.09), transparent 62%);
 }
 .empty-card {
   margin-top: 30px;
@@ -462,8 +461,7 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
-  border-color: var(--line-2);
+  background: var(--bg-1);
 }
 .ghost-row {
   display: grid;
@@ -477,7 +475,7 @@
   display: grid;
   place-items: center;
   color: var(--text-4);
-  background: repeating-linear-gradient(135deg, transparent 0 14px, rgba(255, 236, 214, 0.02) 14px 28px);
+  background: var(--bg-2);
   animation: rise 0.5s var(--ease) both;
 }
 .consent p {
@@ -493,4 +491,12 @@
   flex-direction: column;
   gap: 4px;
   line-height: 1.45;
+}
+
+.pkg-heading {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }

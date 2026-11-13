@@ -297,7 +297,7 @@ function SyncWorkbench({ sourceId, onClose }: { sourceId: string; onClose: () =>
             <Button size="sm" disabled={!hasOverlap} onClick={() => playAt(0.02)}>Start</Button>
             <Button size="sm" disabled={!hasOverlap} onClick={() => playAt(0.5)}>Middle</Button>
             <Button size="sm" disabled={!hasOverlap} onClick={() => playAt(0.98)}>End</Button>
-            {!hasOverlap ? <span className="tiny" style={{ color: 'var(--ai)' }}>The two files do not overlap with this offset.</span> : <span className="tiny dim">An echo means they are still apart.</span>}
+            {!hasOverlap ? <span className="tiny" style={{ color: '#ffc452' }}>The two files do not overlap with this offset.</span> : <span className="tiny dim">An echo means they are still apart.</span>}
           </div>
           <Segmented label="Listen to" value={listen} onChange={setListen} options={[{ value: 'both', label: 'Both' }, { value: 'ref', label: 'Reference' }, { value: 'this', label: 'This file' }]} />
         </div>
@@ -338,7 +338,7 @@ function SyncWorkbench({ sourceId, onClose }: { sourceId: string; onClose: () =>
               result.r.reliable ? (
                 <span className="tiny" style={{ color: 'var(--ok)' }}>Found a match at {Math.round(result.r.confidence * 100)}% confidence against “{result.refName}”. Play the check points, then confirm.</span>
               ) : (
-                <span className="tiny" style={{ color: 'var(--ai)' }}>
+                <span className="tiny" style={{ color: '#ffc452' }}>
                   No shared audio was found between these files ({Math.round(result.r.confidence * 100)}% match). Nothing was changed and this file is not synchronized. Align it by hand: find the same moment in both players and mark it.
                 </span>
               )
@@ -477,6 +477,8 @@ function SourceRow({ source, project, lead, onSync, onRelink }: { source: MediaS
           <div className="row" style={{ gap: 8, minWidth: 0 }}>
             <span className="source-name" title={source.managed ? source.name : source.path}>{source.name}</span>
             <span className={`pill ${source.origin === 'recording' ? 'accent' : ''}`}>{source.origin === 'recording' ? 'Recorded here' : source.managed ? 'Imported · copy in project' : 'Imported · linked file'}</span>
+            {source.deviceKind ? <span className="pill" title="Recorded from a connected device. Touches are not captured as cursor data, so there are no automatic zooms for this track."><Icon name="phone" size={10} /> {source.deviceKind === 'ipad' ? 'iPad' : 'iPhone'} · no cursor data</span> : null}
+            {source.keysFile ? <span className="pill" title="Shortcuts and typing activity were recorded with this take (never the typed characters). Show them from the Keyboard shortcuts tab in the editor."><Icon name="command" size={10} /> Shortcuts recorded</span> : null}
             {source.variableFrameRate && source.origin === 'import' ? <span className="pill warn" title="Frames are not evenly spaced. Cutaway reads real timestamps and conforms on export; the original is not changed.">Variable frame rate</span> : null}
           </div>
           <div className="row" style={{ gap: 6, flex: 'none' }}>
@@ -548,7 +550,7 @@ function AudioPanel({ project }: { project: Project }) {
   if (audible.length === 0) {
     return (
       <section className="panel audio-panel">
-        <div className="eyebrow">Voice</div>
+        <div className="src-heading"><Icon name="mic" size={16} /> Voice</div>
         <div className="muted small">None of these files has sound. The edit will be built from what happens on screen, and no captions will be written.</div>
       </section>
     );
@@ -556,7 +558,7 @@ function AudioPanel({ project }: { project: Project }) {
   return (
     <section className="panel audio-panel">
       <div className="row between">
-        <div className="eyebrow">Voice and audio</div>
+        <div className="src-heading"><Icon name="mic" size={16} /> Voice and audio</div>
         <span className="tiny dim">One voice plays in the edit. Camera scratch audio stays muted unless you turn it on.</span>
       </div>
       <div className="col" style={{ gap: 2 }} role="radiogroup" aria-label="Master voice">
@@ -570,7 +572,7 @@ function AudioPanel({ project }: { project: Project }) {
               <Icon name={ROLE[s.role].icon} size={14} style={{ color: 'var(--text-3)' }} />
               <span className="grow" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {s.name}
-                {master ? <span className="pill ok" style={{ marginLeft: 8 }}>Master voice</span> : canMaster && track.muted ? <span className="tiny dim" style={{ marginLeft: 8 }}>scratch audio · muted</span> : null}
+                {master ? <span className="pill accent" style={{ marginLeft: 8 }}>Master voice</span> : canMaster && track.muted ? <span className="tiny dim" style={{ marginLeft: 8 }}>scratch audio · muted</span> : null}
               </span>
               <div style={{ width: 120 }}>
                 <Slider value={track.gain} min={0} max={1.5} step={0.01} onChange={(v) => edit((e) => ({ ...e, audio: { ...e.audio, tracks: { ...e.audio.tracks, [s.id]: { ...track, gain: v } } } }), 'Change track level', `gain-${s.id}`)} />
@@ -623,7 +625,7 @@ function Inspection() {
     <section className={`panel inspection${rejected.length ? ' has-rejects' : ''}`} aria-live="polite">
       <div className="row between">
         <div className="row" style={{ gap: 8 }}>
-          <Icon name={rejected.length ? 'warn' : 'check'} size={15} style={{ color: rejected.length ? 'var(--ai)' : 'var(--ok)' }} />
+          <Icon name={rejected.length ? 'warn' : 'check'} size={15} style={{ color: rejected.length ? '#ffc452' : 'var(--ok)' }} />
           <b>
             Inspected {accepted.length + rejected.length} file{accepted.length + rejected.length === 1 ? '' : 's'}: {accepted.length} added{rejected.length ? `, ${rejected.length} could not be used` : ''}
           </b>
@@ -725,10 +727,8 @@ export function Sources() {
       <div className={`page sources${dragging ? ' dragging' : ''}`} {...dropProps}>
         {fileInput}
         <div className="page-inner" style={{ maxWidth: 760 }}>
-          <div className="eyebrow">01 · Sources</div>
-          <h1 className="display h2" style={{ margin: '10px 0 18px' }}>
-            Nothing here <em>yet.</em>
-          </h1>
+          <h1 className="src-title">Sources</h1>
+          <p className="muted" style={{ margin: '4px 0 16px' }}>This project has no footage yet.</p>
           <Inspection />
           <div className="panel" style={{ marginTop: 14 }}>
             <Empty
@@ -757,14 +757,11 @@ export function Sources() {
         <div className="page-inner">
           <div className="row between" style={{ alignItems: 'flex-end', marginBottom: 20 }}>
             <div>
-              <div className="eyebrow">01 · Sources</div>
-              <h1 className="display h2" style={{ margin: '10px 0 6px' }}>
-                What each file <em>is.</em>
-              </h1>
-              <div className="muted" style={{ maxWidth: 560 }}>Check the roles, line up anything recorded on another device, and choose the one voice the edit will use. Originals are never modified.</div>
+              <h1 className="src-title">Sources</h1>
+              <div className="muted" style={{ maxWidth: 600, marginTop: 4 }}>Check each file’s role, line up anything recorded on another device, and choose the voice the edit uses. Originals are never modified.</div>
             </div>
             <div className="row" style={{ gap: 8 }}>
-              <span className="tiny dim mono">timeline {fmtTime(project.duration, true)}</span>
+              <span className="tiny dim mono">Timeline {fmtTime(project.duration, true)}</span>
               <Button icon="import" busy={importing} onClick={() => input.current?.click()}>Add media…</Button>
             </div>
           </div>
@@ -777,7 +774,7 @@ export function Sources() {
 
             {timeline.length ? (
               <section className="col" style={{ gap: 8 }}>
-                <div className="eyebrow">On the timeline · {timeline.length}</div>
+                <div className="src-heading"><Icon name="film" size={16} /> On the timeline <span className="dim">{timeline.length}</span></div>
                 {timeline.map((s) => (
                   <SourceRow key={s.id} source={s} project={project} lead={lead} onSync={() => setSyncing(s.id)} onRelink={() => void relink(s, setRelinking)} />
                 ))}
@@ -786,7 +783,7 @@ export function Sources() {
 
             {other.length ? (
               <section className="col" style={{ gap: 8 }}>
-                <div className="eyebrow">Supporting media · {other.length}</div>
+                <div className="src-heading"><Icon name="broll" size={16} /> Supporting media <span className="dim">{other.length}</span></div>
                 {other.map((s) => (
                   <SourceRow key={s.id} source={s} project={project} lead={lead} onSync={() => setSyncing(s.id)} onRelink={() => void relink(s, setRelinking)} />
                 ))}
@@ -801,9 +798,9 @@ export function Sources() {
       <footer className="sources-bar">
         <div className="grow small">
           {!leadUsable ? (
-            <span style={{ color: 'var(--ai)' }}><Icon name="warn" size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{missing.length ? 'A source file is missing. Relink it to continue.' : 'There is no usable screen or camera on the timeline.'}</span>
+            <span style={{ color: '#ffc452' }}><Icon name="warn" size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{missing.length ? 'A source file is missing. Relink it to continue.' : 'There is no usable screen or camera on the timeline.'}</span>
           ) : pending.length ? (
-            <span style={{ color: 'var(--ai)' }}><Icon name="warn" size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{pending.length === 1 ? `“${pending[0]!.name}” has not been lined up with the timeline yet.` : `${pending.length} files have not been lined up with the timeline yet.`}</span>
+            <span style={{ color: '#ffc452' }}><Icon name="warn" size={13} style={{ verticalAlign: -2, marginRight: 6 }} />{pending.length === 1 ? `“${pending[0]!.name}” has not been lined up with the timeline yet.` : `${pending.length} files have not been lined up with the timeline yet.`}</span>
           ) : (
             <span className="muted"><Icon name="check" size={13} style={{ verticalAlign: -2, marginRight: 6, color: 'var(--ok)' }} />{timeline.length} timeline source{timeline.length === 1 ? '' : 's'} ready{project.edit.audio.masterVoiceId ? ', one master voice' : ', no voice track'}.</span>
           )}
@@ -815,7 +812,7 @@ export function Sources() {
           </>
         ) : (
           <Button size="lg" variant="primary" disabled={!leadUsable} onClick={proceed} title={leadUsable ? undefined : 'Add or relink a screen or camera first'}>
-            Continue to brief <Icon name="chevron" size={15} />
+            Continue <Icon name="chevron" size={15} />
           </Button>
         )}
       </footer>
@@ -855,7 +852,7 @@ function DropVeil() {
     <div className="drop-veil">
       <div className="drop-card">
         <Icon name="import" size={26} />
-        <div className="display h3">Drop to add to this project</div>
+        <div className="drop-title">Drop to add to this project</div>
         <div className="muted">Each file is inspected before it is used.</div>
       </div>
     </div>

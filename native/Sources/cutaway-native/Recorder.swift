@@ -167,6 +167,8 @@ final class Recorder: CaptureSink {
                 s.videoWriter = w
                 writers.append(w)
             }
+            // With a device as the picture, system audio must not define where the take starts.
+            if config.deviceScreen != nil { s.audioMayEstablish = false }
             screen = s
         }
 

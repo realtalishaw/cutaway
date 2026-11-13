@@ -30,3 +30,31 @@ python3 scripts/synccheck.py /tmp/cutaway-syn-take .build/release/cutaway-native
 
 Real capture needs Screen Recording, Camera and Microphone permission for the
 app that launches the helper.
+
+## Parity additions (0.2.0)
+
+`devices` now also reports Accessibility / Input Monitoring status, connected
+iPhones and iPads (`externalDevices`) and running apps. `record` accepts
+`screen.type: "device"`, `screen.hideDesktopIcons`, `screen.hideNotifications`,
+`systemAudio: { "apps": [...] }` and `captureKeys`. New one-shot commands:
+`resize-window`, `faces`, `matte`, `gif`, `voices`, `speak`. Shapes are in
+`../docs/NATIVE_PROTOCOL.md`.
+
+Key capture never stores what is typed: only shortcut names from a fixed
+key-code table, and character-free "typed" ticks.
+
+```bash
+B=.build/release/cutaway-native
+$B gif --video clip.mp4 --out clip.gif --fps 12 --width 640 --start 8 --duration 5
+$B voices | head -c 300
+$B speak --text-file script.txt --out voice.wav
+$B faces camera.mov --fps 5
+$B matte camera.mov --out matte.mov          # progress on stderr
+```
+
+Measured on the reference Mac: a 36.6 s 1280×720 clip mattes in 27.8 s
+(balanced) with frame timestamps identical to the source (max 0.017 ms apart);
+a 5 s, 60-frame GIF writes in about 3 s. No footage with a person or face was
+available, so matte and face quality are unverified beyond running, decoding
+and timing. iPhone/iPad capture, the real key tap and window resizing need
+hardware or permissions that were not available.
