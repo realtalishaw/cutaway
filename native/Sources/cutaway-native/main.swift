@@ -8,13 +8,13 @@ signal(SIGPIPE, SIG_IGN)
 
 let argv = Array(CommandLine.arguments.dropFirst())
 guard let command = argv.first else {
-    Out.fail(CLIError("usage", "cutaway-native <devices|preflight|probe|pcm|frames|activity|transcribe|mux|recover|record> …"))
+    Out.fail(CLIError("usage", "cutaway-native <devices|preflight|probe|pcm|frames|activity|transcribe|mux|recover|record|resize-window|faces|matte|gif|voices|speak> …"))
 }
 let rest = Array(argv.dropFirst())
 
 switch command {
 case "devices":
-    runCommand { try await DevicesCommand.run() }
+    runCommand { try await DevicesCommand.run(Args(rest)) }
 case "preflight":
     let a = Args(rest)
     runCommand { try await PreflightCommand.run(configPath: try a.require("config")) }
@@ -38,8 +38,21 @@ case "recover":
     runCommand { try await RecoverCommand.run(Args(rest)) }
 case "record":
     RecordCommand.run(Args(rest))
+case "resize-window":
+    runCommand { try await ResizeWindowCommand.run(Args(rest)) }
+case "faces":
+    runCommand { try await FacesCommand.run(Args(rest)) }
+case "matte":
+    runCommand { try await MatteCommand.run(Args(rest)) }
+case "gif":
+    runCommand { try await GifCommand.run(Args(rest)) }
+case "voices":
+    runCommand { try await VoicesCommand.run() }
+case "speak":
+    runCommand { try await SpeakCommand.run(Args(rest)) }
 case "version", "--version":
-    print(Out.line(["version": "0.1.0", "protocol": 1]))
+    print(Out.line(["version": "0.2.0", "protocol": 1,
+                    "features": ["device-screen", "hide-desktop-icons", "hide-notifications", "app-audio", "keys", "resize-window", "faces", "matte", "gif", "voices", "speak"]]))
     exit(0)
 default:
     Out.fail(CLIError("usage", "unknown command '\(command)'"))

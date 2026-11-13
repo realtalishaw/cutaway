@@ -12,6 +12,9 @@ export type Selection =
   | { kind: 'words'; ids: string[]; range: Range }
   | null;
 
+export type InspectorTab = 'background' | 'cursor' | 'camera' | 'captions' | 'audio' | 'shortcuts' | 'motion';
+export type DrawerTab = 'transcript' | 'review' | 'history';
+
 export interface Toast {
   id: number;
   text: string;
@@ -51,6 +54,9 @@ interface AppState {
   toasts: Toast[];
   /** Local-revision proposal awaiting accept/discard: before/after preview. */
   comparison: { before: Project; after: Project; label: string; range: Range; notes: string[]; showing: 'before' | 'after' } | null;
+  /** Editor chrome: right inspector visibility, active inspector tab, left drawer (transcript / review / history). */
+  panels: { inspector: boolean; tab: InspectorTab; drawer: DrawerTab | null };
+  setPanels(patch: Partial<AppState['panels']>): void;
 
   go(route: Route): void;
   setSettings(s: AppSettings): void;
@@ -92,6 +98,8 @@ export const useApp = create<AppState>((set, get) => ({
   job: null,
   toasts: [],
   comparison: null,
+  panels: { inspector: true, tab: 'background', drawer: null },
+  setPanels: (patch) => set({ panels: { ...get().panels, ...patch } }),
 
   go: (route) => set({ route }),
   setSettings: (settings) => set({ settings }),

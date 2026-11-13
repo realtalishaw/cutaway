@@ -8,8 +8,11 @@ import Accelerate
 
 struct RecordConfig {
     struct Screen {
-        var type: String            // display | window | region
+        var type: String            // display | window | region | device
         var displayId: UInt32?
+        var deviceId: String?       // type == "device": a connected iPhone/iPad
+        var hideDesktopIcons: Bool
+        var hideNotifications: Bool
         var windowId: UInt32?
         var rect: CGRect?           // global display points, top-left origin
         var showCursor: Bool
@@ -33,11 +36,20 @@ struct RecordConfig {
     var cameras: [Camera]
     var microphone: Microphone?
     var systemAudio: Bool
+    /// When set, system audio is captured from these apps only (bundle identifiers).
+    var systemAudioApps: [String]?
+    /// Record shortcuts and typing activity (never characters) to keys.jsonl.
+    var captureKeys: Bool
     var checkpointSeconds: Double
     var minFreeBytes: Int64
     var waitForStart: Bool
     var maxDuration: Double?
     var synthetic: Bool
+
+    /// The screen source when it is captured with ScreenCaptureKit (display, window or region).
+    var sckScreen: Screen? { screen.flatMap { $0.type == "device" ? nil : $0 } }
+    /// The screen source when it is a connected iPhone or iPad.
+    var deviceScreen: Screen? { screen.flatMap { $0.type == "device" ? $0 : nil } }
 
     static func load(path: String) throws -> RecordConfig {
         guard let data = FileManager.default.contents(atPath: path) else {
@@ -60,6 +72,9 @@ struct RecordConfig {
             screen = Screen(
                 type: (s["type"] as? String) ?? "display",
                 displayId: num(s["displayId"]).map { UInt32($0) },
+                deviceId: s["deviceId"] as? String,
+                hideDesktopIcons: (s["hideDesktopIcons"] as? Bool) ?? false,
+                hideNotifications: (s["hideNotifications"] as? Bool) ?? false,
                 windowId: num(s["windowId"]).map { UInt32($0) },
                 rect: rect,
                 showCursor: (s["showCursor"] as? Bool) ?? false,
@@ -75,13 +90,25 @@ struct RecordConfig {
         if let m = json["microphone"] as? [String: Any] {
             mic = Microphone(deviceId: m["deviceId"] as? String)
         }
+        // systemAudio: true | false | { "apps": ["bundle.id", …] }
+        var systemAudio = (json["systemAudio"] as? Bool) ?? false
+        var systemAudioApps: [String]?
+        if let obj = json["systemAudio"] as? [String: Any] {
+            systemAudio = true
+            if let apps = obj["apps"] as? [String] {
+                let cleaned = apps.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                if !cleaned.isEmpty { systemAudioApps = cleaned }
+            }
+        }
         return RecordConfig(
             outDir: URL(fileURLWithPath: out),
             fps: Int(num(json["fps"]) ?? 60),
             screen: screen,
             cameras: cameras,
             microphone: mic,
-            systemAudio: (json["systemAudio"] as? Bool) ?? false,
+            systemAudio: systemAudio,
+            systemAudioApps: systemAudioApps,
+            captureKeys: (json["captureKeys"] as? Bool) ?? false,
             checkpointSeconds: max(0.5, min(num(json["checkpointSeconds"]) ?? 2, 2)),
             minFreeBytes: Int64(num(json["minFreeBytes"]) ?? 2_000_000_000),
             waitForStart: (json["waitForStart"] as? Bool) ?? false,

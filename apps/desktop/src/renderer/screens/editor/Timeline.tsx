@@ -2,10 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { clamp, fmtTime, type DecisionMeta, type Project, type Range } from '@cutaway/core';
 import { timeMapOf, useApp, usePlayback, useShownProject, type Selection } from '../../state/store';
 import { Icon, type IconName } from '../../ui/icons';
-import { Button } from '../../ui/kit';
-import { patchItem, retime, seekSource } from './ops';
+import { addZoom, patchItem, retime, seekSource } from './ops';
 
-const GUTTER = 84;
+const GUTTER = 14;
 const VIEW_LABEL: Record<string, { label: string; icon: IconName }> = {
   screen: { label: 'Screen', icon: 'screen' },
   camera: { label: 'Camera', icon: 'camera' },
@@ -82,21 +81,36 @@ function Item({ kind, id, range, pps, duration, meta, selected, className = '', 
   );
 }
 
-function Lane({ label, icon, height = 28, children, onBackground }: { label: string; icon: IconName; height?: number; children: ReactNode; onBackground?: { down(e: RP): void; move(e: RP): void; up(e: RP): void } }) {
+function Lane({ kind, height = 44, children, onBackground, hint, onAdd, pps }: { kind: string; height?: number; children: ReactNode; onBackground?: { down(e: RP): void; move(e: RP): void; up(e: RP): void }; hint?: string; onAdd?: (t: number) => void; pps?: number }) {
+  const [ghost, setGhost] = useState<number | null>(null);
+  const x = (e: RP | React.MouseEvent) => e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left;
   return (
-    <div className="tl-lane" style={{ height }}>
-      <div className="tl-gutter">
-        <Icon name={icon} size={12} />
-        <span>{label}</span>
-      </div>
-      <div className="tl-track" onPointerDown={onBackground?.down} onPointerMove={onBackground?.move} onPointerUp={onBackground?.up}>
+    <div className={`tl-lane lane-${kind}`} style={{ height }}>
+      <div
+        className="tl-track"
+        onPointerDown={onBackground?.down}
+        onPointerMove={(e) => {
+          onBackground?.move(e);
+          if (onAdd) setGhost(e.target === e.currentTarget ? x(e) : null);
+        }}
+        onPointerUp={onBackground?.up}
+        onPointerLeave={() => setGhost(null)}
+        onClick={(e) => {
+          if (onAdd && pps && e.target === e.currentTarget) onAdd(x(e) / pps);
+        }}
+      >
         {children}
+        {onAdd && ghost !== null ? (
+          <span className="tl-ghost" style={{ left: ghost - 14 }}>
+            <Icon name="plus" size={12} /> {hint}
+          </span>
+        ) : null}
       </div>
     </div>
   );
 }
 
-/** Waveform + kept/cut shading, drawn only for the visible window so long projects stay cheap. */
+/** The footage track: one amber block per kept stretch, waveform inside, drawn only for the visible window. */
 function ClipCanvas({ project, pps, scrollLeft, width, height }: { project: Project; pps: number; scrollLeft: number; width: number; height: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -111,40 +125,65 @@ function ClipCanvas({ project, pps, scrollLeft, width, height }: { project: Proj
     const t0 = scrollLeft / pps;
     const t1 = (scrollLeft + width) / pps;
     const x = (t: number) => t * pps - scrollLeft;
-    // kept footage
-    ctx.fillStyle = 'rgba(255,236,214,0.055)';
-    const endX = Math.min(width, x(project.duration));
-    ctx.beginPath();
-    ctx.roundRect(Math.max(0, x(0)), 3, Math.max(0, endX - Math.max(0, x(0))), height - 6, 6);
-    ctx.fill();
-    // waveform
+    const map = timeMapOf(project);
     const wf = project.analysis?.waveform;
     const hz = project.analysis?.waveformHz ?? 20;
-    if (wf && wf.length) {
-      ctx.fillStyle = 'rgba(243,236,227,0.42)';
-      const mid = height / 2;
-      const step = Math.max(1, Math.floor(hz / pps));
-      for (let i = Math.max(0, Math.floor(t0 * hz)); i < Math.min(wf.length, Math.ceil(t1 * hz)); i += step) {
-        let v = 0;
-        for (let j = i; j < Math.min(wf.length, i + step); j++) v = Math.max(v, wf[j]!);
-        const h = Math.max(1, v * (height - 14));
-        ctx.fillRect(x(i / hz), mid - h / 2, Math.max(1, (step / hz) * pps - 0.6), h);
+    // merge segments that only differ by speed boundaries into visual clips, but keep speed labels
+    const kept = map.keptRanges();
+    ctx.font = '600 11px "Inter Variable", sans-serif';
+    ctx.textBaseline = 'middle';
+    for (const k of kept) {
+      if (k.end < t0 || k.start > t1) continue;
+      const x0 = x(k.start);
+      const w = Math.max(2, (k.end - k.start) * pps - 1);
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(x0, 0.5, w, height - 1, 9);
+      ctx.fillStyle = '#8a6516';
+      ctx.fill();
+      ctx.clip();
+      // waveform, bottom-anchored like a filled area
+      if (wf && wf.length) {
+        ctx.fillStyle = 'rgba(214, 166, 72, 0.75)';
+        ctx.beginPath();
+        const a = Math.max(0, Math.floor(Math.max(k.start, t0) * hz));
+        const b = Math.min(wf.length, Math.ceil(Math.min(k.end, t1) * hz));
+        ctx.moveTo(x(a / hz), height);
+        for (let i = a; i < b; i++) ctx.lineTo(x(i / hz), height - 3 - wf[i]! * (height * 0.55));
+        ctx.lineTo(x(b / hz), height);
+        ctx.closePath();
+        ctx.fill();
       }
-    } else {
-      ctx.fillStyle = 'rgba(243,236,227,0.12)';
-      ctx.fillRect(Math.max(0, x(0)), height / 2 - 0.5, Math.max(0, endX - Math.max(0, x(0))), 1);
-    }
-    // words as faint ticks when zoomed in enough
-    if (pps > 60 && project.transcript) {
-      ctx.fillStyle = 'rgba(243,236,227,0.5)';
-      ctx.font = '10px "Hanken Grotesk Variable", sans-serif';
-      for (const w of project.transcript.words) {
-        if (w.end < t0 || w.start > t1) continue;
-        if ((w.end - w.start) * pps > 22) ctx.fillText(project.edit.wordText[w.id] ?? w.text, x(w.start) + 2, height - 6, (w.end - w.start) * pps - 3);
+      ctx.restore();
+      ctx.strokeStyle = '#d19c2c';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x0 + 0.5, 1, w - 1, height - 2, 9);
+      ctx.stroke();
+      // label: Clip · duration · speed
+      const speed = map.segments.find((sg) => sg.srcStart >= k.start - 1e-6 && sg.srcEnd <= k.end + 1e-6 && sg.speed !== 1)?.speed;
+      const label = `${fmtDuration(k.end - k.start)}   ${speed ? `${speed}x` : '1x'}`;
+      if (w > 96) {
+        ctx.fillStyle = 'rgba(255, 244, 220, 0.95)';
+        ctx.textAlign = 'center';
+        const cx = Math.min(Math.max(x0 + w / 2, 60), width - 60);
+        if (cx > x0 + 44 && cx < x0 + w - 44) {
+          ctx.font = '500 10.5px "Inter Variable", sans-serif';
+          ctx.fillStyle = 'rgba(255, 236, 196, 0.75)';
+          ctx.fillText('Clip', cx, height / 2 - 8);
+          ctx.font = '600 11.5px "Inter Variable", sans-serif';
+          ctx.fillStyle = 'rgba(255, 246, 228, 0.98)';
+          ctx.fillText(label, cx, height / 2 + 8);
+        }
       }
     }
   }, [project, pps, scrollLeft, width, height]);
   return <canvas ref={ref} className="tl-clip-canvas" style={{ width, height, transform: `translateX(${scrollLeft}px)` }} />;
+}
+
+function fmtDuration(s: number): string {
+  if (s < 60) return `${s < 10 ? s.toFixed(1).replace(/\.0$/, '') : Math.round(s)}s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
 function ticks(pps: number): { major: number; minor: number } {
@@ -153,7 +192,7 @@ function ticks(pps: number): { major: number; minor: number } {
   return { major, minor: major / (major >= 10 ? 5 : 4) };
 }
 
-export function Timeline() {
+export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): void }) {
   const project = useShownProject();
   const selection = useApp((s) => s.selection);
   const select = useApp((s) => s.select);
@@ -163,11 +202,11 @@ export function Timeline() {
   const headRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [scrollLeft, setScrollLeft] = useState(0);
-  const [pps, setPps] = useState(0);
   const map = timeMapOf(project);
   const duration = Math.max(0.1, project.duration);
   const fitPps = Math.max(2, (width - GUTTER - 24) / duration);
-  const scale = pps || fitPps;
+  // zoom 0 = whole recording fits; 1 = 240 px per second
+  const scale = zoom <= 0.001 ? fitPps : fitPps * Math.pow(Math.max(1, 240 / fitPps), zoom);
   const contentWidth = Math.max(width - GUTTER, duration * scale + 24);
 
   useLayoutEffect(() => {
@@ -255,54 +294,29 @@ export function Timeline() {
     return out;
   }, [scrollLeft, scale, width, duration, major, minor]);
 
-  const zoomBy = (f: number) => {
-    const sc = scrollRef.current;
-    const center = sc ? (sc.scrollLeft + (sc.clientWidth - GUTTER) / 2) / scale : 0;
-    const next = clamp(scale * f, fitPps, 400);
-    setPps(next <= fitPps * 1.01 ? 0 : next);
-    requestAnimationFrame(() => sc && (sc.scrollLeft = Math.max(0, center * next - (sc.clientWidth - GUTTER) / 2)));
-  };
-
-  const aiMarks = !expanded ? [...e.zooms, ...e.layouts, ...e.overlays, ...e.broll] : [];
+  void onZoom;
   const assetName = (id: string) => project.sources.find((s) => s.id === id)?.name ?? 'Missing asset';
   const ro = comparing; // while comparing, the timeline is read-only
 
+  const labelEvery = major;
   return (
     <div className={`timeline ${expanded ? 'expanded' : 'simple'}${ro ? ' readonly' : ''}`}>
-      <div className="tl-toolbar">
-        <div className="seg">
-          <button aria-pressed={!expanded} onClick={() => useApp.getState().patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: false } }))}>Simple</button>
-          <button aria-pressed={expanded} onClick={() => useApp.getState().patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: true } }))} title="Show every lane (⌘T)">All lanes</button>
-        </div>
-        <span className="tiny dim">
-          {fmtTime(map.outDuration)} final · {fmtTime(project.duration)} recorded · {e.cuts.length} cut{e.cuts.length === 1 ? '' : 's'}
-        </span>
-        <div className="grow" />
-        <span className="row gap-2 tiny dim" aria-hidden>
-          <i className="tl-swatch ai" /> AI <i className="tl-swatch you" style={{ marginLeft: 8 }} /> You <Icon name="lock" size={10} style={{ marginLeft: 8 }} /> Locked
-        </span>
-        <Button size="sm" variant="ghost" icon="minus" onClick={() => zoomBy(1 / 1.5)} aria-label="Zoom timeline out" title="Zoom out" />
-        <Button size="sm" variant="ghost" onClick={() => setPps(0)} title="Fit whole recording">Fit</Button>
-        <Button size="sm" variant="ghost" icon="plus" onClick={() => zoomBy(1.5)} aria-label="Zoom timeline in" title="Zoom in" />
-      </div>
       <div className="tl-scroll" ref={scrollRef} onScroll={(ev) => setScrollLeft(ev.currentTarget.scrollLeft)}>
-        <div className="tl-content" style={{ width: GUTTER + contentWidth }}>
+        <div className="tl-content" style={{ width: GUTTER * 2 + contentWidth, paddingLeft: GUTTER }}>
           <div className="tl-ruler" onPointerDown={rulerHandlers.down} onPointerMove={rulerHandlers.move} onPointerUp={rulerHandlers.up}>
-            <div className="tl-gutter" />
-            <div className="tl-track">
-              {rulerTicks.map((t) => (
-                <span key={t.t.toFixed(3)} className={`tick${t.major ? ' major' : ''}`} style={{ left: t.t * scale }}>
-                  {t.major ? <b className="mono">{major < 1 ? `${fmtTime(t.t)}.${Math.round((t.t % 1) * 10)}` : fmtTime(t.t)}</b> : null}
-                </span>
-              ))}
-            </div>
+            {rulerTicks.filter((t) => t.major).map((t) => (
+              <span key={t.t.toFixed(3)} className="tick" style={{ left: t.t * scale }}>
+                <b>{labelEvery < 1 ? `${t.t.toFixed(1)}s` : t.t < 60 ? `${Math.round(t.t)}s` : fmtTime(t.t)}</b>
+                <i />
+              </span>
+            ))}
           </div>
 
-          <Lane label="Footage" icon="scissors" height={expanded ? 56 : 64} onBackground={ro ? undefined : clipHandlers}>
-            <ClipCanvas project={project} pps={scale} scrollLeft={scrollLeft} width={Math.max(0, width - GUTTER)} height={expanded ? 56 : 64} />
+          <Lane kind="clip" height={52} onBackground={ro ? undefined : clipHandlers}>
+            <ClipCanvas project={project} pps={scale} scrollLeft={scrollLeft} width={Math.max(0, width - GUTTER)} height={52} />
             {e.speeds.map((s) => (
               <Item key={s.id} kind="speed" id={s.id} range={s} pps={scale} duration={duration} meta={s.meta} selected={isSel('speed', s.id)} title={`${s.speed}× speed`} onSelect={() => select({ kind: 'speed', id: s.id })} onChange={(r, k) => retime('speeds', s.id, r, k)}>
-                <Icon name="speed" size={10} /> {s.speed}×
+                <Icon name="speed" size={10} /> {s.speed}x
               </Item>
             ))}
             {e.cuts.map((c) => (
@@ -316,63 +330,70 @@ export function Timeline() {
                 meta={c.meta}
                 minLength={0.05}
                 selected={isSel('cut', c.id)}
-                title={`${c.meta.origin === 'ai' ? 'AI' : 'Your'} cut · ${c.kind} · ${(c.end - c.start).toFixed(1)}s removed${c.meta.reason ? ` · ${c.meta.reason}` : ''}`}
+                title={`${c.meta.origin === 'ai' ? 'AI' : 'Your'} cut · ${c.kind} · ${(c.end - c.start).toFixed(1)}s removed${c.meta.reason ? ` · ${c.meta.reason}` : ''} · click to review or restore`}
                 onSelect={() => select({ kind: 'cut', id: c.id })}
                 onChange={(r) => patchItem('cuts', c.id, r, 'Adjust cut')}
-              />
+              >
+                {(c.end - c.start) * scale > 26 ? <Icon name="scissors" size={11} /> : null}
+              </Item>
             ))}
             {rangeSel ? <div className="tl-range" style={{ left: rangeSel.start * scale, width: Math.max(2, (rangeSel.end - rangeSel.start) * scale) }} /> : null}
           </Lane>
 
+          <Lane kind="zoom" pps={scale} hint="Add zoom" onAdd={ro || !project.sources.some((s) => s.role === 'screen') ? undefined : (t) => addZoom({ start: Math.max(0, t - 0.3), end: Math.min(duration, t + 2.7) })}>
+            {e.zooms.map((z) => (
+              <Item key={z.id} kind="zoom" id={z.id} range={z} pps={scale} duration={duration} meta={z.meta} minLength={0.6} selected={isSel('zoom', z.id)} title={`Zoom ${z.scale.toFixed(1)}×${z.follow ? ' · follows cursor' : ''}${z.meta.reason ? ` · ${z.meta.reason}` : ''}`} onSelect={() => select({ kind: 'zoom', id: z.id })} onChange={(r, k) => retime('zooms', z.id, r, k)}>
+                <span className="tl-two">
+                  <small><Icon name="pointer" size={10} /> Zoom{z.meta.origin === 'ai' ? <Icon name="sparkle" size={9} /> : null}</small>
+                  <span><Icon name="zoom" size={11} /> {z.scale.toFixed(z.scale % 1 ? 1 : 0)}x <Icon name="cursor" size={10} /> {z.follow ? 'Auto' : 'Manual'}</span>
+                </span>
+              </Item>
+            ))}
+            {e.zooms.length === 0 && !ro ? <span className="tl-empty">Click here to add a zoom</span> : null}
+          </Lane>
+
           {expanded ? (
             <>
-              <Lane label="View" icon="layout">
+              <Lane kind="view" pps={scale}>
                 {e.layouts.map((l) => (
-                  <Item key={l.id} kind="layout" id={l.id} range={l} pps={scale} duration={duration} meta={l.meta} minLength={0.5} selected={isSel('layout', l.id)} className={`mode-${l.mode}`} title={`${VIEW_LABEL[l.mode]!.label}${l.mode !== 'screen' ? ` · camera ${l.camera}` : ''}${l.meta.reason ? ` · ${l.meta.reason}` : ''}`} onSelect={() => select({ kind: 'layout', id: l.id })} onChange={(r, k) => retime('layouts', l.id, r, k)}>
-                    <Icon name={VIEW_LABEL[l.mode]!.icon} size={11} />
-                    {VIEW_LABEL[l.mode]!.label}
-                    {l.mode !== 'screen' ? <b className="mono cam">{l.camera}</b> : null}
+                  <Item key={l.id} kind="layout" id={l.id} range={l} pps={scale} duration={duration} meta={l.meta} minLength={0.5} selected={isSel('layout', l.id)} title={`${VIEW_LABEL[l.mode]!.label}${l.mode !== 'screen' ? ` · camera ${l.camera}` : ''}${l.meta.reason ? ` · ${l.meta.reason}` : ''}`} onSelect={() => select({ kind: 'layout', id: l.id })} onChange={(r, k) => retime('layouts', l.id, r, k)}>
+                    <span className="tl-two">
+                      <small><Icon name="layout" size={10} /> Layout{l.meta.origin === 'ai' ? <Icon name="sparkle" size={9} /> : null}</small>
+                      <span><Icon name={VIEW_LABEL[l.mode]!.icon} size={11} /> {VIEW_LABEL[l.mode]!.label}{l.mode !== 'screen' ? ` ${l.camera}` : ''}</span>
+                    </span>
                   </Item>
                 ))}
+                {e.layouts.length === 0 ? <span className="tl-empty">Layouts · select a range on the clip to change the view</span> : null}
               </Lane>
-              <Lane label="Zoom" icon="zoom">
-                {e.zooms.map((z) => (
-                  <Item key={z.id} kind="zoom" id={z.id} range={z} pps={scale} duration={duration} meta={z.meta} minLength={0.6} selected={isSel('zoom', z.id)} title={`Zoom ${z.scale.toFixed(1)}×${z.follow ? ' · follows cursor' : ''}${z.meta.reason ? ` · ${z.meta.reason}` : ''}`} onSelect={() => select({ kind: 'zoom', id: z.id })} onChange={(r, k) => retime('zooms', z.id, r, k)}>
-                    {z.scale.toFixed(1)}×
-                  </Item>
-                ))}
-              </Lane>
-              <Lane label="Graphics" icon="text">
+              <Lane kind="graphics" pps={scale}>
                 {e.overlays.map((o) => (
                   <Item key={o.id} kind="overlay" id={o.id} range={o} pps={scale} duration={duration} meta={o.meta} minLength={0.8} selected={isSel('overlay', o.id)} title={`${o.kind}: ${o.text}`} onSelect={() => select({ kind: 'overlay', id: o.id })} onChange={(r) => patchItem('overlays', o.id, r, 'Move graphic')}>
-                    {o.text}
+                    <span className="tl-two">
+                      <small><Icon name="text" size={10} /> {o.kind === 'callout' ? 'Callout' : o.kind === 'section-card' ? 'Section' : 'Lower third'}{o.meta.origin === 'ai' ? <Icon name="sparkle" size={9} /> : null}</small>
+                      <span>{o.text}</span>
+                    </span>
                   </Item>
                 ))}
-              </Lane>
-              <Lane label="B-roll" icon="broll">
                 {e.broll.map((b) => (
                   <Item key={b.id} kind="broll" id={b.id} range={b} pps={scale} duration={duration} meta={b.meta} minLength={0.8} selected={isSel('broll', b.id)} title={`B-roll: ${assetName(b.assetId)}${b.meta.reason ? ` · ${b.meta.reason}` : ''}`} onSelect={() => select({ kind: 'broll', id: b.id })} onChange={(r, k) => retime('broll', b.id, r, k)}>
-                    {assetName(b.assetId)}
+                    <span className="tl-two">
+                      <small><Icon name="broll" size={10} /> B-roll{b.meta.origin === 'ai' ? <Icon name="sparkle" size={9} /> : null}</small>
+                      <span>{assetName(b.assetId)}</span>
+                    </span>
                   </Item>
                 ))}
+                {e.masks.map((m) => (
+                  <Item key={m.id} kind="mask" id={m.id} range={m} pps={scale} duration={duration} meta={m.meta} selected={isSel('mask', m.id)} title={`${m.style} mask on ${m.target}`} onSelect={() => select({ kind: 'mask', id: m.id })} onChange={(r) => patchItem('masks', m.id, r, 'Move mask')}>
+                    <span className="tl-two">
+                      <small><Icon name="mask" size={10} /> Mask</small>
+                      <span>{m.style === 'blur' ? 'Blur' : m.style === 'solid' ? 'Cover' : 'Spotlight'}</span>
+                    </span>
+                  </Item>
+                ))}
+                {e.overlays.length + e.broll.length + e.masks.length === 0 ? <span className="tl-empty">Graphics, B-roll and masks</span> : null}
               </Lane>
-              {e.masks.length ? (
-                <Lane label="Masks" icon="mask">
-                  {e.masks.map((m) => (
-                    <Item key={m.id} kind="mask" id={m.id} range={m} pps={scale} duration={duration} meta={m.meta} selected={isSel('mask', m.id)} title={`${m.style} mask on ${m.target}`} onSelect={() => select({ kind: 'mask', id: m.id })} onChange={(r) => patchItem('masks', m.id, r, 'Move mask')}>
-                      {m.style}
-                    </Item>
-                  ))}
-                </Lane>
-              ) : null}
             </>
-          ) : (
-            <Lane label="Decisions" icon="sparkle" height={18}>
-              {aiMarks.map((m) => (
-                <span key={m.id} className={`tl-mark ${m.meta.origin === 'ai' ? 'ai' : 'you'}`} style={{ left: m.start * scale, width: Math.max(3, (m.end - m.start) * scale) }} />
-              ))}
-            </Lane>
-          )}
+          ) : null}
 
           {/* locks span every lane */}
           <div className="tl-locks" style={{ left: GUTTER }}>

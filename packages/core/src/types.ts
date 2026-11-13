@@ -222,6 +222,8 @@ export interface Appearance {
   output: { width: number; height: number; fps: number };
   background:
     | { type: 'gradient'; colors: string[]; angle: number }
+    /** One of Cutaway's built-in abstract wallpapers (see WALLPAPERS). */
+    | { type: 'wallpaper'; id: string; blur: number }
     | { type: 'solid'; color: string }
     | { type: 'image'; path: string; blur: number };
   frame: { padding: number; radius: number; shadow: number; inset: number };

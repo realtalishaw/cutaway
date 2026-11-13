@@ -20,7 +20,8 @@ enum Permissions {
     }
 
     static func all() -> [String: Any] {
-        ["screen": screen(), "camera": media(.video), "microphone": media(.audio)]
+        ["screen": screen(), "camera": media(.video), "microphone": media(.audio),
+         "accessibility": InputAccess.accessibility(), "inputMonitoring": InputAccess.inputMonitoring()]
     }
 }
 
@@ -88,7 +89,10 @@ enum DeviceCatalog {
 }
 
 enum DevicesCommand {
-    static func run() async throws -> Any {
+    static func run(_ a: Args = Args([])) async throws -> Any {
+        // iPhones and iPads appear a moment after this process opts in to screen-capture devices.
+        ExternalDevices.enable()
+        let externalWait = max(0, min(a.double("wait-external") ?? 0.4, 10))
         var windows: [[String: Any]] = []
         if CGPreflightScreenCaptureAccess() {
             if let content = try? await withTimeout(seconds: 8, {
@@ -121,12 +125,20 @@ enum DevicesCommand {
         let mics: [[String: Any]] = DeviceCatalog.microphones().map { d in
             ["id": d.uniqueID, "name": d.localizedName, "default": d.uniqueID == defaultMic]
         }
+        let external = await ExternalDevices.list(wait: externalWait).map(ExternalDevices.describe)
+        let ownPid = ProcessInfo.processInfo.processIdentifier
+        let apps: [[String: Any]] = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.processIdentifier != ownPid && $0.bundleIdentifier != nil }
+            .map { ["bundleId": $0.bundleIdentifier!, "name": $0.localizedName ?? $0.bundleIdentifier!, "pid": Int($0.processIdentifier)] }
+            .sorted { ($0["name"] as! String).localizedCaseInsensitiveCompare($1["name"] as! String) == .orderedAscending }
         return [
             "permissions": Permissions.all(),
             "displays": DeviceCatalog.displays(),
             "windows": windows,
             "cameras": cameras,
             "microphones": mics,
+            "externalDevices": external,
+            "apps": apps,
         ]
     }
 }

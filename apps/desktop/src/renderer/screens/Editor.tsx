@@ -4,7 +4,7 @@ import { timeMapOf, useApp, usePlayback, useShownProject } from '../state/store'
 import { acceptComparison, discardComparison, reviseSection } from '../state/jobs';
 import { Preview, type PreviewPoint } from '../engine/Preview';
 import { Icon } from '../ui/icons';
-import { Banner, Button, Segmented } from '../ui/kit';
+import { Button, Segmented, Slider } from '../ui/kit';
 import { Timeline } from './editor/Timeline';
 import { Transcript } from './editor/Transcript';
 import { History, Review } from './editor/Review';
@@ -14,28 +14,120 @@ import './editor/editor.css';
 
 type Pick = 'zoom' | 'mask' | 'callout' | null;
 
-function Timecode() {
+function Timecode({ total }: { total?: boolean }) {
   const ref = useRef<HTMLSpanElement>(null);
   const project = useShownProject();
   useEffect(() => {
+    if (total) return;
     const update = () => {
       if (ref.current) ref.current.textContent = fmtTime(usePlayback.getState().time, true);
     };
     update();
     return usePlayback.subscribe(update);
-  }, []);
+  }, [total]);
+  if (total) return <span className="timecode mono dim">{fmtTime(timeMapOf(project).outDuration, true)}</span>;
   return (
-    <span className="timecode mono">
-      <span ref={ref}>0:00.00</span>
-      <span className="dim"> / {fmtTime(timeMapOf(project).outDuration, true)}</span>
+    <span className="timecode mono dim" ref={ref}>
+      0:00.00
     </span>
   );
 }
 
-function Transport() {
-  const playing = usePlayback((s) => s.playing);
-  const volume = usePlayback((s) => s.volume);
+export const ASPECTS: { id: string; label: string; ratio: string; w: number; h: number }[] = [
+  { id: 'wide', label: 'Wide', ratio: '16:9', w: 16, h: 9 },
+  { id: 'vertical', label: 'Vertical', ratio: '9:16', w: 9, h: 16 },
+  { id: 'square', label: 'Square', ratio: '1:1', w: 1, h: 1 },
+  { id: 'classic', label: 'Classic', ratio: '4:3', w: 4, h: 3 },
+  { id: 'tall', label: 'Tall', ratio: '4:5', w: 4, h: 5 },
+];
+
+export function aspectOf(width: number, height: number) {
+  return ASPECTS.find((a) => Math.abs(a.w / a.h - width / height) < 0.01) ?? ASPECTS[0]!;
+}
+
+/** Output size for an aspect, keeping the current quality tier (1080 or 2160 on the short side). */
+export function sizeFor(aspect: (typeof ASPECTS)[number], current: { width: number; height: number }) {
+  const short = Math.min(current.width, current.height) >= 2000 ? 2160 : 1080;
+  const even = (n: number) => Math.round(n / 2) * 2;
+  return aspect.w >= aspect.h ? { width: even((short * aspect.w) / aspect.h), height: short } : { width: short, height: even((short * aspect.h) / aspect.w) };
+}
+
+function AspectMenu() {
   const project = useShownProject();
+  const [open, setOpen] = useState(false);
+  const out = project.edit.appearance.output;
+  const cur = aspectOf(out.width, out.height);
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="btn" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title="Output shape">
+        <Icon name="aspect" size={16} /> {cur.label} <span className="dim">{cur.ratio}</span> <Icon name="chevronDown" size={13} style={{ color: 'var(--text-3)' }} />
+      </button>
+      {open ? (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 290 }} onMouseDown={() => setOpen(false)} />
+          <div className="menu" style={{ position: 'absolute', left: 0, bottom: 40, minWidth: 220 }} role="menu">
+            {ASPECTS.map((a) => (
+              <button
+                key={a.id}
+                role="menuitemradio"
+                aria-checked={a.id === cur.id}
+                onClick={() => {
+                  setOpen(false);
+                  useApp.getState().edit((e) => ({ ...e, appearance: { ...e.appearance, output: { ...e.appearance.output, ...sizeFor(a, e.appearance.output) } } }), `Shape ${a.ratio}`);
+                }}
+              >
+                <i className="aspect-chip" style={{ aspectRatio: `${a.w} / ${a.h}` }} />
+                {a.label} <span className="dim">{a.ratio}</span>
+                {a.id === cur.id ? <Icon name="check" size={13} style={{ marginLeft: 'auto', color: 'var(--accent-2)' }} /> : null}
+              </button>
+            ))}
+            <div className="sep" />
+            <div className="tiny dim" style={{ padding: '4px 10px 6px' }}>YouTube packages use Wide 16:9. Other shapes export the video only.</div>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function CropPopover() {
+  const project = useShownProject();
+  const [open, setOpen] = useState(false);
+  const crop = project.edit.appearance.crop;
+  const hasScreen = project.sources.some((s) => s.role === 'screen');
+  const set = (patch: Partial<typeof crop>) => useApp.getState().edit((e) => ({ ...e, appearance: { ...e.appearance, crop: { ...e.appearance.crop, ...patch } } }), 'Crop', 'look:crop');
+  const cropped = crop.x > 0 || crop.y > 0 || crop.w < 1 || crop.h < 1;
+  const pc = (v: number) => `${Math.round(v * 100)}%`;
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className={`btn${cropped ? ' on' : ''}`} disabled={!hasScreen} onClick={() => setOpen(!open)} aria-expanded={open} title="Crop the recording">
+        <Icon name="crop" size={16} /> Crop
+      </button>
+      {open ? (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 290 }} onMouseDown={() => setOpen(false)} />
+          <div className="menu crop-pop" style={{ position: 'absolute', left: 0, bottom: 40 }}>
+            <div className="row between" style={{ marginBottom: 8 }}>
+              <span className="insp-heading">Crop the recording</span>
+              <button className="reset-link" disabled={!cropped} onClick={() => set({ x: 0, y: 0, w: 1, h: 1 })}>Reset</button>
+            </div>
+            <div className="grid-2">
+              <Slider label="Left" min={0} max={0.45} value={crop.x} format={pc} onChange={(v) => set({ x: v, w: Math.min(crop.w, 1 - v) })} />
+              <Slider label="Top" min={0} max={0.45} value={crop.y} format={pc} onChange={(v) => set({ y: v, h: Math.min(crop.h, 1 - v) })} />
+              <Slider label="Width" min={0.2} max={1 - crop.x} value={crop.w} format={pc} onChange={(v) => set({ w: v })} />
+              <Slider label="Height" min={0.2} max={1 - crop.y} value={crop.h} format={pc} onChange={(v) => set({ h: v })} />
+            </div>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function Controls({ zoom, onZoom, onScissors }: { zoom: number; onZoom(z: number): void; onScissors(): void }) {
+  const playing = usePlayback((s) => s.playing);
+  const project = useShownProject();
+  const expanded = project.ui.expandedTimeline;
   const jump = (dir: 1 | -1) => {
     const map = timeMapOf(project);
     const t = usePlayback.getState().time;
@@ -45,18 +137,23 @@ function Transport() {
     usePlayback.getState().seek(next ?? (dir > 0 ? map.outDuration : 0));
   };
   return (
-    <div className="ed-transport">
-      <Timecode />
-      <div className="grow" />
-      <Button variant="ghost" icon="back" onClick={() => jump(-1)} title="Previous edit point" aria-label="Previous edit point" />
-      <button className="ed-play" onClick={() => usePlayback.getState().toggle()} aria-label={playing ? 'Pause' : 'Play'} title="Play or pause (Space)">
-        <Icon name={playing ? 'pause' : 'play'} size={18} />
-      </button>
-      <Button variant="ghost" icon="chevron" onClick={() => jump(1)} title="Next edit point" aria-label="Next edit point" />
-      <div className="grow" />
-      <div className="row" style={{ width: 120, gap: 6 }}>
-        <Icon name="speaker" size={14} style={{ color: 'var(--text-3)' }} />
-        <input className="slider" type="range" min={0} max={1} step={0.01} value={volume} style={{ ['--p' as string]: `${volume * 100}%` }} onChange={(e) => usePlayback.getState().setVolume(Number(e.target.value))} aria-label="Preview volume" />
+    <div className="ed-controls">
+      <div className="row ed-controls-left">
+        <AspectMenu />
+        <CropPopover />
+      </div>
+      <div className="row ed-transport">
+        <Timecode />
+        <button className="tbtn" onClick={() => jump(-1)} title="Previous edit point" aria-label="Previous edit point"><Icon name="skipBack" size={20} /></button>
+        <button className="tbtn play" onClick={() => usePlayback.getState().toggle()} aria-label={playing ? 'Pause' : 'Play'} title="Play or pause (Space)"><Icon name={playing ? 'pauseCircle' : 'playCircle'} size={26} /></button>
+        <button className="tbtn" onClick={() => jump(1)} title="Next edit point" aria-label="Next edit point"><Icon name="skipFwd" size={20} /></button>
+        <Timecode total />
+      </div>
+      <div className="row ed-controls-right">
+        <button className="tbtn" onClick={onScissors} title="Cut: removes the selected range, or marks in and out points at the playhead" aria-label="Cut"><Icon name="scissors" size={19} /></button>
+        <button className={`tbtn${expanded ? ' on' : ''}`} onClick={() => useApp.getState().patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: !p.ui.expandedTimeline } }))} title="Show or hide the layout and graphics tracks (⌘T)" aria-label="More tracks" aria-pressed={expanded}><Icon name="layout" size={18} /></button>
+        <Icon name="width" size={16} style={{ color: 'var(--text-3)', marginLeft: 4 }} />
+        <input className="slider" style={{ width: 84, ['--p' as string]: `${zoom * 100}%` }} type="range" min={0} max={1} step={0.01} value={zoom} onChange={(e) => onZoom(Number(e.target.value))} aria-label="Timeline zoom" title="Timeline zoom" />
       </div>
     </div>
   );
@@ -88,7 +185,10 @@ export function Editor() {
   const project = useShownProject();
   const selection = useApp((s) => s.selection);
   const comparing = useApp((s) => !!s.comparison);
-  const [side, setSide] = useState<'transcript' | 'review' | 'history'>(project.firstCut ? 'review' : 'transcript');
+  const drawer = useApp((s) => s.panels.drawer);
+  const inspector = useApp((s) => s.panels.inspector);
+  const setPanels = useApp((s) => s.setPanels);
+  const [zoom, setZoom] = useState(0);
   const [pick, setPick] = useState<Pick>(null);
   const [revising, setRevising] = useState(false);
   const [mark, setMark] = useState<number | null>(null);
@@ -203,32 +303,52 @@ export function Editor() {
     }
   };
 
-  const map = timeMapOf(project);
   const selRange = selectedRange(selection);
+  const scissors = () => {
+    const app = useApp.getState();
+    const p = app.project;
+    if (!p || app.comparison) return;
+    const r = selectedRange(app.selection);
+    if (r) return cutRange(r, app.selection?.kind === 'words' ? 'transcript' : 'manual');
+    if (splitSelected(p)) return;
+    const t = playheadSource(p);
+    if (mark === null) {
+      setMark(t);
+      app.toast('In point set at the playhead. Move the playhead and press the scissors again to select the range to cut.');
+    } else {
+      if (Math.abs(t - mark) > 0.05) app.select({ kind: 'range', range: { start: Math.min(mark, t), end: Math.max(mark, t) } });
+      setMark(null);
+    }
+  };
   return (
-    <div className="editor">
-      <aside className="ed-side" aria-label="Transcript and review">
-        <div className="side-tabs">
-          <Segmented
-            full
-            value={side}
-            onChange={setSide}
-            options={[
-              { value: 'transcript', label: 'Transcript', icon: 'captions' },
-              { value: 'review', label: openSuggestions ? `Review · ${openSuggestions}` : 'Review', icon: 'sparkle' },
-              { value: 'history', label: 'History', icon: 'history' },
-            ]}
-          />
-        </div>
-        {side === 'transcript' ? <Transcript /> : side === 'review' ? <Review /> : <History />}
-      </aside>
+    <div className={`editor${drawer ? ' with-drawer' : ''}${inspector ? '' : ' no-inspector'}`}>
+      {drawer ? (
+        <aside className="ed-drawer" aria-label="Transcript and review">
+          <div className="ed-drawer-head">
+            <Segmented
+              full
+              value={drawer}
+              onChange={(v) => setPanels({ drawer: v })}
+              options={[
+                { value: 'transcript', label: 'Transcript' },
+                { value: 'review', label: openSuggestions ? `Review · ${openSuggestions}` : 'Review' },
+                { value: 'history', label: 'History' },
+              ]}
+            />
+            <Button variant="ghost" icon="x" onClick={() => setPanels({ drawer: null })} aria-label="Close panel" />
+          </div>
+          {drawer === 'transcript' ? <Transcript /> : drawer === 'review' ? <Review /> : <History />}
+        </aside>
+      ) : null}
 
       <section className="ed-stage">
         {!project.firstCut && !comparing ? (
           <div className="stage-note">
-            <Banner icon="sparkle" title="You are looking at the raw recording" action={<Button size="sm" variant="ai" icon="sparkle" onClick={() => useApp.getState().setView('brief')}>Create first cut</Button>}>
-              Everything here already works by hand. The first cut adds cleanup, views, zooms and graphics you can then correct.
-            </Banner>
+            <span className="row" style={{ gap: 8 }}>
+              <Icon name="sparkle" size={14} style={{ color: 'var(--ai)' }} />
+              <span className="muted">This is the raw recording. Edit by hand, or let Cutaway assemble a first cut.</span>
+            </span>
+            <Button size="sm" variant="ai" onClick={() => useApp.getState().setView('brief')}>Create first cut</Button>
           </div>
         ) : null}
         <CompareBar />
@@ -246,29 +366,20 @@ export function Editor() {
               <span className="spinner" /> Working out the change for this section…
             </div>
           ) : null}
+          {selRange && !pick ? (
+            <div className="pick-hint">
+              <Icon name="region" size={13} /> {fmtTime(selRange.start, true)} – {fmtTime(selRange.end, true)} selected
+              <button className="btn sm" onClick={() => cutRange(selRange)}><Icon name="scissors" size={12} /> Cut</button>
+              <button className="btn ghost sm" onClick={() => lockRange(selRange)}><Icon name="lock" size={12} /> Keep</button>
+            </div>
+          ) : null}
         </div>
-        <Transport />
-        <div className="stage-status tiny dim">
-          {selRange ? (
-            <span className="row gap-2">
-              <Icon name="region" size={12} /> Range {fmtTime(selRange.start, true)} – {fmtTime(selRange.end, true)} selected. <span className="kbd">X</span> cut <span className="kbd">L</span> keep <span className="kbd">Esc</span> clear
-            </span>
-          ) : (
-            <span className="row gap-2">
-              <span className="kbd">Space</span> play <span className="kbd">I</span>
-              <span className="kbd">O</span> mark a range <span className="kbd">←</span>
-              <span className="kbd">→</span> step a frame · drag on Footage to select
-            </span>
-          )}
-          <span className="mono">
-            {project.edit.appearance.output.width}×{project.edit.appearance.output.height} · {project.edit.appearance.output.fps} fps · {fmtTime(map.outDuration)}
-          </span>
-        </div>
+        <Controls zoom={zoom} onZoom={setZoom} onScissors={scissors} />
       </section>
 
-      <Inspector pickTarget={setPick} />
+      {inspector ? <Inspector pickTarget={setPick} /> : null}
       <div className="editor-timeline">
-        <Timeline />
+        <Timeline zoom={zoom} onZoom={setZoom} />
       </div>
       <button className="sr-only" onClick={() => seekSource(project, 0)}>Go to start</button>
     </div>

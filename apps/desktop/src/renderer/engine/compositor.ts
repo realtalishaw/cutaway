@@ -4,7 +4,7 @@
  * All geometry is in output pixels (appearance.output); the caller scales the
  * context for smaller preview canvases.
  */
-import { easeOutBack, type Appearance, type CameraSlot, type Cue, type FrameState, type Mask, type Overlay, type Rect } from '@cutaway/core';
+import { WALLPAPERS, easeOutBack, type Appearance, type CameraSlot, type Cue, type FrameState, type Mask, type Overlay, type Rect } from '@cutaway/core';
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -67,6 +67,24 @@ function drawBackground(ctx: Ctx, ap: Appearance, res: FrameResources) {
   if (bg.type === 'solid') {
     ctx.fillStyle = bg.color;
     ctx.fillRect(0, 0, W, H);
+    return;
+  }
+  if (bg.type === 'wallpaper') {
+    const wp = WALLPAPERS.find((w) => w.id === bg.id) ?? WALLPAPERS[0]!;
+    ctx.fillStyle = wp.base;
+    ctx.fillRect(0, 0, W, H);
+    const D = Math.max(W, H);
+    for (const b of wp.blobs) {
+      // blur widens and softens the colour fields instead of filtering pixels (cheap and identical in export)
+      const r = b.r * D * (1 + bg.blur * 0.6);
+      const g = ctx.createRadialGradient(b.x * W, b.y * H, 0, b.x * W, b.y * H, r);
+      g.addColorStop(0, b.color);
+      g.addColorStop(1, `${b.color}00`);
+      ctx.globalAlpha = 0.9 - bg.blur * 0.25;
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.globalAlpha = 1;
     return;
   }
   if (bg.type === 'image' && res.backgroundImage) {

@@ -44,6 +44,10 @@ final class Recorder: CaptureSink {
     private var cameras: [CameraSource] = []
     private var microphone: MicrophoneSource?
     private var cursor: CursorTracker?
+    /// Audio-only stream used when system audio is limited to selected apps.
+    private var systemSource: ScreenSource?
+    private var deviceScreen: DeviceScreenSource?
+    private var keys: KeyTracker?
     private var syntheticVideo: [SyntheticVideoSource] = []
     private var syntheticAudio: [SyntheticAudioSource] = []
     private var silentMicTicks = 0
@@ -110,16 +114,22 @@ final class Recorder: CaptureSink {
         if !config.cameras.isEmpty {
             try await ensureMediaAccess(.video, source: config.cameras[0].sourceId, label: "Camera")
         }
+        if config.deviceScreen != nil {
+            // macOS treats a connected iPhone/iPad screen as a camera device.
+            try await ensureMediaAccess(.video, source: "screen", label: "Camera")
+        }
         if config.microphone != nil {
             try await ensureMediaAccess(.audio, source: "microphone", label: "Microphone")
         }
         let fragment = config.checkpointSeconds
 
         // Screen and system audio
-        if config.screen != nil || config.systemAudio {
-            let s = ScreenSource(config: config, sink: self)
-            try await sourcedAsync(config.screen != nil ? "screen" : "system") { try await s.prepare() }
-            if config.screen != nil {
+        let audioApps = config.systemAudioApps
+        let combinedAudio = config.systemAudio && audioApps == nil
+        if config.sckScreen != nil || combinedAudio {
+            let s = ScreenSource(config: config, sink: self, video: config.sckScreen != nil, audio: combinedAudio)
+            try await sourcedAsync(config.sckScreen != nil ? "screen" : "system") { try await s.prepare() }
+            if config.sckScreen != nil {
                 // Always H.264 High: the editor decodes these files inside Chromium.
                 let compression: [String: Any] = [
                     AVVideoAverageBitRateKey: Bitrates.screen(width: s.pixelWidth, height: s.pixelHeight, fps: config.fps),
@@ -151,11 +161,36 @@ final class Recorder: CaptureSink {
                     "fps": config.fps, "codec": "avc1",
                     "captureType": config.screen?.type ?? "display",
                     "cursorBaked": config.screen?.showCursor ?? false,
+                    "hideDesktopIcons": config.screen?.hideDesktopIcons ?? false,
+                    "hideNotifications": config.screen?.hideNotifications ?? false,
                 ]
                 s.videoWriter = w
                 writers.append(w)
             }
             screen = s
+        }
+
+        // iPhone / iPad as the screen source
+        if let dev = config.deviceScreen {
+            let found = await ExternalDevices.list(wait: 3)
+            guard let id = dev.deviceId, let device = found.first(where: { $0.uniqueID == id }) ?? (dev.deviceId == nil ? found.first : nil) else {
+                throw SourceError(code: "missing-device", message: "The selected iPhone or iPad is not connected. Plug it in with a cable, unlock it and choose Trust.", source: "screen")
+            }
+            let source = DeviceScreenSource(device: device, sink: self)
+            let size = try await sourcedAsync("screen") { try await source.prepare() }
+            let w = max(2, (size.width / 2) * 2), h = max(2, (size.height / 2) * 2)
+            let writer = try sourced("screen") {
+                try SourceWriter(id: "screen", role: "screen", fileName: "screen.mov", dir: config.outDir, mediaType: .video,
+                                 outputSettings: h264Settings(width: w, height: h, fps: Double(config.fps), bitrate: Bitrates.screen(width: w, height: h, fps: config.fps)),
+                                 fragmentSeconds: fragment, nominalFrameDuration: 1.0 / Double(max(1, config.fps)))
+            }
+            // A device screen has no pointer to record: touches are part of the picture.
+            writer.meta = ["width": w, "height": h, "pointWidth": w, "pointHeight": h, "originX": 0, "originY": 0, "scale": 1,
+                           "fps": config.fps, "codec": "avc1", "captureType": "device", "cursorBaked": true,
+                           "deviceKind": source.deviceKind as Any? ?? NSNull(), "deviceName": source.deviceName, "deviceId": device.uniqueID]
+            source.writer = writer
+            writers.append(writer)
+            deviceScreen = source
         }
 
         for cam in config.cameras {
@@ -221,7 +256,22 @@ final class Recorder: CaptureSink {
             microphone = mic
         }
 
-        if config.systemAudio, let s = screen {
+        var audioHost: ScreenSource? = combinedAudio ? screen : nil
+        if config.systemAudio, let apps = audioApps {
+            let a = ScreenSource(config: config, sink: self, video: false, audio: true, audioApps: apps)
+            do {
+                try await a.prepare()
+                a.audioMayEstablish = config.screen == nil && config.cameras.isEmpty && config.microphone == nil
+                systemSource = a
+                audioHost = a
+            } catch let e as CLIError where e.code == "app-audio-unavailable" {
+                // The rest of the take is still worth recording.
+                nonFatal(e.code, e.message, source: "system")
+            } catch let e as CLIError {
+                throw SourceError(code: e.code, message: e.message, source: "system")
+            }
+        }
+        if let s = audioHost {
             var layout = AudioChannelLayout()
             layout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
             let settings: [String: Any] = [
@@ -236,18 +286,26 @@ final class Recorder: CaptureSink {
                                  outputSettings: settings, fragmentSeconds: fragment)
             }
             w.meta = ["channels": 2, "sampleRate": 48000, "codec": "aac "]
+            if let apps = audioApps { w.meta["apps"] = apps }
             s.audioWriter = w
             writers.append(w)
         }
+        guard !writers.isEmpty else {
+            throw SourceError(code: "bad-config", message: "Nothing can be recorded with these settings.", source: nil)
+        }
 
-        if config.screen != nil, let s = screen {
+        if config.sckScreen != nil, let s = screen {
             cursor = CursorTracker(url: config.outDir.appendingPathComponent("cursor.jsonl"), clock: clock) { [weak s] in
                 s?.captureRect ?? .zero
             }
         }
+        prepareKeys()
 
         if let s = screen {
-            try await sourcedAsync(config.screen != nil ? "screen" : "system") { try await s.start() }
+            try await sourcedAsync(config.sckScreen != nil ? "screen" : "system") { try await s.start() }
+        }
+        if let a = systemSource {
+            try await sourcedAsync("system") { try await a.start() }
         }
         writeManifest(complete: false, duration: 0, nowHost: hostNow())
 
@@ -261,6 +319,26 @@ final class Recorder: CaptureSink {
             await finish(reason: "cancel")
         } else if !config.waitForStart {
             start()
+        }
+    }
+
+    /// Shortcut and typing-activity capture. Never fatal: a take is still recorded without it.
+    private func prepareKeys() {
+        guard config.captureKeys else { return }
+        guard let tracker = KeyTracker(url: config.outDir.appendingPathComponent("keys.jsonl"), clock: clock) else {
+            nonFatal("keys-unavailable", "The keys file could not be created, so shortcuts are not recorded.", source: nil)
+            return
+        }
+        if config.synthetic {
+            keys = tracker
+            return
+        }
+        if tracker.startTap() {
+            keys = tracker
+        } else {
+            tracker.stop()
+            try? FileManager.default.removeItem(at: config.outDir.appendingPathComponent("keys.jsonl"))
+            nonFatal("keys-unavailable", "Input Monitoring permission is not granted, so shortcuts and typing activity are not recorded. Enable it in System Settings › Privacy & Security › Input Monitoring.", source: nil)
         }
     }
 
@@ -294,20 +372,28 @@ final class Recorder: CaptureSink {
             }
         }
         if let sc = config.screen {
-            let w = max(64, (Int(sc.rect?.width ?? 1920) / 2) * 2), h = max(64, (Int(sc.rect?.height ?? 1080) / 2) * 2)
+            let isDevice = sc.type == "device"
+            let w = isDevice ? 590 : max(64, (Int(sc.rect?.width ?? 1920) / 2) * 2), h = isDevice ? 1280 : max(64, (Int(sc.rect?.height ?? 1080) / 2) * 2)
             let writer = try sourced("screen") {
                 try SourceWriter(id: "screen", role: "screen", fileName: "screen.mov", dir: config.outDir, mediaType: .video,
                                  outputSettings: h264Settings(width: w, height: h, fps: Double(config.fps), bitrate: Bitrates.screen(width: w, height: h, fps: config.fps)),
                                  fragmentSeconds: fragment, nominalFrameDuration: 1.0 / Double(max(1, config.fps)))
             }
             writer.meta = ["width": w, "height": h, "pointWidth": w, "pointHeight": h, "originX": 0, "originY": 0, "scale": 1,
-                           "fps": config.fps, "codec": "avc1", "captureType": sc.type, "cursorBaked": sc.showCursor, "synthetic": true]
+                           "fps": config.fps, "codec": "avc1", "captureType": sc.type, "cursorBaked": isDevice ? true : sc.showCursor, "synthetic": true,
+                           "hideDesktopIcons": sc.hideDesktopIcons, "hideNotifications": sc.hideNotifications]
+            if isDevice {
+                writer.meta["deviceKind"] = "iphone"
+                writer.meta["deviceName"] = "Synthetic iPhone"
+            }
             let src = SyntheticVideoSource(id: "screen", width: w, height: h, fps: Double(config.fps), color: (120, 60, 30), sink: self)
             src.writer = writer
             writers.append(writer)
             syntheticVideo.append(src)
-            let rect = CGDisplayBounds(CGMainDisplayID())
-            cursor = CursorTracker(url: config.outDir.appendingPathComponent("cursor.jsonl"), clock: clock) { rect }
+            if !isDevice {
+                let rect = CGDisplayBounds(CGMainDisplayID())
+                cursor = CursorTracker(url: config.outDir.appendingPathComponent("cursor.jsonl"), clock: clock) { rect }
+            }
         }
         for cam in config.cameras {
             let w = cam.width ?? 1280, h = cam.height ?? 720, fps = cam.fps ?? 30
@@ -348,6 +434,8 @@ final class Recorder: CaptureSink {
             try audio("system", role: "systemAudio", file: "system.mov", channels: 2, frequency: 440, bitrate: Bitrates.system,
                       establishes: audioOnly && config.microphone == nil)
         }
+        if let apps = config.systemAudioApps, let w = writers.first(where: { $0.id == "system" }) { w.meta["apps"] = apps }
+        prepareKeys()
         syntheticVideo.forEach { $0.start() }
         syntheticAudio.forEach { $0.start() }
     }
@@ -374,6 +462,7 @@ final class Recorder: CaptureSink {
                 "sources": writers.map { ["id": $0.id, "file": $0.fileName] },
             ])
             cursor?.start()
+            if config.synthetic { keys?.startSynthetic() }
             let t = DispatchSource.makeTimerSource(queue: control)
             t.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(50), leeway: .milliseconds(5))
             t.setEventHandler { [weak self] in self?.onTimer() }
@@ -434,6 +523,9 @@ final class Recorder: CaptureSink {
         let duration = clock.elapsed(host: stopHost)
 
         await screen?.stop()
+        await systemSource?.stop()
+        deviceScreen?.stop()
+        keys?.stop()
         syntheticVideo.forEach { $0.stop() }
         syntheticAudio.forEach { $0.stop() }
         cameras.forEach { $0.stop() }
@@ -443,6 +535,7 @@ final class Recorder: CaptureSink {
         if cancelled {
             writers.forEach { $0.cancel() }
             try? FileManager.default.removeItem(at: config.outDir.appendingPathComponent("cursor.jsonl"))
+            try? FileManager.default.removeItem(at: config.outDir.appendingPathComponent("keys.jsonl"))
             try? FileManager.default.removeItem(at: manifestURL)
             if let rest = try? FileManager.default.contentsOfDirectory(atPath: config.outDir.path), rest.isEmpty {
                 try? FileManager.default.removeItem(at: config.outDir)
@@ -483,7 +576,7 @@ final class Recorder: CaptureSink {
                 }
             }
             if config.systemAudio {
-                if let s = screen?.systemMeter.take() ?? syntheticAudio.first(where: { $0.id == "system" })?.meter.take() { levels["system"] = r3(s) }
+                if let s = (systemSource ?? screen)?.systemMeter.take() ?? syntheticAudio.first(where: { $0.id == "system" })?.meter.take() { levels["system"] = r3(s) }
             }
             if levels.count > 1 { Out.emit(levels) }
         }
@@ -506,6 +599,7 @@ final class Recorder: CaptureSink {
         if phase == .recording, elapsed - lastCheckpoint >= config.checkpointSeconds {
             lastCheckpoint = elapsed
             cursor?.checkpoint()
+            keys?.checkpoint()
             writeManifest(complete: false, duration: elapsed, nowHost: now)
             Out.emit(["type": "checkpoint", "elapsed": r3(elapsed)])
         }
@@ -523,6 +617,7 @@ final class Recorder: CaptureSink {
 
     private func housekeeping(now: Double, elapsed: Double) {
         screen?.refreshWindowFrame()
+        screen?.refreshFilter(hostNow: now)
         if phase == .recording {
             screen?.keepAlive(hostNow: now, idleFor: 0.5)
             // Sources that stopped delivering without telling us.
@@ -588,6 +683,7 @@ final class Recorder: CaptureSink {
             "pauses": clock.pauseList(nowHost: nowHost),
             "sources": writers.map { $0.manifestEntry(takeDuration: duration) },
             "cursor": cursor.map { ["file": "cursor.jsonl", "samples": $0.samples] as [String: Any] } as Any? ?? NSNull(),
+            "keys": keys.map { ["file": "keys.jsonl", "events": $0.events] as [String: Any] } as Any? ?? NSNull(),
         ]
         if let stopReason, stopReason != "stop" { m["stopReason"] = stopReason }
         if let data = try? JSONSerialization.data(withJSONObject: Out.tidy(m), options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) {
@@ -686,8 +782,9 @@ enum PreflightCommand {
     static func run(configPath: String) async throws -> Any {
         let config = try RecordConfig.load(path: configPath)
         var issues: [[String: Any]] = []
-        func issue(_ code: String, _ source: String?, _ message: String, alternatives: [String] = []) {
-            var d: [String: Any] = ["code": code, "message": message, "alternatives": alternatives]
+        // `blocking: false` is a warning: the take can still be recorded.
+        func issue(_ code: String, _ source: String?, _ message: String, alternatives: [String] = [], blocking: Bool = true) {
+            var d: [String: Any] = ["code": code, "message": message, "alternatives": alternatives, "blocking": blocking]
             d["source"] = source ?? NSNull()
             issues.append(d)
         }
@@ -697,13 +794,36 @@ enum PreflightCommand {
             issue("no-sources", nil, "Choose at least one source to record.")
         }
 
-        if config.screen != nil || config.systemAudio {
-            let source = config.screen != nil ? "screen" : "system"
+        if config.sckScreen != nil || config.systemAudio {
+            let source = config.sckScreen != nil ? "screen" : "system"
             if !CGPreflightScreenCaptureAccess() {
                 issue("permission-denied", source, "Screen Recording permission is not granted. Enable it in System Settings › Privacy & Security › Screen & System Audio Recording, or record without the screen\(config.systemAudio ? " and system audio" : "").")
             }
         }
-        if let s = config.screen {
+        if let dev = config.deviceScreen {
+            let status = AVCaptureDevice.authorizationStatus(for: .video)
+            if status == .denied || status == .restricted {
+                issue("permission-denied", "screen", "Camera permission is denied, and macOS needs it to read an iPhone or iPad screen. Enable it in System Settings › Privacy & Security › Camera.")
+            }
+            let found = await ExternalDevices.list(wait: 2)
+            if let d = found.first(where: { $0.uniqueID == dev.deviceId }) {
+                let dims = CMVideoFormatDescriptionGetDimensions(d.activeFormat.formatDescription)
+                bitsPerSecond += Bitrates.screen(width: max(2, Int(dims.width)), height: max(2, Int(dims.height)), fps: config.fps)
+            } else {
+                issue("missing-device", "screen", "The selected iPhone or iPad is not connected. Plug it in with a cable, unlock it and choose Trust.", alternatives: found.map(\.localizedName))
+            }
+        }
+        if config.captureKeys, InputAccess.inputMonitoring() != "granted" {
+            issue("keys-unavailable", nil, "Input Monitoring permission is not granted, so shortcuts and typing activity will not be recorded. The recording itself is not affected.", blocking: false)
+        }
+        if let apps = config.systemAudioApps {
+            let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+            let missing = apps.filter { !running.contains($0) }
+            if missing.count == apps.count {
+                issue("app-audio-unavailable", "system", "None of the apps chosen for audio is running. Open one, or record all system audio.", blocking: false)
+            }
+        }
+        if let s = config.sckScreen {
             let displays = DeviceCatalog.displays()
             var points = CGSize(width: 1920, height: 1080)
             var scale = 2.0
@@ -808,7 +928,7 @@ enum PreflightCommand {
             issue("low-disk", nil, "Only \(free / 1_000_000) MB free on the destination disk; at least \(config.minFreeBytes / 1_000_000) MB is needed to record safely.")
         }
         return [
-            "ok": issues.isEmpty,
+            "ok": !issues.contains { ($0["blocking"] as? Bool) ?? true },
             "issues": issues,
             "estimatedBytesPerMinute": bitsPerSecond / 8 * 60,
             "freeBytes": free,
@@ -910,6 +1030,17 @@ enum RecoverCommand {
             manifest["cursor"] = ["file": "cursor.jsonl", "samples": lines]
         } else if manifest["cursor"] == nil {
             manifest["cursor"] = NSNull()
+        }
+        let keysURL = dir.appendingPathComponent("keys.jsonl")
+        if let data = fm.contents(atPath: keysURL.path) {
+            var text = String(decoding: data, as: UTF8.self)
+            if !text.isEmpty, !text.hasSuffix("\n") {
+                if let idx = text.lastIndex(of: "\n") { text = String(text[...idx]) } else { text = "" }
+                try? Data(text.utf8).write(to: keysURL, options: .atomic)
+            }
+            manifest["keys"] = ["file": "keys.jsonl", "events": text.split(separator: "\n", omittingEmptySubsequences: true).count]
+        } else if manifest["keys"] == nil {
+            manifest["keys"] = NSNull()
         }
 
         manifest["sources"] = sources

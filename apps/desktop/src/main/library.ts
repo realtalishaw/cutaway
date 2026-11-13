@@ -290,6 +290,43 @@ export async function clearCache(projectPath: string): Promise<CacheInfo> {
   return { bytes: 0, files: 0 };
 }
 
+/**
+ * A copy of the project someone else can open: media that was only referenced
+ * is gathered inside the copy, then the bundle is zipped with ditto. The
+ * original project and the original files are not modified.
+ */
+export async function exportBundle(projectPath: string, destDir: string): Promise<{ path: string; bytes: number }> {
+  const { execFile } = await import('node:child_process');
+  const run = (cmd: string, args: string[]) => new Promise<void>((res, rej) => execFile(cmd, args, (err) => (err ? rej(err) : res())));
+  await fsp.mkdir(destDir, { recursive: true });
+  const name = path.basename(projectPath, PROJECT_EXT);
+  const work = await fsp.mkdtemp(path.join(destDir, '.cutaway-share-'));
+  const copy = path.join(work, `${name}${PROJECT_EXT}`);
+  try {
+    await run('/bin/cp', ['-Rc', projectPath, copy]);
+    await fsp.rm(path.join(copy, 'cache'), { recursive: true, force: true });
+    await fsp.rm(path.join(copy, 'backups'), { recursive: true, force: true });
+    const project = JSON.parse(await fsp.readFile(projectFile(copy), 'utf8')) as Project;
+    const linked = path.join(copy, 'media', 'linked');
+    for (const s of project.sources) {
+      if (!path.isAbsolute(s.path)) continue;
+      if (!fs.existsSync(s.path)) continue;
+      await fsp.mkdir(linked, { recursive: true });
+      const dest = await uniquePath(linked, safeName(path.basename(s.path, path.extname(s.path))), path.extname(s.path));
+      await fsp.copyFile(s.path, dest, fs.constants.COPYFILE_FICLONE);
+      s.path = path.relative(copy, dest);
+      s.managed = true;
+    }
+    project.consent = null;
+    await atomicWrite(projectFile(copy), JSON.stringify(project));
+    const zip = await uniquePath(destDir, `${safeName(name)} (Cutaway project)`, '.zip');
+    await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', copy, zip]);
+    return { path: zip, bytes: (await fsp.stat(zip)).size };
+  } finally {
+    await fsp.rm(work, { recursive: true, force: true });
+  }
+}
+
 export const exists = async (p: string) => fs.existsSync(p);
 
 export async function freeBytes(p: string): Promise<number | null> {

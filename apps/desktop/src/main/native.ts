@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { CorrelationResult, CursorSample } from '@cutaway/core';
-import type { AppSettings, DeviceList, PreflightResult, ProbeResult, RecordConfig, RecordEvent, TakeManifest, TranscribeResult, VoiceAnalysis } from '../shared/api';
+import type { FaceTrack, KeyEvent, VoiceInfo, AppSettings, DeviceList, PreflightResult, ProbeResult, RecordConfig, RecordEvent, TakeManifest, TranscribeResult, VoiceAnalysis } from '../shared/api';
 
 export class NativeError extends Error {
   constructor(public code: string, message: string) {
@@ -381,3 +381,75 @@ export const recover = (takeDir: string) => runJson<TakeManifest>(['recover', ta
 
 export const mux = (video: string, audio: string | null, out: string) =>
   runJson<{ path: string; duration: number; sizeBytes: number }>(['mux', '--video', video, ...(audio ? ['--audio', audio] : []), '--out', out], { timeoutMs: 30 * 60000 });
+
+// ───────────────────────────── parity additions ─────────────────────────────
+
+export async function readKeys(file: string): Promise<KeyEvent[]> {
+  let text: string;
+  try {
+    text = await fsp.readFile(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const out: KeyEvent[] = [];
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    try {
+      const k = JSON.parse(line) as KeyEvent;
+      if (typeof k.t === 'number' && (k.e === 'type' || (k.e === 'shortcut' && Array.isArray(k.keys)))) out.push(k);
+    } catch {
+      /* torn last line */
+    }
+  }
+  return out;
+}
+
+export async function faces(projectPath: string, file: string): Promise<FaceTrack> {
+  const dir = path.join(projectPath, 'cache', 'faces');
+  const cache = path.join(dir, `${hash(file)}.json`);
+  try {
+    return JSON.parse(await fsp.readFile(cache, 'utf8')) as FaceTrack;
+  } catch {
+    /* not cached */
+  }
+  const track = await runJson<FaceTrack>(['faces', file, '--fps', '5'], { timeoutMs: 30 * 60000 });
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(cache, JSON.stringify(track));
+  return track;
+}
+
+export async function matte(projectPath: string, file: string): Promise<{ path: string; duration: number; frames: number; width: number; height: number }> {
+  const dir = path.join(projectPath, 'cache', 'matte');
+  await fsp.mkdir(dir, { recursive: true });
+  const out = path.join(dir, `${hash(file)}.mov`);
+  const meta = `${out}.json`;
+  if (fs.existsSync(out) && fs.existsSync(meta)) return JSON.parse(await fsp.readFile(meta, 'utf8'));
+  await fsp.rm(out, { force: true });
+  const r = await runJson<{ path: string; duration: number; frames: number; width: number; height: number }>(['matte', file, '--out', out], { timeoutMs: 120 * 60000 });
+  await fsp.writeFile(meta, JSON.stringify(r));
+  return r;
+}
+
+export const resizeWindow = async (windowId: number, width: number, height: number): Promise<void> => {
+  await runJson(['resize-window', '--window-id', String(windowId), '--width', String(Math.round(width)), '--height', String(Math.round(height))], { timeoutMs: 10000 });
+};
+
+export const voices = () => runJson<VoiceInfo[]>(['voices'], { timeoutMs: 20000 });
+
+export async function speak(projectPath: string, text: string, voiceId: string, rate?: number): Promise<{ path: string; duration: number }> {
+  const dir = path.join(projectPath, 'media', 'voiceover');
+  await fsp.mkdir(dir, { recursive: true });
+  const base = `voiceover-${Date.now().toString(36)}`;
+  const txt = path.join(os.tmpdir(), `${base}.txt`);
+  const out = path.join(dir, `${base}.wav`);
+  await fsp.writeFile(txt, text);
+  try {
+    const r = await runJson<{ path: string; duration: number }>(['speak', '--text-file', txt, '--voice', voiceId, '--out', out, ...(rate ? ['--rate', String(rate)] : [])], { timeoutMs: 10 * 60000 });
+    return { path: path.relative(projectPath, r.path), duration: r.duration };
+  } finally {
+    fsp.rm(txt, { force: true }).catch(() => {});
+  }
+}
+
+export const gif = (video: string, out: string, opts: { fps: number; width: number }) =>
+  runJson<{ path: string; frames: number; sizeBytes: number }>(['gif', '--video', video, '--out', out, '--fps', String(opts.fps), '--width', String(opts.width)], { timeoutMs: 60 * 60000 });

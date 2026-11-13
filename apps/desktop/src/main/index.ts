@@ -158,6 +158,26 @@ function showController() {
   load(controller, 'controller');
 }
 
+let notes: BrowserWindow | null = null;
+
+/** Speaker notes: a small always-on-top window that the recorder leaves out of the picture. */
+function showNotes() {
+  if (notes && !notes.isDestroyed()) return notes.show();
+  const d = screen.getPrimaryDisplay().workArea;
+  notes = new BrowserWindow({ width: 360, height: 300, x: d.x + d.width - 390, y: d.y + 40, frame: false, transparent: true, resizable: true, minWidth: 260, minHeight: 160, alwaysOnTop: true, skipTaskbar: true, hasShadow: true, show: false, fullscreenable: false, maximizable: false, webPreferences: webPreferences() });
+  notes.setAlwaysOnTop(true, 'screen-saver');
+  notes.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  notes.setContentProtection(true);
+  notes.once('ready-to-show', () => notes?.show());
+  notes.on('closed', () => (notes = null));
+  load(notes, 'notes');
+}
+
+function hideNotes() {
+  if (notes && !notes.isDestroyed()) notes.close();
+  notes = null;
+}
+
 function hideController() {
   if (controller && !controller.isDestroyed()) controller.close();
   controller = null;
@@ -252,6 +272,12 @@ function registerIpc() {
         .filter((s) => !s.thumbnail.isEmpty())
         .map((s) => ({ kind: s.id.startsWith('screen') ? ('display' as const) : ('window' as const), id: Number(s.id.split(':')[1]), displayId: s.display_id ? Number(s.display_id) : null, name: s.name, dataUrl: s.thumbnail.toDataURL() }));
     },
+    copyFile: async (p: string) => {
+      // Finder-style file copy: pasteable into Slack, Mail, Messages, Finder…
+      const { execFile } = await import('node:child_process');
+      await new Promise<void>((res, rej) => execFile('/usr/bin/osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => (err ? rej(err) : res())));
+    },
+    notesWindow: (show: boolean) => (show ? showNotes() : hideNotes()),
     recordingMode: (on: boolean) => {
       if (on) {
         showController();
@@ -282,6 +308,7 @@ function registerIpc() {
     cacheInfo: library.cacheInfo,
     clearCache: library.clearCache,
     exists: library.exists,
+    exportBundle: library.exportBundle,
   });
 
   handle('native', {
@@ -294,6 +321,12 @@ function registerIpc() {
     analyzeVoice: native.analyzeVoice,
     correlate: native.correlate,
     readCursor: native.readCursor,
+    readKeys: native.readKeys,
+    faces: native.faces,
+    matte: native.matte,
+    resizeWindow: native.resizeWindow,
+    voices: native.voices,
+    speak: native.speak,
   });
 
   handle('record', {
@@ -311,6 +344,7 @@ function registerIpc() {
     writeFile: exporter.writeFile,
     mux: exporter.mux,
     stat: exporter.stat,
+    gif: exporter.gif,
     commit: exporter.commit,
     abort: exporter.abort,
   });

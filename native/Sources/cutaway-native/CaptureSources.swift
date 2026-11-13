@@ -35,6 +35,8 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
     var videoWriter: SourceWriter?
     var audioWriter: SourceWriter?
     let systemMeter = LevelMeter()
+    /// Whether system audio may define the start of the take. nil = only when this stream has no picture.
+    var audioMayEstablish: Bool?
 
     /// Captured area in global display points (top-left origin). Used to normalise the cursor.
     private(set) var captureRect: CGRect = .zero
@@ -43,9 +45,68 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
     private(set) var pixelHeight = 0
     private(set) var scale: Double = 1
 
-    init(config: RecordConfig, sink: CaptureSink) {
+    /// What this stream delivers. One stream normally carries picture and system audio; when the
+    /// audio must come from selected apps only, a second audio-only stream is used for it.
+    private let wantsVideo: Bool
+    private let wantsAudio: Bool
+    private let audioApps: [String]?
+    private var filterDisplay: SCDisplay?
+    private var lastExcepted: Set<CGWindowID> = []
+    private var lastRefresh = 0.0
+    private var refreshing = false
+
+    static let notificationBundleIds: Set<String> = ["com.apple.notificationcenterui", "com.apple.UserNotificationCenter"]
+    static let finderBundleId = "com.apple.finder"
+
+    init(config: RecordConfig, sink: CaptureSink, video: Bool? = nil, audio: Bool? = nil, audioApps: [String]? = nil) {
         self.config = config
         self.sink = sink
+        self.wantsVideo = video ?? (config.sckScreen != nil)
+        self.wantsAudio = audio ?? config.systemAudio
+        self.audioApps = audioApps
+    }
+
+    private var hidesDesktopIcons: Bool { wantsVideo && (config.sckScreen?.hideDesktopIcons ?? false) }
+
+    private func excludedBundleIds() -> Set<String> {
+        var ids = Set(config.sckScreen?.excludeBundleIds ?? [])
+        if config.sckScreen?.hideNotifications == true { ids.formUnion(Self.notificationBundleIds) }
+        return ids
+    }
+
+    /// Display filter honouring the exclusion list and the hide-desktop-icons / hide-notifications
+    /// options. Nothing in System Settings is touched: the content is simply left out of the capture.
+    private func displayFilter(_ d: SCDisplay, content: SCShareableContent) -> (filter: SCContentFilter, excepted: Set<CGWindowID>) {
+        var ids = excludedBundleIds()
+        var keep: [SCWindow] = []
+        if hidesDesktopIcons {
+            // Finder draws the desktop icons in windows below the normal layer. Excluding Finder and
+            // re-admitting its ordinary windows removes only the icons.
+            ids.insert(Self.finderBundleId)
+            keep = content.windows.filter { $0.owningApplication?.bundleIdentifier == Self.finderBundleId && $0.windowLayer >= 0 }
+            if lastRefresh == 0 {
+                let hidden = content.windows.filter { $0.owningApplication?.bundleIdentifier == Self.finderBundleId && $0.windowLayer < 0 }.count
+                Out.log("hide-desktop-icons: \(hidden) Finder desktop-layer window(s) left out, \(keep.count) ordinary Finder window(s) kept")
+            }
+        }
+        let excluded = content.applications.filter { ids.contains($0.bundleIdentifier) }
+        return (SCContentFilter(display: d, excludingApplications: excluded, exceptingWindows: keep), Set(keep.map(\.windowID)))
+    }
+
+    /// With desktop icons hidden, Finder windows opened during the take must be re-admitted.
+    func refreshFilter(hostNow now: Double) {
+        guard hidesDesktopIcons, !stopped, !refreshing, now - lastRefresh >= 1.0, let stream, let d = filterDisplay else { return }
+        lastRefresh = now
+        refreshing = true
+        Task.detached { [weak self] in
+            defer { self?.refreshing = false }
+            guard let self,
+                  let content = try? await withTimeout(seconds: 4, { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }) else { return }
+            let next = self.displayFilter(d, content: content)
+            guard next.excepted != self.lastExcepted else { return }
+            self.lastExcepted = next.excepted
+            try? await stream.updateContentFilter(next.filter)
+        }
     }
 
     /// Resolves the capture target and builds the stream. Does not start capturing.
@@ -63,7 +124,7 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         guard !content.displays.isEmpty else { throw CLIError("missing-device", "No display is available to capture.") }
 
-        let screenCfg = config.screen
+        let screenCfg = wantsVideo ? config.sckScreen : nil
         let filter: SCContentFilter
         var sourceRect: CGRect?
         let type = screenCfg?.type ?? "display"
@@ -72,7 +133,19 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
             if let id, let d = content.displays.first(where: { $0.displayID == id }) { return d }
             return content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays[0]
         }
-        let excluded = content.applications.filter { (screenCfg?.excludeBundleIds ?? []).contains($0.bundleIdentifier) }
+        if !wantsVideo, let apps = audioApps {
+            // Audio-only stream limited to chosen apps.
+            let wanted = Set(apps)
+            let included = content.applications.filter { wanted.contains($0.bundleIdentifier) }
+            guard !included.isEmpty else {
+                throw CLIError("app-audio-unavailable", "None of the selected apps is running, so there is no app audio to record.")
+            }
+            let d = display(for: nil)
+            filter = SCContentFilter(display: d, including: included, exceptingWindows: [])
+            captureRect = d.frame
+            try buildStream(filter: filter, screenCfg: nil, sourceRect: nil)
+            return
+        }
 
         switch type {
         case "window":
@@ -92,7 +165,10 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
             guard !clipped.isNull, clipped.width >= 16, clipped.height >= 16 else {
                 throw CLIError("bad-config", "The region is outside the display.")
             }
-            filter = SCContentFilter(display: d, excludingApplications: excluded, exceptingWindows: [])
+            let made = displayFilter(d, content: content)
+            filter = made.filter
+            lastExcepted = made.excepted
+            filterDisplay = d
             sourceRect = CGRect(x: clipped.minX - d.frame.minX, y: clipped.minY - d.frame.minY, width: clipped.width, height: clipped.height)
             captureRect = clipped
         default:
@@ -100,10 +176,16 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
             if let wanted = screenCfg?.displayId, wanted != d.displayID {
                 throw CLIError("missing-device", "The selected display is no longer connected.")
             }
-            filter = SCContentFilter(display: d, excludingApplications: excluded, exceptingWindows: [])
+            let made = displayFilter(d, content: content)
+            filter = made.filter
+            lastExcepted = made.excepted
+            filterDisplay = d
             captureRect = d.frame
         }
+        try buildStream(filter: filter, screenCfg: screenCfg, sourceRect: sourceRect)
+    }
 
+    private func buildStream(filter: SCContentFilter, screenCfg: RecordConfig.Screen?, sourceRect: CGRect?) throws {
         scale = Double(filter.pointPixelScale)
         if scale <= 0 { scale = 2 }
         var w = captureRect.width * scale
@@ -134,7 +216,7 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
         sc.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         sc.colorSpaceName = CGColorSpace.sRGB
         sc.scalesToFit = true
-        if config.systemAudio {
+        if wantsAudio {
             sc.capturesAudio = true
             sc.sampleRate = 48000
             sc.channelCount = 2
@@ -145,7 +227,7 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
         if screenCfg != nil {
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: videoQueue)
         }
-        if config.systemAudio {
+        if wantsAudio {
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
         }
         self.stream = stream
@@ -222,7 +304,7 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
             guard let writer = audioWriter else { return }
             let host = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
             // System audio never defines the start of a take on its own unless it is the only source.
-            guard let t = sink.clock.sessionTime(host: host, establish: videoWriter == nil) else { return }
+            guard let t = sink.clock.sessionTime(host: host, establish: audioMayEstablish ?? (videoWriter == nil)) else { return }
             let res = writer.appendAudio(sampleBuffer, at: t)
             if res.restored { sink.sourceRestored(writer.id, at: t) }
         default:

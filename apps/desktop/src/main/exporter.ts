@@ -95,6 +95,17 @@ export async function mux(id: string, video: string, audio: string | null, out: 
   }
 }
 
+export async function gif(id: string, video: string, out: string, opts: { fps: number; width: number }): Promise<{ bytes: number; frames: number }> {
+  const s = get(id);
+  await closeHandles(s);
+  try {
+    const r = await native.gif(inside(s, video), inside(s, out), opts);
+    return { bytes: r.sizeBytes, frames: r.frames };
+  } catch (e) {
+    throw diskError(e);
+  }
+}
+
 export async function stat(id: string, name: string): Promise<{ bytes: number } | null> {
   const s = get(id);
   const fh = s.handles.get(name);

@@ -7,6 +7,8 @@ import type { CorrelationResult, CursorSample, Project, Range } from '@cutaway/c
 
 export type Permission = 'granted' | 'denied' | 'undetermined';
 export type PermissionKind = 'screen' | 'camera' | 'microphone';
+/** Extra permissions some optional features need. Never requested automatically. */
+export type ExtraPermission = 'accessibility' | 'inputMonitoring';
 
 export interface DisplayInfo { id: number; name: string; width: number; height: number; scale: number; x: number; y: number; main: boolean }
 export interface WindowInfo { id: number; title: string; app: string; bundleId: string; x: number; y: number; width: number; height: number; displayId: number }
@@ -14,7 +16,11 @@ export interface CameraInfo { id: string; name: string; formats: { width: number
 export interface MicInfo { id: string; name: string; default?: boolean }
 
 export interface DeviceList {
-  permissions: Record<PermissionKind, Permission>;
+  permissions: Record<PermissionKind, Permission> & Partial<Record<ExtraPermission, Permission>>;
+  /** USB iPhone / iPad screens that can be recorded as the screen source. */
+  externalDevices?: { id: string; name: string; width: number; height: number }[];
+  /** Running apps, for recording audio from selected apps only. */
+  apps?: { bundleId: string; name: string; pid: number }[];
   displays: DisplayInfo[];
   windows: WindowInfo[];
   cameras: CameraInfo[];
@@ -24,10 +30,28 @@ export interface DeviceList {
 /** Mirrors docs/NATIVE_PROTOCOL.md `record` config, minus outDir (main chooses it). */
 export interface RecordConfig {
   fps: number;
-  screen?: { type: 'display' | 'window' | 'region'; displayId?: number; windowId?: number; rect?: { x: number; y: number; width: number; height: number }; showCursor: boolean; maxHeight?: number } | null;
+  screen?: {
+    type: 'display' | 'window' | 'region' | 'device';
+    displayId?: number;
+    windowId?: number;
+    /** For type 'device': a connected iPhone or iPad. */
+    deviceId?: string;
+    rect?: { x: number; y: number; width: number; height: number };
+    showCursor: boolean;
+    maxHeight?: number;
+    /** Leave Finder's desktop icons out of the capture (nothing on the Mac is changed). */
+    hideDesktopIcons?: boolean;
+    /** Leave notification banners out of the capture. */
+    hideNotifications?: boolean;
+  } | null;
   cameras: { slot: 'A' | 'B'; deviceId: string; width: number; height: number; fps: number }[];
   microphone?: { deviceId: string } | null;
-  systemAudio: boolean;
+  /** true = everything the Mac plays; a list = only those apps. */
+  systemAudio: boolean | { apps: string[] };
+  /** Record pressed shortcuts and typing activity (never the typed characters). Needs Input Monitoring. */
+  captureKeys?: boolean;
+  /** Test mode: generated pictures and tones, no permissions needed. */
+  synthetic?: boolean;
 }
 
 export interface PreflightResult {
@@ -49,6 +73,7 @@ export interface TakeSource {
   pointHeight?: number;
   fps?: number;
   cursorBaked?: boolean;
+  deviceKind?: 'iphone' | 'ipad' | null;
   channels?: number;
   sampleRate?: number;
   deviceName?: string;
@@ -66,6 +91,7 @@ export interface TakeManifest {
   pauses: { at: number; wallDuration: number }[];
   sources: TakeSource[];
   cursor?: { file: string; samples: number } | null;
+  keys?: { file: string; events: number } | null;
 }
 
 export type RecordEvent =
@@ -83,6 +109,21 @@ export type RecordEvent =
   | { type: 'stopped'; manifest: TakeManifest }
   /** Synthesised by main when the helper process dies without a `stopped` event. */
   | { type: 'crashed'; takeDir: string; message: string };
+
+/** Keyboard telemetry. Typed characters are never recorded: only shortcuts and anonymous typing ticks. */
+export type KeyEvent = { t: number; e: 'shortcut'; keys: string[] } | { t: number; e: 'type' };
+
+export interface FaceTrack {
+  fps: number;
+  samples: ({ t: number; x: number; y: number; w: number; h: number } | { t: number; none: true })[];
+}
+
+export interface VoiceInfo {
+  id: string;
+  name: string;
+  language: string;
+  quality: string;
+}
 
 export interface ProbeResult {
   path: string;
@@ -223,6 +264,10 @@ export interface CutawayApi {
     captureThumbnails(): Promise<{ kind: 'display' | 'window'; id: number; displayId: number | null; name: string; dataUrl: string }[]>;
     /** Minimise the main window and show the floating recording controller (or undo that). */
     recordingMode(on: boolean): Promise<void>;
+    /** Put a file on the clipboard so it can be pasted into another app. */
+    copyFile(path: string): Promise<void>;
+    /** Floating speaker-notes window, left out of the recording. */
+    notesWindow(show: boolean): Promise<void>;
     /** Application menu commands (undo, redo, save, record, import, …). */
     onMenu(cb: (command: string) => void): () => void;
     /** Absolute paths of files dropped onto the window. */
@@ -246,6 +291,8 @@ export interface CutawayApi {
     cacheInfo(projectPath: string): Promise<CacheInfo>;
     clearCache(projectPath: string): Promise<CacheInfo>;
     exists(path: string): Promise<boolean>;
+    /** Self-contained copy of a project (with its referenced media gathered inside) as a zip, for handing to someone else. */
+    exportBundle(projectPath: string, destDir: string): Promise<{ path: string; bytes: number }>;
   };
   native: {
     devices(): Promise<DeviceList>;
@@ -258,6 +305,15 @@ export interface CutawayApi {
     analyzeVoice(file: string): Promise<VoiceAnalysis>;
     correlate(refFile: string, otherFile: string, maxOffset: number): Promise<CorrelationResult>;
     readCursor(file: string): Promise<CursorSample[]>;
+    readKeys(file: string): Promise<KeyEvent[]>;
+    /** Largest face per sampled frame (on-device Vision). Cached per file in the project. */
+    faces(projectPath: string, file: string): Promise<FaceTrack>;
+    /** Person-segmentation matte video for camera cutout, written to the project cache. */
+    matte(projectPath: string, file: string): Promise<{ path: string; duration: number; frames: number; width: number; height: number }>;
+    resizeWindow(windowId: number, width: number, height: number): Promise<void>;
+    voices(): Promise<VoiceInfo[]>;
+    /** Synthesise narration on this Mac into the project's media folder. Returns a project-relative path. */
+    speak(projectPath: string, text: string, voiceId: string, rate?: number): Promise<{ path: string; duration: number }>;
   };
   record: {
     /** Starts the helper. The take is written inside the project bundle. */
@@ -282,6 +338,8 @@ export interface CutawayApi {
     /** Mux/tag the final video with the native helper. */
     mux(sessionId: string, video: string, audio: string | null, out: string): Promise<{ bytes: number; duration: number }>;
     stat(sessionId: string, name: string): Promise<{ bytes: number } | null>;
+    /** Animated GIF from a video already in the session folder. */
+    gif(sessionId: string, video: string, out: string, opts: { fps: number; width: number }): Promise<{ bytes: number; frames: number }>;
     /** Moves the working folder into place. Refuses to overwrite. */
     commit(sessionId: string, keep: string[]): Promise<{ folder: string; files: { name: string; bytes: number }[] }>;
     /** Keeps partial files in a clearly marked "-partial" folder, or removes them. */
