@@ -12,8 +12,8 @@
     "start": "electron .",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "e2e": "node e2e/journey.mjs && node e2e/firstcut.mjs && node e2e/package-ui.mjs && node e2e/capture-ui.mjs && node e2e/ux.mjs && node e2e/render-parity.mjs && node e2e/permissions.mjs",
-    "package": "electron-builder --mac dir",
+    "e2e": "node e2e/journey.mjs && node e2e/firstcut.mjs && node e2e/package-ui.mjs && node e2e/capture-ui.mjs && node e2e/ux.mjs && node e2e/render-parity.mjs && node e2e/permissions.mjs && node e2e/codex-ui.mjs && node e2e/chat.mjs",
+    "package": "electron-builder --mac dir && node scripts/sign.mjs",
     "icon": "node scripts/icon.mjs",
     "e2e:real": "node e2e/real-capture.mjs"
   },
@@ -67,7 +67,9 @@
         "NSCameraUsageDescription": "Cutaway records your camera as its own track when you turn a camera on.",
         "NSMicrophoneUsageDescription": "Cutaway records your microphone as its own track when you turn it on.",
         "NSSpeechRecognitionUsageDescription": "Cutaway transcribes your recordings on this Mac so you can edit by text.",
-        "NSScreenCaptureUsageDescription": "Cutaway records the screen, window or area you choose."
+        "NSScreenCaptureUsageDescription": "Cutaway records the screen, window or area you choose.",
+        "NSCameraUseContinuityCameraDeviceType": true,
+        "NSAppleEventsUsageDescription": "Cutaway lists the tabs open in your browser so you can pick one to record. It reads tab titles only."
       },
       "identity": "-",
       "hardenedRuntime": false,

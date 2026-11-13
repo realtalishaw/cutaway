@@ -1,0 +1,74 @@
+/* ───────── countdown over the recording target (its own transparent window) ───────── */
+.cd-root { position: fixed; inset: 0; overflow: hidden; pointer-events: none; user-select: none; }
+/* everything around the target is dimmed; the target itself stays clear */
+.cd-target { position: absolute; border-radius: 10px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5), inset 0 0 0 3px #7b6cf6, 0 0 0 1px rgba(0, 0, 0, 0.6); display: grid; place-items: center; animation: cd-in 0.18s ease-out both; }
+.cd-target.whole { border-radius: 0; box-shadow: inset 0 0 0 4px #7b6cf6; }
+.cd-center { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px 40px 20px; border-radius: 28px; background: rgba(12, 12, 16, 0.62); backdrop-filter: blur(18px) saturate(1.2); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.1); max-width: 92%; }
+.cd-num { font-family: 'Inter Variable', Inter, system-ui, sans-serif; font-weight: 650; letter-spacing: -0.04em; line-height: 0.9; color: #fff; font-variant-numeric: tabular-nums; animation: cd-count 0.95s cubic-bezier(0.2, 0.7, 0.2, 1) both; min-width: 1.1ch; text-align: center; }
+.cd-label { display: flex; align-items: center; gap: 8px; font: 550 13px/1.2 'Inter Variable', Inter, system-ui, sans-serif; color: rgba(255, 255, 255, 0.82); white-space: nowrap; max-width: 100%; overflow: hidden; }
+.cd-label b { color: #fff; font-weight: 650; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.cd-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff453a; flex: none; }
+.cd-esc { margin-left: 8px; padding: 2px 7px; border-radius: 6px; background: rgba(255, 255, 255, 0.14); font-size: 11px; color: rgba(255, 255, 255, 0.75); }
+@keyframes cd-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cd-count { from { opacity: 0; transform: scale(1.25); } 30% { opacity: 1; transform: scale(1); } 85% { opacity: 1; } to { opacity: 0.35; transform: scale(0.95); } }
+
+/* ───────── self-view bubble (its own transparent window) ───────── */
+.sv { position: fixed; inset: 4px; overflow: hidden; background: #111216; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.28), 0 6px 18px rgba(0, 0, 0, 0.45); -webkit-app-region: drag; }
+.sv.circle { border-radius: 50%; }
+.sv.rounded { border-radius: 22%; }
+/* mirrored, the way people expect to see themselves */
+.sv-picture { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
+.sv-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: rgba(255, 255, 255, 0.6); font: 500 11px 'Inter Variable', Inter, system-ui, sans-serif; }
+.sv-tools { position: absolute; left: 50%; bottom: 10%; transform: translateX(-50%); display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: rgba(10, 10, 14, 0.72); backdrop-filter: blur(10px); opacity: 0; transition: opacity 0.14s; -webkit-app-region: no-drag; }
+.sv:hover .sv-tools { opacity: 1; }
+.sv-tools button { width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; background: transparent; color: #fff; font: 650 11px 'Inter Variable', Inter, system-ui, sans-serif; }
+.sv-tools button:hover { background: rgba(255, 255, 255, 0.18); }
+
+/* ───────── layout choice in the recorder ───────── */
+.lay-row { display: flex; align-items: center; justify-content: center; gap: 6px; flex: none; }
+.lay { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 104px; padding: 7px 6px 6px; border: 0; border-radius: 11px; background: transparent; color: var(--text-3); transition: background 0.12s, color 0.12s; }
+.lay:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.lay[aria-checked='true'] { background: var(--bg-2); color: var(--text); box-shadow: inset 0 0 0 1.5px var(--accent-2); }
+.lay:disabled { opacity: 0.4; }
+.lay span { font-size: 10.5px; font-weight: 550; line-height: 1.15; white-space: nowrap; }
+.lay svg { display: block; }
+.lay svg .scr { fill: rgba(255, 255, 255, 0.16); stroke: rgba(255, 255, 255, 0.5); stroke-width: 1; }
+.lay svg .cam { fill: var(--accent-2); stroke: none; }
+.lay svg .out { fill: rgba(255, 255, 255, 0.04); stroke: rgba(255, 255, 255, 0.22); stroke-width: 1; }
+.lay-note { text-align: center; }
+
+/* the stage previews the chosen layout */
+.comp { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; gap: 1.6%; padding: 0; }
+.comp .stage-shot { flex: none; }
+.comp-cam { position: relative; overflow: hidden; background: var(--bg-2); display: grid; place-items: center; color: var(--text-3); }
+.comp-cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.comp-cam .comp-tag { position: absolute; left: 8px; top: 8px; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; background: rgba(0, 0, 0, 0.6); color: #fff; }
+.comp[data-layout='split'] { padding: 2.5%; }
+.comp[data-layout='split'] .comp-screen { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+.comp[data-layout='split'] .comp-cam { flex: 0 0 30%; height: 100%; border-radius: 14px; }
+.comp[data-layout='presenter'] .comp-cam { position: absolute; inset: 0; }
+.comp[data-layout='presenter'] .comp-screen { position: absolute; right: 2.4%; bottom: 3.5%; width: 36%; height: 36%; display: flex; align-items: flex-end; justify-content: flex-end; z-index: 2; }
+.comp[data-layout='presenter'] .comp-screen .stage-shot { border-radius: 10px; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.25), 0 14px 36px rgba(0, 0, 0, 0.6); }
+.comp[data-layout='overlay'] .comp-screen, .comp[data-layout='screen'] .comp-screen { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.comp[data-layout='overlay'] .comp-cam { position: absolute; right: 16px; bottom: 16px; width: 15%; max-width: 190px; aspect-ratio: 1; border-radius: 24%; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.22), 0 12px 32px rgba(0, 0, 0, 0.6); z-index: 2; }
+/* what will be recorded is named on the picture itself */
+.target-chip { position: absolute; left: 14px; top: 14px; z-index: 3; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 9px; border-radius: 9px; background: rgba(12, 12, 16, 0.78); backdrop-filter: blur(14px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); font-size: 12px; font-weight: 550; color: #fff; max-width: 60%; }
+.target-chip b { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.target-chip .dim { color: rgba(255, 255, 255, 0.6); font-weight: 500; white-space: nowrap; }
+/* page area of a browser tab: the strip that is left out is hatched */
+.crop-veil { position: absolute; inset: 0; pointer-events: none; }
+.crop-veil i { position: absolute; background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.78) 0 7px, rgba(0, 0, 0, 0.6) 7px 14px); }
+.crop-veil .keep { position: absolute; box-shadow: inset 0 0 0 2px var(--accent-2); background: rgba(79, 70, 245, 0.16); }
+
+/* browser tab picker */
+.tabs-box { width: min(980px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
+.tabs-list { display: flex; flex-direction: column; gap: 2px; max-height: 148px; overflow: auto; padding: 4px; border-radius: var(--r-2); background: var(--bg-1); }
+.tabs-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 2px; font-size: 11px; font-weight: 600; color: var(--text-3); }
+.tab-row { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; font-size: 12.5px; min-width: 0; }
+.tab-row:hover:not(:disabled) { background: var(--bg-2); }
+.tab-row[aria-checked='true'] { background: var(--bg-3); box-shadow: inset 0 0 0 1.5px var(--accent-2); }
+.tab-row:disabled { color: var(--text-4); }
+.tab-row .tab-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-row .tab-host { flex: none; color: var(--text-3); font-size: 11.5px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-row .tab-front { flex: none; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.1); color: var(--text-2); }
+.controller-pill .ctl.dim-off { color: var(--text-3); }

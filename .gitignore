@@ -8,3 +8,6 @@ release/
 fixtures/generated/
 test-results/
 *.log
+
+# local signing identity (personal, never committed)
+.signing.local.json

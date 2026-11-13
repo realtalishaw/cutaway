@@ -47,6 +47,9 @@ export const KEY_COMMANDS: KeyCommand[] = [
   { id: 'flag-prev', label: 'Go to the previous flag', group: 'Playback', scope: 'editor', combo: '[' },
   { id: 'flag-next', label: 'Go to the next flag', group: 'Playback', scope: 'editor', combo: ']' },
 
+  { id: 'version-prev', label: 'Look at the previous version', group: 'Playback', scope: 'editor', combo: 'Alt+[' },
+  { id: 'version-next', label: 'Look at the next version', group: 'Playback', scope: 'editor', combo: 'Alt+]' },
+
   { id: 'undo', label: 'Undo', group: 'Editing', scope: 'menu', combo: 'Cmd+Z' },
   { id: 'redo', label: 'Redo', group: 'Editing', scope: 'menu', combo: 'Shift+Cmd+Z' },
   { id: 'mark-in', label: 'Mark the start of a range', group: 'Editing', scope: 'editor', combo: 'I' },
@@ -68,6 +71,7 @@ export const KEY_COMMANDS: KeyCommand[] = [
   { id: 'tab:audio', label: 'Audio', group: 'Sidebar', scope: 'menu', combo: 'Cmd+6' },
   { id: 'tab:shortcuts', label: 'Keyboard shortcuts overlay', group: 'Sidebar', scope: 'menu', combo: 'Cmd+7' },
   { id: 'tab:motion', label: 'Animations', group: 'Sidebar', scope: 'menu', combo: 'Cmd+8' },
+  { id: 'tab:chat', label: 'Ask AI', group: 'Sidebar', scope: 'menu', combo: 'Cmd+9' },
   { id: 'toggle-sidebar', label: 'Show or hide the sidebar', group: 'Sidebar', scope: 'menu', combo: 'Cmd+\\' },
   { id: 'toggle-timeline', label: 'Show or hide the extra timelines', group: 'Sidebar', scope: 'menu', combo: 'Cmd+T' },
 ];

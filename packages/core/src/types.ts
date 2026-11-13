@@ -140,7 +140,8 @@ export interface SpeedRange extends Range {
   meta: DecisionMeta;
 }
 
-export type LayoutMode = 'screen' | 'camera' | 'overlay' | 'split';
+/** 'presenter' = camera fills the frame with the screen as a small inset. */
+export type LayoutMode = 'screen' | 'camera' | 'overlay' | 'split' | 'presenter';
 
 export interface LayoutSegment extends Range {
   id: string;
@@ -322,6 +323,8 @@ export interface EditState {
   keeps: Range[];
   speeds: SpeedRange[];
   layouts: LayoutSegment[];
+  /** The view used wherever no layout segment applies. Set from the layout chosen in the recorder; absent = decided by which sources exist. */
+  baseLayout?: LayoutMode;
   zooms: Zoom[];
   overlays: Overlay[];
   broll: BrollInsert[];
@@ -414,7 +417,18 @@ export interface Analysis {
 
 export type ThumbnailLayer =
   | { id: string; kind: 'frame'; sourceId: string; time: Seconds; x: number; y: number; scale: number; brightness: number; saturation: number; blur: number; mirror: boolean }
-  | { id: string; kind: 'image'; path: string; x: number; y: number; scale: number; opacity: number }
+  | {
+      id: string;
+      kind: 'image';
+      /** Absolute, or relative to the project folder (generated art lives in media/generated/). */
+      path: string;
+      x: number;
+      y: number;
+      scale: number;
+      opacity: number;
+      /** Set when the picture was made by an AI image model. Shown in the editor and written to the package manifest. */
+      generated?: { provider: string; note: string; direction: string; at: string };
+    }
   | { id: string; kind: 'scrim'; from: string; to: string; angle: number; opacity: number }
   | { id: string; kind: 'shape'; shape: 'rect' | 'pill' | 'circle'; x: number; y: number; w: number; h: number; color: string; rotation: number; opacity: number }
   | {
@@ -446,7 +460,25 @@ export interface PackagingConcept {
   /** Moments in the edit that support the title/thumbnail claim. */
   evidence: { sessionTime: Seconds; quote: string }[];
   origin: 'ai' | 'template';
+  /** Which app proposed it, when origin is 'ai'. Absent on older projects (Claude Code). */
+  aiProvider?: 'claude' | 'codex';
+  /** Pictures an AI image model made for this concept. One may be in use as an image layer; the rest are spare variations. */
+  art?: GeneratedArt[];
   editedByCreator: boolean;
+}
+
+/** One AI-generated picture kept in the project folder. */
+export interface GeneratedArt {
+  id: string;
+  /** Relative to the project folder: media/generated/…. */
+  path: string;
+  /** Who made it, as shown to the creator: "OpenAI via local Codex". */
+  provider: string;
+  /** The model's one-line description of the picture. */
+  note: string;
+  /** What the creator asked for, if anything. */
+  direction: string;
+  at: string;
 }
 
 export interface Chapter {
@@ -476,6 +508,58 @@ export interface RevisionRecord {
   createdAt: string;
   summary: string;
   snapshot: EditState;
+  /** Where the checkpoint came from, when it was not a plain manual or first-cut one. */
+  via?: 'chat';
+  /** The chat message whose edits this checkpoint holds. */
+  messageId?: string;
+}
+
+/** Points at one checkpoint. A revision number identifies one exact edit. */
+export interface CheckpointRef {
+  revision: number;
+  label: string;
+}
+
+export type ChatLane = 'cuts' | 'speeds' | 'layouts' | 'zooms' | 'overlays' | 'broll';
+
+/** One proposed change in a chat reply. Nothing is applied until the creator says so. */
+export interface ChatProposalItem {
+  id: string;
+  /** add = one validated edit operation; remove = take an existing decision out; rules = a request the built-in rules can carry out. */
+  kind: 'add' | 'remove' | 'rules';
+  op?: EditOp;
+  remove?: { lane: ChatLane; id: string };
+  /** For kind "rules": the request and section handed to the built-in rules when applied. */
+  rules?: { instruction: string; scope: Range };
+  /** Session range the change is about (for the jump link). */
+  range: Range;
+  /** What it does, in plain words. */
+  what: string;
+  /** Why, as the assistant gave it. */
+  why: string;
+  status: 'open' | 'applied' | 'dismissed' | 'refused';
+  /** Why validation refused it, or a note about how it was adjusted to fit. */
+  note?: string;
+  /** Set once applied. */
+  checkpoint?: CheckpointRef;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'creator' | 'assistant';
+  text: string;
+  at: string;
+  /** The section the request was about; null = the whole video. */
+  scope: Range | null;
+  /** assistant: how the reply was produced. */
+  mode?: 'claude' | 'local-rules';
+  /** assistant: why the built-in rules answered instead of the AI provider, when they did. */
+  modeReason?: string | null;
+  /** assistant: moments it pointed at (answers to questions like "where does it drag?"). */
+  moments?: (Range & { note: string })[];
+  items?: ChatProposalItem[];
+  /** assistant: the reply could not be produced. */
+  failed?: boolean;
 }
 
 export interface ExportRecord {
@@ -517,15 +601,24 @@ export interface Project {
   /** Named checkpoints (AI first cut, before local regeneration, …). */
   revisions: RevisionRecord[];
   /** Has an AI (or heuristic) first cut been assembled. */
-  firstCut: { at: string; mode: 'claude' | 'local-rules'; summary: string } | null;
+  /** mode 'claude' = a model made the editorial pass; `provider` says which app (absent on older projects: Claude Code). */
+  firstCut: { at: string; mode: 'claude' | 'local-rules'; provider?: 'claude' | 'codex'; summary: string } | null;
   packaging: Packaging;
   exports: ExportRecord[];
   consent: ProcessingConsent | null;
+  /**
+   * Separate permission to send a concept's title, a few spoken words and up
+   * to two stills to an image model for thumbnail pictures. It names its own
+   * provider, so it never follows from `consent`.
+   */
+  artConsent?: { provider: string; grantedAt: string } | null;
   /** Completed stage checkpoints so a retry resumes instead of restarting. */
   stages: Partial<Record<JobStage, { doneAt: string; inputKey: string }>>;
   ui: { playhead: Seconds; view: 'sources' | 'brief' | 'edit' | 'package' | 'export'; expandedTimeline: boolean };
   /** Moments the creator flagged while recording (session time). */
   flags?: Flag[];
+  /** The "Ask AI" thread of this project. */
+  chat?: ChatMessage[];
 }
 
 /** A marker dropped during recording: "look here". */

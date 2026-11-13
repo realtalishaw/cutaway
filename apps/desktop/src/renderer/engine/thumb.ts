@@ -153,13 +153,15 @@ export function loadFrame(opts: Pick<ThumbOpts, 'projectPath' | 'sources'>, sour
   return p;
 }
 
-function loadImageLayer(path: string): Promise<Drawable | null> {
+function loadImageLayer(path: string, projectPath?: string): Promise<Drawable | null> {
   const key = `image:${path}`;
   const hit = cache.get(key);
   if (hit) return Promise.resolve(hit);
   const running = pending.get(key);
   if (running) return running;
-  const p = loadImage(window.cutaway.media.url(path))
+  // Generated art is stored relative to the project folder so it survives a rename or move.
+  const file = path.startsWith('/') || !projectPath ? path : `${projectPath}/${path}`;
+  const p = loadImage(window.cutaway.media.url(file))
     .then((img) => {
       remember(key, img);
       return img as Drawable;
@@ -179,7 +181,7 @@ export async function prepareThumbnail(layers: ThumbnailLayer[], opts: Pick<Thum
   const fonts = new Set<string>();
   for (const l of layers) {
     if (l.kind === 'frame') jobs.push(loadFrame(opts, l.sourceId, l.time));
-    else if (l.kind === 'image') jobs.push(loadImageLayer(l.path));
+    else if (l.kind === 'image') jobs.push(loadImageLayer(l.path, opts.projectPath));
     else if (l.kind === 'text') fonts.add(`${fontWeight(l)} 48px ${FONTS[l.font]}`);
   }
   for (const f of fonts) jobs.push(document.fonts.load(f).catch(() => null));
@@ -529,7 +531,7 @@ export function layerLabel(l: ThumbnailLayer, sources: MediaSource[]): string {
     case 'frame':
       return `Frame · ${sources.find((s) => s.id === l.sourceId)?.name ?? 'missing source'}`;
     case 'image':
-      return `Image · ${l.path.split('/').pop()}`;
+      return l.generated ? 'AI picture' : `Image · ${l.path.split('/').pop()}`;
     case 'scrim':
       return 'Shade';
     case 'shape':

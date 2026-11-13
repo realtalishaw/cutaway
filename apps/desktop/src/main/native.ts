@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from 'electron';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { findSensitive, type CorrelationResult, type CursorSample, type TextLine } from '@cutaway/core';
-import type { SensitiveScan, FaceTrack, KeyEvent, VoiceInfo, AppSettings, DeviceList, PreflightResult, ProbeResult, RecordConfig, RecordEvent, TakeManifest, TranscribeResult, VoiceAnalysis } from '../shared/api';
+import type { BrowserTabList, BrowserTabTarget, PreviewFrame, SensitiveScan, FaceTrack, KeyEvent, VoiceInfo, AppSettings, DeviceList, PreflightResult, ProbeResult, RecordConfig, RecordEvent, TakeManifest, TranscribeResult, VoiceAnalysis } from '../shared/api';
 
 export class NativeError extends Error {
   constructor(public code: string, message: string) {
@@ -32,11 +32,31 @@ export function helperAvailable(): boolean {
 
 export const ownBundleId = () => (app.isPackaged ? 'studio.cutaway.app' : 'com.github.Electron');
 
+/** Helper processes that are running right now, so none is left behind when the app quits. */
+const liveHelpers = new Set<ChildProcess>();
+function track<C extends ChildProcess>(child: C): C {
+  liveHelpers.add(child);
+  child.once('close', () => liveHelpers.delete(child));
+  child.once('error', () => liveHelpers.delete(child));
+  return child;
+}
+/** Ends every helper still running. Called as the app quits; the helper also ends by itself when the app has gone. */
+export function killHelpers(): void {
+  for (const child of liveHelpers) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+  liveHelpers.clear();
+}
+
 /** Run a one-shot helper command and parse its JSON result. */
 export function runJson<T>(args: string[], opts: { timeoutMs?: number } = {}): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!helperAvailable()) return reject(new NativeError('helper-missing', 'The capture helper is not built. Run "pnpm native:build".'));
-    const child = spawn(helperPath(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = track(spawn(helperPath(), args, { stdio: ['ignore', 'pipe', 'pipe'] }));
     const out: Buffer[] = [];
     let err = '';
     const timer = opts.timeoutMs ? setTimeout(() => child.kill('SIGKILL'), opts.timeoutMs) : null;
@@ -270,7 +290,9 @@ export async function startRecording(projectPath: string, config: RecordConfig):
   await fsp.mkdir(takeDir, { recursive: true });
   const cfg = path.join(takeDir, 'config.json');
   await fsp.writeFile(cfg, JSON.stringify(fullConfig(config, takeDir), null, 2));
-  const child = spawn(helperPath(), ['record', '--config', cfg], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = track(spawn(helperPath(), ['record', '--config', cfg], { stdio: ['pipe', 'pipe', 'pipe'] }));
+  // A command written just as the recorder exits must not become an uncaught EPIPE in the app.
+  child.stdin.on('error', () => {});
   let buffer = '';
   let resolveStarted!: () => void;
   let rejectStarted!: (e: Error) => void;
@@ -288,6 +310,7 @@ export async function startRecording(projectPath: string, config: RecordConfig):
   const current = { child, takeDir, stopped, done: false };
   session = current;
   let sawStopped = false;
+  let didStart = false;
   let lastError = '';
   child.stdout.on('data', (d: Buffer) => {
     buffer += d.toString('utf8');
@@ -302,7 +325,15 @@ export async function startRecording(projectPath: string, config: RecordConfig):
       } catch {
         continue;
       }
-      if (e.type === 'started') resolveStarted();
+      // Camera stills go only to the self-view bubble, never to every window.
+      if ((e as { type: string }).type === 'preview') {
+        previewSink?.(e as unknown as PreviewFrame);
+        continue;
+      }
+      if (e.type === 'started') {
+        didStart = true;
+        resolveStarted();
+      }
       if (e.type === 'error') {
         lastError = e.message;
         if (e.fatal) rejectStarted(new NativeError(e.code, e.message));
@@ -322,11 +353,13 @@ export async function startRecording(projectPath: string, config: RecordConfig):
       const message = lastError || 'The recorder stopped unexpectedly.';
       rejectStarted(new NativeError('record-failed', message));
       rejectStopped(new NativeError('record-crashed', message));
-      broadcast({ type: 'crashed', takeDir, message });
+      // Only a take that was actually running can be recovered. A failed start is reported by start() itself,
+      // with the real reason, and its empty folder is removed below.
+      if (didStart) broadcast({ type: 'crashed', takeDir, message });
     }
   });
   child.on('error', (e) => rejectStarted(new NativeError('helper-failed', e.message)));
-  const timeout = setTimeout(() => rejectStarted(new NativeError('timeout', 'The recorder did not start within 20 seconds.')), 20000);
+  const timeout = setTimeout(() => rejectStarted(new NativeError('timeout', `The recorder did not start within 30 seconds.${lastError ? ` Last message: ${lastError}` : ''}`)), 30000);
   try {
     await started;
   } catch (e) {
@@ -340,9 +373,34 @@ export async function startRecording(projectPath: string, config: RecordConfig):
   return { takeDir };
 }
 
+let previewSink: ((frame: PreviewFrame) => void) | null = null;
+/** Where camera stills of the running take are delivered (the self-view bubble). */
+export function onPreview(sink: ((frame: PreviewFrame) => void) | null): void {
+  previewSink = sink;
+}
+/** Tell the recorder whether anyone is looking at the stills, so it does not encode them for nothing. */
+export function setPreview(on: boolean): void {
+  // Purely advisory: the recorder may already be finishing, and a closed pipe must never surface as an error.
+  if (session) writeCommand(session, on ? 'preview-on' : 'preview-off');
+}
+
+/**
+ * Write one command to the recorder. Returns false instead of throwing when the recorder has gone:
+ * a command can always race the recorder's exit, and that race is not an error.
+ */
+function writeCommand(s: { child: ChildProcessWithoutNullStreams; done: boolean }, cmd: string): boolean {
+  const stdin = s.child.stdin;
+  if (s.done || !stdin || stdin.destroyed || !stdin.writable) return false;
+  try {
+    stdin.write(`${cmd}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function send(cmd: string) {
-  if (!session || session.done) throw new NativeError('not-recording', 'No recording is in progress.');
-  session.child.stdin.write(`${cmd}\n`);
+  if (!session || !writeCommand(session, cmd)) throw new NativeError('not-recording', 'No recording is in progress.');
 }
 
 export const pauseRecording = async () => send('pause');
@@ -358,7 +416,7 @@ export const resumeRecording = async () => send('resume');
 export async function stopRecording(): Promise<TakeManifest> {
   if (!session) throw new NativeError('not-recording', 'No recording is in progress.');
   const s = session;
-  if (!s.done) s.child.stdin.write('stop\n');
+  writeCommand(s, 'stop');
   const timer = setTimeout(() => s.child.kill('SIGTERM'), 30000);
   try {
     return await s.stopped;
@@ -370,7 +428,7 @@ export async function stopRecording(): Promise<TakeManifest> {
 export async function cancelRecording(): Promise<void> {
   if (!session || session.done) return;
   const s = session;
-  s.child.stdin.write('cancel\n');
+  if (!writeCommand(s, 'cancel')) s.child.kill('SIGKILL');
   await new Promise<void>((r) => {
     const t = setTimeout(() => {
       s.child.kill('SIGKILL');
@@ -444,6 +502,12 @@ export async function matte(projectPath: string, file: string): Promise<{ path: 
 export const resizeWindow = async (windowId: number, width: number, height: number): Promise<void> => {
   await runJson(['resize-window', '--window-id', String(windowId), '--width', String(Math.round(width)), '--height', String(Math.round(height))], { timeoutMs: 10000 });
 };
+
+// ── browser tabs as recording targets ──
+export const browserTabs = (ask?: string) => runJson<BrowserTabList>(['browser-tabs', ...(ask ? ['--ask', ask] : [])], { timeoutMs: ask ? 180000 : 20000 });
+export const selectBrowserTab = (bundleId: string, window: number, tab: number, raise: boolean) =>
+  runJson<BrowserTabTarget>(['browser-tabs', '--select', '--bundle', bundleId, '--window', String(Math.round(window)), '--tab', String(Math.round(tab)), ...(raise ? ['--raise'] : [])], { timeoutMs: 20000 });
+export const browserContent = (bundleId: string, windowId: number) => runJson<BrowserTabTarget>(['browser-tabs', '--content', '--bundle', bundleId, '--window-id', String(Math.round(windowId))], { timeoutMs: 15000 });
 
 export const voices = () => runJson<VoiceInfo[]>(['voices'], { timeoutMs: 20000 });
 

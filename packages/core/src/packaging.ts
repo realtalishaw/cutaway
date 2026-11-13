@@ -215,7 +215,7 @@ export interface PackageManifest {
   video: { file: string; width: number; height: number; fps: number; duration: Seconds; codec: string; audio: string; color: string } | null;
   title: string | null;
   titleOptions: string[];
-  thumbnail: { file: string; master: string | null; width: number; height: number; variant: string } | null;
+  thumbnail: { file: string; master: string | null; width: number; height: number; variant: string; /** Present when the thumbnail contains AI-generated pictures. */ aiGenerated?: { provider: string; layers: number } } | null;
   captions: { file: string | null; language: string | null; cues: number; omittedReason: string | null };
   chapters: { file: string | null; count: number; youtubeValid: boolean; note: string | null };
   files: ExportRecord['files'];

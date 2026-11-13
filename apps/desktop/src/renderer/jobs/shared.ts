@@ -3,7 +3,7 @@
  * @cutaway/core and @cutaway/ai.
  */
 import { activeRanges, coverage, covers, sentences, toSourceTime, type JobStage, type MediaSource, type Project, type Range, type Seconds } from '@cutaway/core';
-import type { PromptAsset, PromptKeyframe, PromptSentence, PromptSource } from '@cutaway/ai';
+import { PROVIDERS, type PromptAsset, type PromptKeyframe, type PromptSentence, type PromptSource, type ProviderId } from '@cutaway/ai';
 import { resolveSourcePath, type AiRequest, type AiResult } from '../../shared/api';
 import { JobError, type JobContext, type StageState } from './types';
 
@@ -92,6 +92,12 @@ export function fmt(t: Seconds): string {
 // ───────────────────────────── Claude availability ─────────────────────────────
 
 export interface ClaudeGate {
+  /** The provider that would answer (Claude Code or Codex). */
+  provider: ProviderId;
+  /** "Claude" or "Codex": how to name it in a sentence. */
+  name: string;
+  /** "Claude Code" or "Codex": the app on this Mac. */
+  app: string;
   usable: boolean;
   /** Why it will not be used; null when usable. */
   reason: string | null;
@@ -99,15 +105,37 @@ export interface ClaudeGate {
   fellBack: boolean;
 }
 
+/**
+ * Test hook, honoured only in runs started with CUTAWAY_E2E: canned provider
+ * replies, so AI flows can be exercised with the CLIs switched off. A reply
+ * is data or a function of the request; `{ error }` makes the call fail.
+ */
+export interface FakeAi {
+  replies: (unknown | ((req: Omit<AiRequest, 'id'>) => unknown))[];
+  /** Requests it was asked, for assertions. */
+  seen: { purpose: string; prompt: string; images: number }[];
+}
+
+function fakeAi(): FakeAi | null {
+  if (typeof window === 'undefined' || typeof location === 'undefined') return null;
+  if (!new URLSearchParams(location.search).has('e2e')) return null;
+  return (window as unknown as { __cutawayFakeAi?: FakeAi }).__cutawayFakeAi ?? null;
+}
+
 export async function claudeGate(ctx: JobContext): Promise<ClaudeGate> {
-  if (!ctx.useClaude) return { usable: false, reason: 'Claude was not used for this step, so nothing was sent off this Mac.', fellBack: false };
+  const named = (id: ProviderId) => ({ provider: id, name: PROVIDERS[id].name, app: PROVIDERS[id].app });
+  let who = named(ctx.provider ?? 'claude');
+  // Declined: nothing is asked of either app, not even its sign-in state.
+  if (!ctx.useClaude) return { ...who, usable: false, reason: `${who.name} was not used for this step, so nothing was sent off this Mac.`, fellBack: false };
+  if (fakeAi()) return { ...who, usable: true, reason: null, fellBack: false };
   try {
     const st = await window.cutaway.ai.status();
-    if (!st.found) return { usable: false, reason: 'Claude Code is not installed on this Mac.', fellBack: true };
-    if (st.signedIn === false) return { usable: false, reason: 'Claude Code on this Mac is not signed in.', fellBack: true };
-    return { usable: true, reason: null, fellBack: false };
+    if (st.provider) who = named(st.provider);
+    if (!st.found) return { ...who, usable: false, reason: `${who.app} is not installed on this Mac.`, fellBack: true };
+    if (st.signedIn === false) return { ...who, usable: false, reason: `${who.app} on this Mac is not signed in.`, fellBack: true };
+    return { ...who, usable: true, reason: null, fellBack: false };
   } catch (e) {
-    return { usable: false, reason: `Claude Code could not be checked (${errorText(e)}).`, fellBack: true };
+    return { ...who, usable: false, reason: `${who.app} could not be checked (${errorText(e)}).`, fellBack: true };
   }
 }
 
@@ -137,6 +165,15 @@ let seq = 0;
 
 /** One structured Claude call with cancellation and retry-safe caching. */
 export async function askClaude(ctx: JobContext, req: Omit<AiRequest, 'id'>): Promise<AiResult & { reused: boolean }> {
+  const fake = fakeAi();
+  if (fake) {
+    fake.seen.push({ purpose: req.purpose, prompt: req.prompt, images: req.imagePaths?.length ?? 0 });
+    const next = fake.replies.shift();
+    const data = typeof next === 'function' ? (next as (r: typeof req) => unknown)(req) : next;
+    if (data === undefined) return { ok: false, error: { code: 'failed', message: 'The test provider has no reply queued.' }, durationMs: 0, reused: false };
+    if (data && typeof data === 'object' && 'error' in data) return { ok: false, error: { code: 'failed', message: String((data as { error: unknown }).error) }, durationMs: 0, reused: false };
+    return { ok: true, data, durationMs: 1, reused: false };
+  }
   const key = hash(`${req.purpose}\n${req.prompt}\n${JSON.stringify(req.schema)}`);
   if (replyCache.has(key)) return { ok: true, data: replyCache.get(key), durationMs: 0, reused: true };
   const id = `ai_${Date.now().toString(36)}_${(seq++).toString(36)}`;

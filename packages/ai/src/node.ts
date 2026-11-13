@@ -54,9 +54,9 @@ export interface ClaudeRunResult {
   model?: string | null;
 }
 
-const EXTRA_DIRS = () => [join(homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.claude', 'local')];
+export const EXTRA_DIRS = () => [join(homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.claude', 'local')];
 
-async function isExecutable(p: string): Promise<boolean> {
+export async function isExecutable(p: string): Promise<boolean> {
   try {
     await access(p, FS.X_OK);
     return true;
@@ -70,6 +70,8 @@ async function isExecutable(p: string): Promise<boolean> {
 export interface ShellContext {
   /** Absolute paths the login shell resolves `claude` to, best first. */
   claudePaths: string[];
+  /** The same for the `codex` CLI. */
+  codexPaths: string[];
   /** The login shell's exported environment, or null if it could not be read. */
   env: Record<string, string> | null;
 }
@@ -82,8 +84,10 @@ export function parseShellProbe(stdout: string): ShellContext {
   const a = stdout.indexOf(MARK.a);
   const b = stdout.indexOf(MARK.b, a + 1);
   const c = stdout.lastIndexOf(MARK.c);
-  if (a < 0 || b < 0 || c < b) return { claudePaths: [], env: null };
-  const claudePaths = [...new Set(stdout.slice(a + MARK.a.length, b).split('\n').map((l) => l.trim()).filter((l) => isAbsolute(l) && basename(l) === 'claude'))];
+  if (a < 0 || b < 0 || c < b) return { claudePaths: [], codexPaths: [], env: null };
+  const found = stdout.slice(a + MARK.a.length, b).split('\n').map((l) => l.trim()).filter((l) => isAbsolute(l));
+  const claudePaths = [...new Set(found.filter((l) => basename(l) === 'claude'))];
+  const codexPaths = [...new Set(found.filter((l) => basename(l) === 'codex'))];
   const env: Record<string, string> = {};
   for (const entry of stdout.slice(b + MARK.b.length, c).split('\0')) {
     const e = entry.replace(/^\n/, '');
@@ -93,7 +97,7 @@ export function parseShellProbe(stdout: string): ShellContext {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || k === '_' || k === 'SHLVL' || k === 'PWD' || k === 'OLDPWD') continue;
     env[k] = e.slice(i + 1);
   }
-  return { claudePaths, env: Object.keys(env).length ? env : null };
+  return { claudePaths, codexPaths, env: Object.keys(env).length ? env : null };
 }
 
 let shellContext: Promise<ShellContext> | null = null;
@@ -109,7 +113,7 @@ export function resetShellContext(): void {
  * which is why the CLI can work in Terminal and not from a double-clicked app.
  */
 export function loginShellContext(): Promise<ShellContext> {
-  if (process.env.VITEST || process.env.CUTAWAY_SHELL_ENV === '0' || process.platform === 'win32') return Promise.resolve({ claudePaths: [], env: null });
+  if (process.env.VITEST || process.env.CUTAWAY_SHELL_ENV === '0' || process.platform === 'win32') return Promise.resolve({ claudePaths: [], codexPaths: [], env: null });
   shellContext ??= (async () => {
     let shell = process.env.SHELL || '';
     try {
@@ -118,10 +122,10 @@ export function loginShellContext(): Promise<ShellContext> {
       /* no passwd entry */
     }
     if (!isAbsolute(shell) || !SHELLS.has(basename(shell)) || !(await isExecutable(shell))) shell = '/bin/zsh';
-    const script = `printf '\\n${MARK.a}\\n'; command -v claude; whence -p claude 2>/dev/null; type -P claude 2>/dev/null; printf '\\n${MARK.b}\\n'; env -0; printf '\\n${MARK.c}\\n'`;
+    const script = `printf '\\n${MARK.a}\\n'; command -v claude; whence -p claude 2>/dev/null; type -P claude 2>/dev/null; command -v codex; whence -p codex 2>/dev/null; type -P codex 2>/dev/null; printf '\\n${MARK.b}\\n'; env -0; printf '\\n${MARK.c}\\n'`;
     const out = await spawnClaude(shell, ['-ilc', script], null, { cwd: homedir(), env: scrubbedEnv(process.env), timeoutMs: 12_000 });
     return parseShellProbe(out.stdout);
-  })().catch(() => ({ claudePaths: [], env: null }));
+  })().catch(() => ({ claudePaths: [], codexPaths: [], env: null }));
   return shellContext;
 }
 
@@ -163,7 +167,9 @@ export function scrubbedEnv(env: NodeJS.ProcessEnv = process.env, claudePath?: s
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) continue;
-    if (/^(CLAUDE|ANTHROPIC)/i.test(k)) continue;
+    if (/^(CLAUDE|ANTHROPIC|OPENAI_)/i.test(k)) continue;
+    // A host Codex session's own variables; CODEX_HOME is where the creator's sign-in lives.
+    if (/^CODEX_/i.test(k) && k !== 'CODEX_HOME') continue;
     if (/^ELECTRON_RUN_AS_NODE$/i.test(k)) continue;
     out[k] = v;
   }
@@ -367,10 +373,12 @@ export async function claudeStatus(preferredPath?: string | null, signal?: Abort
 }
 
 /**
- * A script that signs the CLI in from the creator's own Terminal. Signing in
- * is theirs to do: this only starts `claude auth login` where they can see it.
+ * A script that signs a CLI in from the creator's own Terminal. Signing in
+ * is theirs to do: this only starts the app's own login command where they
+ * can see it.
  */
-export function signInScript(claudePath: string): string {
+export function signInScript(cliPath: string, cli: { app: string; login: string[]; status: string[] } = { app: 'Claude Code', login: ['auth', 'login'], status: ['auth', 'status'] }): string {
   const q = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
-  return ['#!/bin/zsh -il', 'clear', 'echo "Signing Claude Code in for Cutaway. Follow the prompts; you can close this window when it says you are signed in."', 'echo', `${q(claudePath)} auth login`, 'echo', `${q(claudePath)} auth status >/dev/null 2>&1 && echo "Signed in. Go back to Cutaway and choose Check again." || echo "Not signed in yet. Run this again from Cutaway when you are ready."`, ''].join('\n');
+  const run = (args: string[]) => `${q(cliPath)} ${args.join(' ')}`;
+  return ['#!/bin/zsh -il', 'clear', `echo "Signing ${cli.app} in for Cutaway. Follow the prompts; you can close this window when it says you are signed in."`, 'echo', run(cli.login), 'echo', `${run(cli.status)} >/dev/null 2>&1 && echo "Signed in. Go back to Cutaway and choose Check again." || echo "Not signed in yet. Run this again from Cutaway when you are ready."`, ''].join('\n');
 }

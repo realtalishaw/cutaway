@@ -14,6 +14,7 @@ final class SyntheticVideoSource {
     let height: Int
     let fps: Double
     var writer: SourceWriter?
+    var preview: PreviewEmitter?
     private weak var sink: CaptureSink?
     private let queue: DispatchQueue
     private var timer: DispatchSourceTimer?
@@ -80,6 +81,7 @@ final class SyntheticVideoSource {
             }
         }
         CVPixelBufferUnlockBaseAddress(pb, [])
+        preview?.offer(pb, hostNow: host)
         let res = writer.appendVideo(pb, at: t)
         if res.restored { sink.sourceRestored(id, at: t) }
     }

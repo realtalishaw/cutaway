@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { TimeMap, checkpoint, commitEdit, type EditState, type Packaging, type Project, type Range } from '@cutaway/core';
+import { TimeMap, checkpoint, commitEdit, findCheckpoint, projectAtCheckpoint, restoreRevision, type EditState, type Packaging, type Project, type Range } from '@cutaway/core';
 import type { AppSettings, ClaudeStatus } from '@shared/api';
 import type { StageState } from '../jobs/types';
 
@@ -12,7 +12,7 @@ export type Selection =
   | { kind: 'words'; ids: string[]; range: Range }
   | null;
 
-export type InspectorTab = 'background' | 'cursor' | 'camera' | 'captions' | 'transcript' | 'audio' | 'shortcuts' | 'motion' | 'device' | 'review' | 'history';
+export type InspectorTab = 'background' | 'cursor' | 'camera' | 'captions' | 'transcript' | 'audio' | 'shortcuts' | 'motion' | 'device' | 'chat' | 'review' | 'history';
 export type DrawerTab = 'transcript' | 'review' | 'history';
 
 export interface Toast {
@@ -54,6 +54,19 @@ interface AppState {
   toasts: Toast[];
   /** Local-revision proposal awaiting accept/discard: before/after preview. */
   comparison: { before: Project; after: Project; label: string; range: Range; notes: string[]; showing: 'before' | 'after' } | null;
+  /**
+   * An earlier checkpoint being looked at. The editor shows that version
+   * read-only; `project` is untouched (and is the only thing ever saved).
+   */
+  viewing: { revision: number; label: string; showing: 'version' | 'latest' } | null;
+  /** Look at a checkpoint without changing anything. Returns false when it no longer exists. */
+  viewVersion(ref: { revision: number; label?: string }): boolean;
+  /** Flip between the viewed version and the latest edit. */
+  showViewing(side: 'version' | 'latest'): void;
+  /** Back to the latest edit. */
+  exitViewing(): void;
+  /** Make the viewed version the current edit: one undoable step, with what was there checkpointed first. */
+  restoreViewed(): void;
   /** Editor chrome: right inspector visibility, active inspector tab, left drawer (transcript / review / history). */
   panels: { inspector: boolean; tab: InspectorTab; drawer: DrawerTab | null };
   setPanels(patch: Partial<AppState['panels']>): void;
@@ -83,6 +96,24 @@ interface AppState {
 let toastId = 1;
 const MAX_UNDO = 120;
 
+const VIEWING_NOTE = 'You are looking at an earlier version. Go back to the latest, or restore this one, to make changes.';
+let viewingNoteAt = 0;
+
+/** The project a session-time position belongs to right now (viewed version or latest). */
+function shownOf(s: Pick<AppState, 'project' | 'viewing' | 'comparison'>): Project | null {
+  if (s.comparison) return s.comparison.showing === 'before' ? s.comparison.before : s.comparison.after;
+  return viewedProject(s) ?? s.project;
+}
+
+/** Keep the playhead on the same moment of the recording when the shown edit changes. */
+function keepMoment(from: Project | null, to: Project | null) {
+  if (!from || !to || from.edit === to.edit) return;
+  const play = usePlayback.getState();
+  play.setPlaying(false);
+  const src = TimeMap.fromEdit(from.duration, from.edit).toSource(play.time);
+  play.seek(TimeMap.fromEdit(to.duration, to.edit).toOutput(src));
+}
+
 export const useApp = create<AppState>((set, get) => ({
   route: 'library',
   settings: null,
@@ -98,6 +129,52 @@ export const useApp = create<AppState>((set, get) => ({
   job: null,
   toasts: [],
   comparison: null,
+  viewing: null,
+  viewVersion: (ref) => {
+    const { project, viewing } = get();
+    if (!project) return false;
+    const rec = findCheckpoint(project, ref);
+    if (!rec) {
+      get().toast('That version is no longer in the history.');
+      return false;
+    }
+    if (get().comparison) {
+      get().toast('Accept or discard the proposed change first.');
+      return false;
+    }
+    if (viewing?.revision === rec.revision && viewing.showing === 'version') return true;
+    const before = shownOf(get());
+    usePlayback.getState().setPlaying(false);
+    set({ viewing: { revision: rec.revision, label: rec.label, showing: 'version' }, selection: null });
+    keepMoment(before, shownOf(get()));
+    return true;
+  },
+  showViewing: (side) => {
+    const { viewing } = get();
+    if (!viewing || viewing.showing === side) return;
+    const before = shownOf(get());
+    set({ viewing: { ...viewing, showing: side }, selection: null });
+    keepMoment(before, shownOf(get()));
+  },
+  exitViewing: () => {
+    if (!get().viewing) return;
+    const before = shownOf(get());
+    set({ viewing: null, selection: null });
+    keepMoment(before, shownOf(get()));
+  },
+  restoreViewed: () => {
+    const { project, viewing } = get();
+    if (!project || !viewing) return;
+    const before = shownOf(get());
+    const label = viewing.label;
+    set({ viewing: null, selection: null });
+    const next = restoreRevision(project, viewing.revision);
+    if (next !== project) {
+      get().replace(next, `Restore “${label}”`);
+      get().toast(`Restored “${label}”. Undo brings back what you had.`);
+    }
+    keepMoment(before, get().project);
+  },
   panels: { inspector: true, tab: 'background', drawer: null },
   // The transcript, review and history panels live in the inspector card; `drawer` is kept as an alias for older callers.
   setPanels: (patch) => {
@@ -110,22 +187,25 @@ export const useApp = create<AppState>((set, get) => ({
     set({ panels: next });
   },
 
-  go: (route) => set({ route }),
+  go: (route) => {
+    if (route !== get().route) get().exitViewing();
+    set({ route });
+  },
   setSettings: (settings) => set({ settings }),
 
   openProject: (projectPath, project) => {
-    set({ projectPath, project, past: [], future: [], selection: null, job: null, comparison: null, route: 'project', save: { state: 'saved', at: project.updatedAt, error: null } });
+    set({ projectPath, project, past: [], future: [], selection: null, job: null, comparison: null, viewing: null, route: 'project', save: { state: 'saved', at: project.updatedAt, error: null } });
     usePlayback.getState().reset(project.ui.playhead);
   },
 
   closeProject: () => {
     usePlayback.getState().setPlaying(false);
-    set({ projectPath: null, project: null, past: [], future: [], selection: null, job: null, comparison: null, route: 'library' });
+    set({ projectPath: null, project: null, past: [], future: [], selection: null, job: null, comparison: null, viewing: null, route: 'library' });
   },
 
   edit: (fn, label, coalesceKey) => {
     const { project, past, coalesce } = get();
-    if (!project) return;
+    if (!project || blockedByViewing()) return;
     const nextEdit = fn(project.edit, project);
     if (nextEdit === project.edit) return;
     const now = Date.now();
@@ -136,7 +216,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   pack: (fn, label, coalesceKey) => {
     const { project, past, coalesce } = get();
-    if (!project) return;
+    if (!project || blockedByViewing()) return;
     const next = fn(project.packaging, project);
     if (next === project.packaging) return;
     const now = Date.now();
@@ -155,14 +235,14 @@ export const useApp = create<AppState>((set, get) => ({
 
   replace: (next, label) => {
     const { project, past } = get();
-    if (!project) return;
+    if (!project || blockedByViewing()) return;
     set({ project: next, past: [...past, { edit: project.edit, packaging: project.packaging, label }].slice(-MAX_UNDO), future: [], coalesce: null, save: { ...get().save, state: 'dirty' } });
   },
 
   undo: () => {
     const { project, past, future } = get();
     const snap = past[past.length - 1];
-    if (!project || !snap) return;
+    if (!project || !snap || blockedByViewing()) return;
     const redoSnap: Snapshot = { edit: project.edit, packaging: project.packaging, label: snap.label };
     const restored = { ...commitEdit(project, snap.edit), packaging: snap.packaging };
     set({ project: restored, past: past.slice(0, -1), future: [...future, redoSnap], coalesce: null, save: { ...get().save, state: 'dirty' } });
@@ -172,7 +252,7 @@ export const useApp = create<AppState>((set, get) => ({
   redo: () => {
     const { project, past, future } = get();
     const snap = future[future.length - 1];
-    if (!project || !snap) return;
+    if (!project || !snap || blockedByViewing()) return;
     const undoSnap: Snapshot = { edit: project.edit, packaging: project.packaging, label: snap.label };
     const restored = { ...commitEdit(project, snap.edit), packaging: snap.packaging };
     set({ project: restored, past: [...past, undoSnap], future: future.slice(0, -1), coalesce: null, save: { ...get().save, state: 'dirty' } });
@@ -182,6 +262,8 @@ export const useApp = create<AppState>((set, get) => ({
   setView: (view) => {
     const { project } = get();
     if (!project || project.ui.view === view) return;
+    // Versions are looked at in the editor only.
+    get().exitViewing();
     // Navigation keeps the playhead and never touches the edit.
     set({ project: { ...project, ui: { ...project.ui, view, playhead: usePlayback.getState().time } }, save: { ...get().save, state: 'dirty' } });
   },
@@ -197,6 +279,35 @@ export const useApp = create<AppState>((set, get) => ({
   dismissToast: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
   setComparison: (comparison) => set({ comparison }),
 }));
+
+/**
+ * While an earlier version is on screen every change to the edit is refused:
+ * what is shown is not what would be changed. Says so once, not per keystroke.
+ */
+function blockedByViewing(): boolean {
+  const s = useApp.getState();
+  if (!s.viewing) return false;
+  if (Date.now() - viewingNoteAt > 2500) {
+    viewingNoteAt = Date.now();
+    s.toast(VIEWING_NOTE);
+  }
+  return true;
+}
+
+let viewCache: { project: Project; revision: number; view: Project } | null = null;
+
+/** The viewed checkpoint as a project (that version's edit over the current footage), or null when the latest is shown. */
+export function viewedProject(s: Pick<AppState, 'project' | 'viewing'>): Project | null {
+  if (!s.project || !s.viewing || s.viewing.showing !== 'version') return null;
+  if (viewCache && viewCache.project === s.project && viewCache.revision === s.viewing.revision) return viewCache.view;
+  const view = projectAtCheckpoint(s.project, s.viewing.revision);
+  if (!view) return null;
+  viewCache = { project: s.project, revision: s.viewing.revision, view };
+  return view;
+}
+
+/** True while the editor shows something that must not be edited: a proposed change or an earlier version. */
+export const readOnly = (s: Pick<AppState, 'comparison' | 'viewing'>): boolean => !!s.comparison || !!s.viewing;
 
 /** Save a named checkpoint (restorable from History). */
 export function checkpointNow(label: string) {
@@ -245,15 +356,16 @@ export function timeMapOf(project: Project): TimeMap {
   return map;
 }
 
+/** The open project. While an earlier version is being looked at, that version (so every panel reflects it). */
 export function useProject(): Project {
-  const p = useApp((s) => s.project);
+  const p = useApp((s) => viewedProject(s) ?? s.project);
   if (!p) throw new Error('No project is open');
   return p;
 }
 
 /** The project the preview should show: a comparison side when one is open, else the live project. */
 export function useShownProject(): Project {
-  const p = useApp((s) => s.project);
+  const p = useApp((s) => viewedProject(s) ?? s.project);
   const c = useApp((s) => s.comparison);
   if (c) return c.showing === 'before' ? c.before : c.after;
   if (!p) throw new Error('No project is open');
@@ -267,6 +379,7 @@ let saving = false;
 let queued = false;
 
 async function flush() {
+  // Always the live project: a version that is only being looked at is never written to disk.
   const { project, projectPath } = useApp.getState();
   if (!project || !projectPath) return;
   if (saving) {

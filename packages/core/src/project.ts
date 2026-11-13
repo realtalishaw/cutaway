@@ -147,8 +147,8 @@ export function setMasterVoice(edit: EditState, sources: MediaSource[], id: stri
 const MAX_REVISIONS = 40;
 
 /** Save a named checkpoint of the current edit so it can be restored later. */
-export function checkpoint(project: Project, label: string, origin: DecisionMeta['origin']): Project {
-  const rec: RevisionRecord = { revision: project.revision, label, origin, createdAt: new Date().toISOString(), summary: revisionSummary(project), snapshot: project.edit };
+export function checkpoint(project: Project, label: string, origin: DecisionMeta['origin'], extra: Pick<RevisionRecord, 'via' | 'messageId'> = {}): Project {
+  const rec: RevisionRecord = { revision: project.revision, label, origin, createdAt: new Date().toISOString(), summary: revisionSummary(project), snapshot: project.edit, ...(extra.via ? { via: extra.via } : {}), ...(extra.messageId ? { messageId: extra.messageId } : {}) };
   // one checkpoint per (revision, label): a later checkpoint at the same revision must not erase an AI cut
   const revisions = [...project.revisions.filter((r) => !(r.revision === project.revision && r.label === label)), rec];
   // Keep AI checkpoints longest: they are the ones a creator wants to get back to.

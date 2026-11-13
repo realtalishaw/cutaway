@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { disclosure } from '@cutaway/ai';
 import { portableAppearance, uid } from '@cutaway/core';
-import type { AppSettings, CacheInfo, ClaudeStatus, StylePreset } from '@shared/api';
+import type { AppSettings, CacheInfo, StylePreset } from '@shared/api';
 import { useApp } from '../state/store';
 import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Field, Segmented, Slider, Toggle, fmtAgo, fmtBytes } from '../ui/kit';
+import { AiSection } from './settings/AiSection';
 import { ImagesSection } from './settings/ImagesSection';
+import { PlaybooksSection } from './settings/PlaybooksSection';
 import { ShortcutsSection } from './settings/ShortcutsSection';
 import './settings.css';
 
@@ -61,8 +62,6 @@ export function Settings() {
   const info = useApp((s) => s.info);
   const jobRunning = useApp((s) => s.job?.status === 'running');
   const [tab, setTab] = useState<Tab>('storage');
-  const [claude, setClaude] = useState<ClaudeStatus | null>(useApp.getState().claude);
-  const [checking, setChecking] = useState(false);
   const [cache, setCache] = useState<CacheInfo | null>(null);
   const [clearing, setClearing] = useState(false);
   const [presetName, setPresetName] = useState('');
@@ -75,23 +74,6 @@ export function Settings() {
       useApp.getState().toast(`Could not save the setting: ${(e as Error).message}`, 'error');
     }
   }, []);
-
-  const checkClaude = useCallback(async (force: boolean) => {
-    setChecking(true);
-    try {
-      const s = await window.cutaway.ai.status(force);
-      setClaude(s);
-      useApp.setState({ claude: s });
-    } catch (e) {
-      setClaude({ found: false, path: null, version: null, signedIn: null, message: (e as Error).message });
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!claude) void checkClaude(false);
-  }, [claude, checkClaude]);
 
   useEffect(() => {
     if (!projectPath) return setCache(null);
@@ -144,7 +126,6 @@ export function Settings() {
     app.toast(`Applied “${p.name}”. Timing and locked content were not changed.`);
   };
 
-  const d = disclosure(['transcript', 'edit-metadata', 'frames']);
   const whisper = settings.transcription.whisperModelPath;
 
   return (
@@ -215,108 +196,9 @@ export function Settings() {
 
           {tab === 'processing' ? (
             <>
-              <Section title="Claude Code on this Mac" hint="Cutaway has no API key and no account of its own. AI editing runs through the Claude Code app you already use.">
-                <div className="row between">
-                  <div className="row" style={{ gap: 10 }}>
-                    <span className={`status-dot ${claude?.found ? (claude.signedIn ? 'ok' : claude.signedIn === false ? 'bad' : 'unknown') : 'bad'}`} aria-hidden />
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{!claude ? 'Checking…' : !claude.found ? 'Not installed' : claude.signedIn ? 'Installed and signed in' : claude.signedIn === false ? 'Installed, but not signed in' : 'Installed · sign-in not checked yet'}</div>
-                      <div className="tiny dim mono">{claude?.found ? `${claude.path ?? 'claude'}${claude.version ? ` · ${claude.version}` : ''}` : (claude?.message ?? '')}</div>
-                    </div>
-                  </div>
-                  <Button icon="sync" busy={checking} onClick={() => void checkClaude(true)}>
-                    Check again
-                  </Button>
-                </div>
-                {claude && claude.found && claude.signedIn === false ? (
-                  <Banner tone="warn" title="Claude Code is not signed in">
-                    <div>
-                      Cutaway runs the same <span className="mono code">claude</span> command as your terminal, and right now that command answers “Not logged in”. Sign in once and Cutaway picks it up. Until then it edits with its built-in rules and says so.
-                    </div>
-                    <div className="row" style={{ gap: 8, marginTop: 10 }}>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        icon="external"
-                        data-testid="claude-sign-in"
-                        onClick={() =>
-                          void window.cutaway.ai
-                            .signIn()
-                            .then((r) => useApp.getState().toast(r.message))
-                            .catch((e: Error) => useApp.getState().toast(e.message))
-                        }
-                      >
-                        Sign in to Claude Code…
-                      </Button>
-                      <span className="tiny dim">Opens Terminal and runs claude auth login. Then choose Check again.</span>
-                    </div>
-                  </Banner>
-                ) : null}
-                {claude && !claude.found ? (
-                  <Banner tone="warn" title="Claude Code was not found">
-                    {claude.message || 'Install Claude Code, or point Cutaway at it below.'} Recording, manual editing, on-device rules and export all work without it.
-                  </Banner>
-                ) : null}
-                <div className="two">
-                  <Field label="Model" hint="Passed to Claude Code as --model. An alias such as sonnet or opus, or a full model id.">
-                    <input className="input mono" defaultValue={settings.claudeModel} onBlur={(e) => e.target.value.trim() !== settings.claudeModel && void update({ claudeModel: e.target.value.trim() || 'sonnet' })} aria-label="Claude model" />
-                  </Field>
-                  <Field label="Claude Code location" hint="Leave empty to find claude on your PATH.">
-                    <input className="input mono" defaultValue={settings.claudePath ?? ''} placeholder="automatic" onBlur={(e) => (e.target.value.trim() || null) !== settings.claudePath && void update({ claudePath: e.target.value.trim() || null }).then(() => checkClaude(true))} aria-label="Claude Code path" />
-                  </Field>
-                </div>
-              </Section>
+              <AiSection settings={settings} update={update} />
 
-              <Section title="What leaves this Mac" hint="Shown again, and asked, before the first time a project uses Claude.">
-                <dl className="disclosure">
-                  <dt>Where it goes</dt>
-                  <dd>{d.destination}. The model does not run on this Mac.</dd>
-                  <dt>What is sent</dt>
-                  <dd>
-                    <ul>
-                      {d.leaves.map((l) => (
-                        <li key={l}>{l}</li>
-                      ))}
-                    </ul>
-                  </dd>
-                  <dt>Never sent</dt>
-                  <dd>
-                    <ul>
-                      {d.stays.map((l) => (
-                        <li key={l}>{l}</li>
-                      ))}
-                    </ul>
-                  </dd>
-                  <dt>Cost</dt>
-                  <dd>{d.cost}</dd>
-                  <dt>Retention</dt>
-                  <dd>{d.retention}</dd>
-                </dl>
-                {project ? (
-                  project.consent ? (
-                    <div className="row between">
-                      <div className="tiny muted">
-                        <b style={{ color: 'var(--text)' }}>{project.name}</b> may use {project.consent.provider}. Allowed {fmtAgo(project.consent.grantedAt)} for: {project.consent.scope.join(', ')}.
-                      </div>
-                      <Button
-                        variant="danger"
-                        onClick={() => {
-                          useApp.getState().patch((p) => ({ ...p, consent: null }));
-                          useApp.getState().toast('Permission withdrawn. This project will ask again before sending anything.');
-                        }}
-                      >
-                        Withdraw permission
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="tiny muted">
-                      <b style={{ color: 'var(--text)' }}>{project.name}</b> has not been allowed to use Claude. Nothing from it has been sent.
-                    </div>
-                  )
-                ) : (
-                  <div className="tiny dim">Permission is given per project. Open a project to review or withdraw it.</div>
-                )}
-              </Section>
+              <PlaybooksSection settings={settings} update={update} />
 
               <Section title="Transcription" hint="Transcription always runs on this Mac. Your audio is never sent anywhere.">
                 <div className="field">
@@ -515,6 +397,8 @@ export function Settings() {
                   <li>A built-in stock photo catalogue (online image search needs your own Unsplash key, under Storage)</li>
                   <li>HDR and 10-bit capture; ProRes exports are made from an 8-bit render</li>
                   <li>Masks that follow content as it scrolls (masks are fixed rectangles over a time range)</li>
+                  <li>Recording one browser tab while it is hidden behind another tab or window (Tab mode records the browser window with its toolbar left out, so the tab has to stay in front)</li>
+                  <li>Generated pictures from Claude (only Codex has an image tool, so thumbnail pictures always go through Codex)</li>
                 </ul>
                 <div className="tiny dim">Exports are qualified for SDR at 1080p, 30 fps. 4K and 60 fps are available and not yet measured. YouTube upload, scheduling and analytics are deliberately out of scope.</div>
               </Section>

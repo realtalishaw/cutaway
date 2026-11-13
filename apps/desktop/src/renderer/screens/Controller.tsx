@@ -28,6 +28,9 @@ export function Controller() {
   const [flagged, setFlagged] = useState(false);
   const [flagKeys, setFlagKeys] = useState(formatCombo(bindingOf('flag', null)));
   const lastFrames = useRef<Record<string, number>>({});
+  // The floating camera bubble: only offered when the take has a camera.
+  const [selfView, setSelfView] = useState<{ visible: boolean; cameras: string[] }>({ visible: false, cameras: [] });
+  useEffect(() => window.cutaway.app.onSelfView(setSelfView), []);
 
   useEffect(() => {
     const seen = new Set<string>();
@@ -135,6 +138,11 @@ export function Controller() {
           <Icon name="flag" size={16} />
           {flags > 0 ? <span className="count">{flags}</span> : null}
         </button>
+        {selfView.cameras.length > 0 ? (
+          <button className={`ctl${selfView.visible ? '' : ' dim-off'}`} onClick={() => void window.cutaway.app.selfView('toggle').catch(() => {})} data-testid="controller-selfview" aria-pressed={selfView.visible} title={selfView.visible ? 'Hide your camera bubble (the camera keeps recording)' : 'Show your camera in a floating bubble. It is not recorded.'} aria-label={selfView.visible ? 'Hide the camera bubble' : 'Show the camera bubble'}>
+            <Icon name={selfView.visible ? 'eye' : 'eyeOff'} size={16} />
+          </button>
+        ) : null}
         <button className="ctl" onClick={togglePause} disabled={busy !== null} title={paused ? 'Resume' : 'Pause'} aria-label={paused ? 'Resume recording' : 'Pause recording'}>
           <Icon name={paused ? 'play' : 'pause'} size={17} />
         </button>

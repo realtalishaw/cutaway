@@ -3,7 +3,7 @@ import { clamp, intersectAll, subtractAll } from './ranges';
 import { cameraSource, coverage, sourceByRole } from './sync';
 
 const CUT_KINDS = ['trim', 'silence', 'filler', 'retake', 'transcript', 'manual', 'pacing'] as const;
-const LAYOUTS: LayoutMode[] = ['screen', 'camera', 'overlay', 'split'];
+const LAYOUTS: LayoutMode[] = ['screen', 'camera', 'overlay', 'split', 'presenter'];
 const OVERLAYS = ['callout', 'section-card', 'lower-third'] as const;
 const SUGGESTIONS = ['retake', 'reorder', 'hook', 'cut', 'broll', 'note'] as const;
 const CONF: Confidence[] = ['high', 'medium', 'low'];

@@ -12,11 +12,20 @@ guard let command = argv.first else {
 }
 let rest = Array(argv.dropFirst())
 
+// Commands that answer in seconds get a hard deadline; every command ends when the app that started it has gone.
+let quickCommands: [String: Double] = [
+    "devices": 40, "request-screen": 40, "voices": 40, "speech-status": 40, "resize-window": 40, "probe": 90,
+    "preflight": 180, "browser-tabs": 180,
+]
+Watchdog.start(command: command, deadline: quickCommands[command])
+
 switch command {
 case "devices":
     runCommand { try await DevicesCommand.run(Args(rest)) }
 case "request-screen":
     runCommand { try await RequestScreenCommand.run(Args(rest, flagNames: ["check"])) }
+case "browser-tabs":
+    runCommand { try await BrowserTabsCommand.run(Args(rest, flagNames: ["select", "content", "raise"])) }
 case "preflight":
     let a = Args(rest)
     runCommand { try await PreflightCommand.run(configPath: try a.require("config")) }
@@ -56,7 +65,7 @@ case "screen-text":
     runCommand { try await ScreenTextCommand.run(Args(rest)) }
 case "version", "--version":
     print(Out.line(["version": "0.2.0", "protocol": 1,
-                    "features": ["device-screen", "hide-desktop-icons", "hide-notifications", "app-audio", "keys", "resize-window", "faces", "matte", "gif", "voices", "speak", "flags", "screen-text"]]))
+                    "features": ["device-screen", "hide-desktop-icons", "hide-notifications", "app-audio", "keys", "resize-window", "faces", "matte", "gif", "voices", "speak", "flags", "screen-text", "camera-preview", "window-crop", "browser-tabs"]]))
     exit(0)
 default:
     Out.fail(CLIError("usage", "unknown command '\(command)'"))

@@ -204,6 +204,14 @@ export function layoutGeometry(mode: LayoutMode, ap: Appearance, screenAspect: n
       return { screen: { rect: screenFull, opacity: 1, radius: screenRadius }, camera: { rect: camOverlay, opacity: 1, radius: camRadius } };
     case 'camera':
       return { screen: { rect: shrink(screenFull, 1.06), opacity: 0, radius: screenRadius }, camera: { rect: { x: 0, y: 0, w: W, h: H }, opacity: 1, radius: 0 } };
+    case 'presenter': {
+      // Camera fills the frame; the screen is a small picture in the camera's usual corner.
+      const box = portrait ? { w: W * 0.62, h: H * 0.3 } : { w: W * 0.36, h: H * 0.36 };
+      const small = fit({ x: 0, y: 0, w: box.w, h: box.h }, aspect);
+      const x = ap.camera.corner.endsWith('r') ? W - margin - small.w : margin;
+      const y = ap.camera.corner.startsWith('b') ? H - margin - small.h : margin;
+      return { screen: { rect: { x, y, w: small.w, h: small.h }, opacity: 1, radius: Math.max(ap.frame.radius, 0.012) * M * 0.6 }, camera: { rect: { x: 0, y: 0, w: W, h: H }, opacity: 1, radius: 0 } };
+    }
     case 'split': {
       const outer = Math.max(pad, 0.045 * M);
       if (portrait || W / H < 1.2) {
@@ -247,7 +255,7 @@ type PLayout = Pick<Project, 'sources' | 'edit' | 'duration'>;
  */
 export function resolveLayout(project: PLayout, t: Seconds): ResolvedLayout {
   const seg = at(project.edit.layouts, t) ?? null;
-  let mode: LayoutMode = seg?.mode ?? defaultLayoutMode(project.sources);
+  let mode: LayoutMode = seg?.mode ?? project.edit.baseLayout ?? defaultLayoutMode(project.sources);
   let camera: CameraSlot = seg?.camera ?? (cameraSource(project, 'A') ? 'A' : 'B');
   const screen = sourceByRole(project, 'screen');
   const screenOk = covers(screen, t);

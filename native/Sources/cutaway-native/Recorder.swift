@@ -227,6 +227,7 @@ final class Recorder: CaptureSink {
             w.meta = ["width": source.width, "height": source.height, "fps": r3(source.fps), "codec": "avc1",
                       "deviceName": source.deviceName, "deviceId": cam.deviceId]
             source.writer = w
+            if let p = config.cameraPreview { source.preview = PreviewEmitter(id: cam.sourceId, fps: p.fps, width: p.width) }
             writers.append(w)
             cameras.append(source)
         }
@@ -409,6 +410,7 @@ final class Recorder: CaptureSink {
             writer.meta = ["width": w, "height": h, "fps": r3(fps), "codec": "avc1", "deviceName": "Synthetic camera \(cam.slot)", "deviceId": cam.deviceId, "synthetic": true]
             let src = SyntheticVideoSource(id: cam.sourceId, width: w, height: h, fps: fps, color: cam.slot == "A" ? (40, 110, 40) : (40, 40, 140), sink: self)
             src.writer = writer
+            if let p = config.cameraPreview { src.preview = PreviewEmitter(id: cam.sourceId, fps: p.fps, width: p.width) }
             writers.append(writer)
             syntheticVideo.append(src)
         }
@@ -680,6 +682,27 @@ final class Recorder: CaptureSink {
         }
     }
 
+    /// Before the take has begun there is nothing to keep: end at once with the reason, and leave no empty take
+    /// behind, instead of letting the app wait for a recording that cannot start. Once a take is running it
+    /// carries on with its other sources and the loss is reported.
+    func screenStopped(_ message: String) {
+        let early: Bool = control.sync { phase == .idle || phase == .preparing || phase == .ready }
+        guard early else {
+            nonFatal("screen-stopped", message, source: "screen")
+            return
+        }
+        Out.emit(["type": "error", "code": "capture-failed", "message": message, "source": "screen", "fatal": true])
+        writers.forEach { $0.cancel() }
+        for name in ["cursor.jsonl", "keys.jsonl"] {
+            try? FileManager.default.removeItem(at: config.outDir.appendingPathComponent(name))
+        }
+        try? FileManager.default.removeItem(at: manifestURL)
+        if let rest = try? FileManager.default.contentsOfDirectory(atPath: config.outDir.path), rest.allSatisfy({ $0 == "config.json" }) {
+            try? FileManager.default.removeItem(at: config.outDir)
+        }
+        exit(1)
+    }
+
     func nonFatal(_ code: String, _ message: String, source: String?) {
         var e: [String: Any] = ["type": "error", "code": code, "message": message, "fatal": false]
         if let source { e["source"] = source }
@@ -769,6 +792,8 @@ enum RecordCommand {
                 case "pause": recorder.pause()
                 case "resume": recorder.resume()
                 case "flag": recorder.flag()
+                case "preview-on": PreviewEmitter.enabled = true
+                case "preview-off": PreviewEmitter.enabled = false
                 case "stop": recorder.requestStop(reason: "stop")
                 case "cancel": recorder.requestStop(reason: "cancel")
                 case "": break
@@ -780,13 +805,21 @@ enum RecordCommand {
                 }
             }
             // The parent went away. Finalise what we have unless a fixed duration was requested.
-            if !hasDeadline { recorder.requestStop(reason: "stdin-closed") }
+            if !hasDeadline {
+                recorder.requestStop(reason: "stdin-closed")
+                Watchdog.exitWithin(20)
+            }
         }
+        Watchdog.setParentGoneHandler { recorder.requestStop(reason: "parent-exited") }
 
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)
             let src = DispatchSource.makeSignalSource(signal: sig, queue: DispatchQueue.global())
-            src.setEventHandler { recorder.requestStop(reason: "signal") }
+            src.setEventHandler {
+                recorder.requestStop(reason: "signal")
+                // Asked to end from outside: end, even if a system call never returns.
+                Watchdog.exitWithin(10)
+            }
             src.resume()
             signalSources.append(src)
         }

@@ -20,6 +20,8 @@
     <string>Cutaway records your microphone as the voice track of your video.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Cutaway transcribes your recording on this Mac so you can edit by transcript and export captions.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Cutaway lists the tabs open in your browser so you can pick one to record. It reads tab titles only.</string>
     <key>NSCameraUseContinuityCameraDeviceType</key>
     <true/>
 </dict>

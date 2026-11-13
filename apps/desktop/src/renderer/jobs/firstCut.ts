@@ -359,12 +359,13 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
 
   if (gate.usable) {
     checkAbort(ctx, 'assemble');
-    st.detail('assemble', 'Picking still frames for Claude to look at…');
+    st.detail('assemble', `Picking still frames for ${gate.name} to look at…`);
     const { stills, imageDir } = await extractStills(ctx, p, keyframeWants(p));
     checkAbort(ctx, 'assemble');
     const keyframes: PromptKeyframe[] = stills.map((s) => ({ file: s.file, sessionTime: s.sessionTime, source: s.source }));
     const prompt = buildFirstCutPrompt({
       projectName: p.name,
+      playbookNotes: ctx.settings.playbookNotes,
       duration: p.duration,
       brief: p.brief,
       zoomLevel: zoomLevelOf(p.edit.appearance),
@@ -381,7 +382,7 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
       flags: flagTimes,
       keyframes,
     });
-    st.detail('assemble', `Claude is reviewing the transcript${keyframes.length ? ` and ${n(keyframes.length, 'still frame')}` : ''}. Video and audio stay on this Mac.`);
+    st.detail('assemble', `${gate.name} is reviewing the transcript${keyframes.length ? ` and ${n(keyframes.length, 'still frame')}` : ''}. Video and audio stay on this Mac.`);
     const res = await askClaude(ctx, { purpose: 'first-cut', prompt, schema: FIRST_CUT_SCHEMA as unknown as Record<string, unknown>, imagePaths: stills.map((s) => s.path), imageDir });
     if (!res.ok && (res.error?.code === 'cancelled' || ctx.signal.aborted)) throw new JobError('assemble', 'cancelled', 'Cancelled. Finished stages are kept.', true);
     if (res.ok) {
@@ -391,11 +392,11 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
         claudeSummary = reply.summary;
         notes = reply.notes;
         chapters = reply.chapters.filter((c) => c.sessionTime <= p.duration);
-        ai = { mode: 'claude', reason: null, fellBack: false };
+        ai = { mode: 'claude', provider: res.provider ?? gate.provider, reason: null, fellBack: false };
       } catch (e) {
-        ai = { mode: 'local-rules', reason: e instanceof AiParseError ? `Claude's reply could not be used (${e.message})` : errorText(e), fellBack: true };
+        ai = { mode: 'local-rules', reason: e instanceof AiParseError ? `${gate.name}'s reply could not be used (${e.message})` : errorText(e), fellBack: true };
       }
-    } else ai = { mode: 'local-rules', reason: res.error?.message ?? 'Claude Code failed.', fellBack: true };
+    } else ai = { mode: 'local-rules', reason: res.error?.message ?? `${gate.app} failed.`, fellBack: true };
   }
 
   checkAbort(ctx, 'assemble');
@@ -421,13 +422,13 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
     if (!hasSpeech) parts.push('No speech was found, so the cut follows what happens on screen and there are no captions.');
     if (typeof q.brief.targetDuration === 'number' && map.outDuration > q.brief.targetDuration * 1.15) parts.push(`The cut runs ${fmt(map.outDuration)}; the ${fmt(q.brief.targetDuration)} target could not be reached without removing speech.`);
     if (ai.mode === 'claude') {
-      if (claudeSummary) parts.push(`Claude: ${claudeSummary}`);
-    } else if (ai.fellBack) parts.push(`Claude was not used: ${ai.reason} This cut was assembled by Cutaway's built-in rules on this Mac.`);
+      if (claudeSummary) parts.push(`${gate.name}: ${claudeSummary}`);
+    } else if (ai.fellBack) parts.push(`${gate.name} was not used: ${ai.reason} This cut was assembled by Cutaway's built-in rules on this Mac.`);
     else parts.push(`${ai.reason ?? ''} This cut was assembled by Cutaway's built-in rules on this Mac.`.trim());
     if (outcome.rejected.length) parts.push(`${n(outcome.rejected.length, 'proposed change')} did not pass Cutaway's checks and ${outcome.rejected.length === 1 ? 'was' : 'were'} left out.`);
     summary = parts.join(' ');
     const packaging = chapters.length >= 3 && next.packaging.chapters.length === 0 ? { ...next.packaging, chapters } : next.packaging;
-    const built: Project = { ...next, packaging, firstCut: { at: new Date().toISOString(), mode: ai.mode, summary } };
+    const built: Project = { ...next, packaging, firstCut: { at: new Date().toISOString(), mode: ai.mode, ...(ai.provider ? { provider: ai.provider } : {}), summary } };
     ctx.update(() => built);
   }
   return { mode: ai.mode, ai, summary, accepted: outcome.accepted, rejected: outcome.rejected, adjusted: outcome.adjusted, notes };

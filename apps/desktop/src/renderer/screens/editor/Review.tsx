@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { flagsOf, fmtTime, restoreRevision, type DecisionMeta, type Project, type Range } from '@cutaway/core';
-import { timeMapOf, useApp, useShownProject, type Selection } from '../../state/store';
+import { flagsOf, fmtTime, historyOf, type DecisionMeta, type Project, type Range } from '@cutaway/core';
+import { checkpointNow, timeMapOf, useApp, useShownProject, type Selection } from '../../state/store';
+import './inspector/chat.css';
 import { Icon, type IconName } from '../../ui/icons';
 import { Button, Empty, Origin } from '../../ui/kit';
 import { accept, dismiss, restoreOne, seekSource } from './ops';
@@ -70,7 +71,7 @@ export function Review() {
   const rows = useMemo(() => {
     const out: Row[] = [];
     for (const c of e.cuts) out.push({ key: c.id, icon: 'scissors', title: `${c.kind === 'filler' ? 'Filler removed' : c.kind === 'silence' ? 'Pause shortened' : c.kind === 'trim' ? 'Trimmed' : c.kind === 'retake' ? 'Retake removed' : 'Cut'} · ${(c.end - c.start).toFixed(1)}s`, detail: c.meta.reason, range: c, meta: c.meta, sel: { kind: 'cut', id: c.id }, removed: true, action: { label: 'Restore', run: () => restoreOne(c.id) } });
-    for (const l of e.layouts) out.push({ key: l.id, icon: l.mode === 'split' ? 'split' : l.mode === 'camera' ? 'camera' : l.mode === 'screen' ? 'screen' : 'layout', title: `${l.mode === 'overlay' ? 'Screen + camera' : l.mode === 'camera' ? `Camera ${l.camera}` : l.mode === 'split' ? `Split with camera ${l.camera}` : 'Screen only'}`, detail: l.meta.reason, range: l, meta: l.meta, sel: { kind: 'layout', id: l.id } });
+    for (const l of e.layouts) out.push({ key: l.id, icon: l.mode === 'split' ? 'split' : l.mode === 'camera' ? 'camera' : l.mode === 'screen' ? 'screen' : 'layout', title: `${l.mode === 'overlay' ? 'Screen + camera' : l.mode === 'camera' ? `Camera ${l.camera}` : l.mode === 'split' ? `Split with camera ${l.camera}` : l.mode === 'presenter' ? `Camera ${l.camera} with screen inset` : 'Screen only'}`, detail: l.meta.reason, range: l, meta: l.meta, sel: { kind: 'layout', id: l.id } });
     for (const z of e.zooms) out.push({ key: z.id, icon: 'zoom', title: `Zoom ${z.scale.toFixed(1)}×`, detail: z.meta.reason, range: z, meta: z.meta, sel: { kind: 'zoom', id: z.id } });
     for (const o of e.overlays) out.push({ key: o.id, icon: 'text', title: `“${o.text}”`, detail: o.meta.reason ?? o.kind, range: o, meta: o.meta, sel: { kind: 'overlay', id: o.id } });
     for (const b of e.broll) out.push({ key: b.id, icon: 'broll', title: `B-roll · ${assetName(b.assetId)}`, detail: b.meta.reason, range: b, meta: b.meta, sel: { kind: 'broll', id: b.id } });
@@ -122,7 +123,7 @@ export function Review() {
         <div className="review-summary">
           <div className="row between">
             <span className={`pill ${project.firstCut.mode === 'claude' ? 'ai' : ''}`}>
-              <Icon name="sparkle" size={10} /> {project.firstCut.mode === 'claude' ? 'Assembled with Claude' : 'Assembled with built-in rules'}
+              <Icon name="sparkle" size={10} /> {project.firstCut.mode === 'claude' ? `Assembled with ${project.firstCut.provider === 'codex' ? 'Codex' : 'Claude'}` : 'Assembled with built-in rules'}
             </span>
             <span className="tiny dim mono">{removedSeconds.toFixed(0)}s removed</span>
           </div>
@@ -168,49 +169,84 @@ export function Review() {
   );
 }
 
+const ORIGIN_LABEL = { you: 'You', ai: 'AI', chat: 'Chat' } as const;
+
+/**
+ * Every checkpoint, newest first. Clicking one shows that version in the
+ * editor without changing anything; Restore makes it the current edit.
+ */
 export function History() {
-  const project = useShownProject();
-  const revisions = [...project.revisions].sort((a, b) => b.revision - a.revision);
-  if (revisions.length === 0) {
+  // Always the real project: the list must not change while an older version is on screen.
+  const project = useApp((s) => s.project);
+  const viewing = useApp((s) => s.viewing);
+  // A marker that holds the same edit as the version before it would only repeat a row.
+  const entries = useMemo(() => (project ? historyOf(project).filter((e) => !e.redundant) : []), [project?.revisions, project?.revision]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!project) return null;
+  const app = () => useApp.getState();
+  const saved = entries.some((e) => e.current);
+  const head = (
+    <div className="row between review-head">
+      <span className="eyebrow">Versions · {entries.length}</span>
+      <Button size="sm" variant="ghost" disabled={saved || !!viewing} title={saved ? 'The edit you have now is already saved as a version.' : 'Save the edit as it is now, so you can come back to it.'} onClick={() => (checkpointNow(`Checkpoint ${fmtClock(new Date())}`), app().toast('Saved as a version.'))} data-testid="version-save">
+        Save a version now
+      </Button>
+    </div>
+  );
+  if (entries.length === 0) {
     return (
-      <div className="review">
-        <Empty icon="history" title="No checkpoints yet">
-          A checkpoint is saved before and after every AI change, so you can always get an earlier cut back. Undo covers everything in between.
+      <div className="review" data-testid="history">
+        {head}
+        <Empty icon="history" title="No versions yet">
+          A version is saved before and after every AI change, and for every change you apply from Ask AI. Click one to look at it; nothing changes until you restore it. Undo covers everything in between.
         </Empty>
       </div>
     );
   }
   return (
-    <div className="review">
-      <div className="eyebrow review-head">Checkpoints</div>
-      {revisions.map((r) => (
-        <div key={`${r.revision}-${r.label}`} className="review-row">
-          <span className={`review-icon ${r.origin === 'ai' ? 'ai' : 'you'}`}>
-            <Icon name={r.origin === 'ai' ? 'sparkle' : 'history'} size={13} />
-          </span>
-          <div className="grow">
-            <div className="row between">
-              <span className="review-title">{r.label}</span>
-              <Origin origin={r.origin} />
-            </div>
-            <div className="tiny dim">
-              {new Date(r.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · {r.summary}
+    <div className="review" data-testid="history">
+      {head}
+      <div className="tiny dim" style={{ padding: '0 14px 8px' }}>Click a version to look at it. Nothing changes until you restore it.</div>
+      {entries.map(({ record: r, origin, diff, current }) => {
+        const on = viewing?.revision === r.revision && viewing.label === r.label;
+        const open = () => (on ? app().exitViewing() : void app().viewVersion({ revision: r.revision, label: r.label }));
+        return (
+          <div key={`${r.revision}-${r.label}`} className={`review-row version${on ? ' selected' : ''}${current ? ' current' : ''}`} role="button" tabIndex={0} aria-pressed={on} onClick={open} onKeyDown={(ev) => ev.key === 'Enter' && open()} data-testid="version-row" data-revision={r.revision} data-origin={origin}>
+            <span className={`review-icon ${origin === 'you' ? 'you' : origin}`}>
+              <Icon name={origin === 'chat' ? 'chat' : origin === 'ai' ? 'sparkle' : 'history'} size={13} />
+            </span>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="row between" style={{ gap: 8 }}>
+                <span className="review-title" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.label}</span>
+                <span className={`version-origin ${origin}`}>{ORIGIN_LABEL[origin]}</span>
+              </div>
+              <div className="tiny dim">{new Date(r.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+              <div className="tiny muted" data-testid="version-diff">{diff}</div>
+              <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                <Button size="sm" variant={on ? 'default' : 'ghost'} on={on} icon="eye" onClick={(ev) => (ev.stopPropagation(), open())} data-testid="version-view">
+                  {on ? 'Viewing' : 'View'}
+                </Button>
+                {current ? null : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-testid="version-restore-row"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (app().viewVersion({ revision: r.revision, label: r.label })) app().restoreViewed();
+                    }}
+                  >
+                    Restore
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              const app = useApp.getState();
-              if (!app.project) return;
-              app.replace(restoreRevision(app.project, r.revision), `Restore “${r.label}”`);
-              app.toast(`Restored “${r.label}”. Undo brings back what you had.`);
-            }}
-          >
-            Restore
-          </Button>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
+}
+
+function fmtClock(d: Date): string {
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }

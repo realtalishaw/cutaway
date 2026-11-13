@@ -40,16 +40,27 @@ enum Out {
         return String(data: data, encoding: .utf8) ?? "null"
     }
 
+    /// Writes bytes to a descriptor and ignores a closed pipe. `FileHandle.write(_:)` raises an Objective-C
+    /// exception when the reader has gone, which used to end the helper with an abort and a crash report.
+    static func write(_ text: String, to fd: Int32) {
+        let bytes = Array(text.utf8)
+        var offset = 0
+        while offset < bytes.count {
+            let n = bytes[offset...].withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+            if n > 0 { offset += n } else if n < 0 && errno == EINTR { continue } else { return }
+        }
+    }
+
     /// Writes one JSON value followed by a newline to stdout and flushes.
     static func emit(_ value: Any) {
         let text = line(value) + "\n"
         lock.lock()
-        FileHandle.standardOutput.write(Data(text.utf8))
+        write(text, to: STDOUT_FILENO)
         lock.unlock()
     }
 
     static func log(_ message: String) {
-        FileHandle.standardError.write(Data(("[cutaway-native] " + message + "\n").utf8))
+        write("[cutaway-native] " + message + "\n", to: STDERR_FILENO)
     }
 
     static func fail(_ error: CLIError) -> Never {
@@ -123,7 +134,7 @@ func runCommand(pretty: Bool = false, _ body: @escaping () async throws -> Any) 
     Task.detached {
         do {
             let result = try await body()
-            FileHandle.standardOutput.write(Data(((pretty ? Out.pretty(result) : Out.line(result)) + "\n").utf8))
+            Out.write((pretty ? Out.pretty(result) : Out.line(result)) + "\n", to: STDOUT_FILENO)
             exit(0)
         } catch let e as CLIError {
             Out.fail(e)
@@ -161,17 +172,91 @@ func freeBytes(at url: URL) -> Int64 {
     return 0
 }
 
-/// Runs an async operation with a timeout so a blocked system prompt can never hang the helper.
+/// True exactly once, from whichever caller gets there first.
+final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
+    }
+}
+
+/// Runs an async operation with a timeout so a blocked system call can never hang the helper.
+///
+/// The operation runs in its own unstructured task. A task group must not be used here: a group waits for
+/// every child before it returns, and the ScreenCaptureKit calls this guards do not respond to cancellation,
+/// so the "timeout" would wait for ever (that left helpers alive for hours, each one in a reconnect loop with
+/// the capture service, until no new recording could start).
 func withTimeout<T>(seconds: Double, _ op: @escaping () async throws -> T) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await op() }
-        group.addTask {
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            throw CLIError("timeout", "operation timed out after \(seconds)s")
+    let once = OnceFlag()
+    return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
+        let work = Task.detached {
+            do {
+                let value = try await op()
+                if once.claim() { cont.resume(returning: value) }
+            } catch {
+                if once.claim() { cont.resume(throwing: error) }
+            }
         }
-        let value = try await group.next()!
-        group.cancelAll()
-        return value
+        Task.detached {
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            if once.claim() {
+                work.cancel()
+                cont.resume(throwing: CLIError("timeout", "operation timed out after \(seconds)s"))
+            }
+        }
+    }
+}
+
+// MARK: - Never outlive the app
+
+/// Ends the helper when it can no longer be useful, so a copy is never left running:
+///  - the app that started it has gone (the helper is re-parented to launchd), or
+///  - a command that should take seconds has run past its deadline.
+/// `onParentGone` lets a recording finalise what it has; the helper exits a few seconds later regardless.
+enum Watchdog {
+    private static var onParentGone: (() -> Void)?
+    private static let lock = NSLock()
+
+    static func setParentGoneHandler(_ handler: @escaping () -> Void) {
+        lock.lock()
+        onParentGone = handler
+        lock.unlock()
+    }
+
+    static func start(command: String, deadline: Double?) {
+        let parent = getppid()
+        let began = Date()
+        Thread.detachNewThread {
+            while true {
+                Thread.sleep(forTimeInterval: 1)
+                if parent != 1 && getppid() != parent {
+                    Out.log("\(command): the app that started this helper has gone, stopping")
+                    lock.lock()
+                    let handler = onParentGone
+                    lock.unlock()
+                    handler?()
+                    Thread.sleep(forTimeInterval: handler == nil ? 0 : 8)
+                    exit(1)
+                }
+                if let deadline, Date().timeIntervalSince(began) > deadline {
+                    Out.fail(CLIError("timeout", "\(command) did not finish within \(Int(deadline)) seconds."))
+                }
+            }
+        }
+    }
+
+    /// After a stop was asked for from outside, the helper must end even if a system call never returns.
+    static func exitWithin(_ seconds: Double, code: Int32 = 1) {
+        Thread.detachNewThread {
+            Thread.sleep(forTimeInterval: seconds)
+            Out.log("did not stop within \(Int(seconds)) seconds, exiting")
+            exit(code)
+        }
     }
 }
 

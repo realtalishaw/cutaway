@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../state/store';
-import { cancelJob, consentState, dismissJob, startFirstCut } from '../state/jobs';
+import { cancelJob, consentState, dismissJob, startFirstCut, useAiInfo } from '../state/jobs';
 import { Icon } from '../ui/icons';
 import { Banner, Button } from '../ui/kit';
 import './brief.css';
@@ -14,6 +14,7 @@ function elapsed(ms: number): string {
 export function Processing() {
   const job = useApp((s) => s.job);
   const project = useApp((s) => s.project);
+  const ai = useAiInfo();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 500);
@@ -50,7 +51,7 @@ export function Processing() {
                   <div className="row between">
                     <span className="stage-label">
                       {s.label}
-                      {s.remote ? <span className="pill ai" style={{ marginLeft: 8 }} title="This stage sends transcript text, edit data and selected stills to Anthropic through Claude Code"><Icon name="upload" size={9} /> Uses Claude</span> : <span className="pill" style={{ marginLeft: 8 }}><Icon name="shield" size={9} /> On this Mac</span>}
+                      {s.remote ? <span className="pill ai" style={{ marginLeft: 8 }} title={`This stage sends transcript text, edit data and selected stills to ${ai.company} through ${ai.app}`}><Icon name="upload" size={9} /> Uses {ai.name}</span> : <span className="pill" style={{ marginLeft: 8 }}><Icon name="shield" size={9} /> On this Mac</span>}
                     </span>
                     <span className="tiny dim mono">
                       {s.status === 'running' && s.startedAt ? elapsed(now - s.startedAt) : s.status === 'done' && s.startedAt && s.endedAt ? elapsed(s.endedAt - s.startedAt) : s.status === 'skipped' ? 'already done' : ''}

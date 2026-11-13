@@ -6,7 +6,7 @@
  * it is shown. Without Claude: three template concepts built only from the
  * project's own words. Either way the result is a set of editable layers.
  */
-import { AiParseError, PACKAGING_SCHEMA, buildPackagingPrompt, makesGuarantee, parsePackaging, type PackagingFrame, type PackagingSentence } from '@cutaway/ai';
+import { AiParseError, PACKAGING_SCHEMA, buildPackagingPrompt, complementText, isPlaceholderName, makesGuarantee, parsePackaging, titleSentenceScore, type PackagingFrame, type PackagingSentence } from '@cutaway/ai';
 import {
   PALETTES,
   TITLE_MAX,
@@ -83,44 +83,65 @@ function keywords(text: string, max: number): string[] {
 const cap = (s: string) => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
 const firstWords = (s: string, count: number) => s.split(/\s+/).filter(Boolean).slice(0, count).join(' ');
 
-/** Three concepts made only from the project's own name, chapters and spoken words. */
+/**
+ * Three concepts made only from the project's own name, chapters and spoken
+ * words, following the title and thumbnail playbooks as far as rules can:
+ * three different angles (the topic in plain words, the strongest spoken
+ * moment, the structure), thumbnail words that add to the title instead of
+ * repeating it, and no number or claim that is not in the video.
+ */
 export function templateConcepts(p: Project, ks: KeptSentence[], stills: Still[]): PackagingConcept[] {
-  const name = p.name.trim() || 'Untitled';
+  const rawName = p.name.trim() || 'Untitled';
   const hasScreen = !!sourceByRole(p, 'screen');
+  const silent = !p.transcript?.hasSpeech;
   const chapterTitles = p.packaging.chapters.map((c) => c.title.trim()).filter(Boolean);
-  const keys = keywords(ks.map((s) => s.text).join(' '), 3);
+  const keys = keywords(ks.map((s) => s.text).join(' '), 4);
   const frameFor = (prefer: Still['source'][], nth: number) => {
     const pool = prefer.flatMap((r) => stills.filter((s) => s.source === r));
     const s = pool[nth % Math.max(1, pool.length)] ?? stills[nth % Math.max(1, stills.length)];
     return s ? { sourceId: s.sourceId, time: s.sourceTime } : null;
   };
-  const why = 'Built from your project name and your own words. Claude was not used for this one.';
+  const why = 'Built from your project name and your own words. No AI model was used for this one.';
 
-  const strong = ks
-    .map((s) => ({ ...s, clean: s.text.replace(/^(so|okay|ok|alright|all right|well|and|now|um|uh)[,.]?\s+/i, '').replace(/[.!?,;:]+$/, '').trim() }))
-    .find((s) => {
-      const count = s.clean.split(/\s+/).length;
-      return count >= 4 && count <= 14 && s.clean.length <= TITLE_MAX;
-    });
+  // Spoken lines that could stand as a title: a warning or a how/why line first, then any clean sentence.
+  const lines = ks
+    .map((s) => ({ ...s, clean: s.text.replace(/^((so|okay|ok|alright|all right|well|and|now|then|next|first|finally|um|uh)[,.]?\s+)+/i, '').replace(/[.!?,;:]+$/, '').trim() }))
+    .map((s) => ({ ...s, score: s.clean.length <= TITLE_MAX ? titleSentenceScore(s.clean) : 0 }))
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const strong = lines[0];
+  // A name the app made up ("Recording Nov 13 at 8.58 AM") is not a topic: lead with the creator's words instead.
+  const name = isPlaceholderName(rawName) && strong ? cap(strong.clean) : rawName;
+  const second = lines.find((l) => cap(l.clean).toLowerCase() !== name.toLowerCase());
+  const structure = hasScreen ? 'Step by step' : 'In plain words';
+  const pairs = keys.length >= 2 ? [keys.slice(0, 2).join(' '), keys.slice(2, 4).join(' ')] : keys;
+  // Thumbnail words, best first: a spoken warning ("Do not close"), the chapter a moment belongs to, chapter names, frequent words.
+  const warned = lines.map((l) => /^(do not|don't|never)\s+\S+(\s+(the|this|that|your|it)\s+\S+)?/i.exec(l.clean)?.[0]).find(Boolean);
+  const chapterAt = (t: number) => [...p.packaging.chapters].reverse().find((c) => c.sessionTime <= t + 0.5)?.title.trim() ?? '';
+  const thumbFor = (title: string, extra: string[] = [], fallback = structure) => complementText(title, [...extra, ...(warned ? [warned] : []), ...chapterTitles, ...pairs, ...(second ? [firstWords(second.clean, 4)] : [])], fallback);
 
   const drafts: { template: ThumbTemplate; title: string; text: string; frame: ReturnType<typeof frameFor>; evidence: PackagingConcept['evidence'] }[] = [];
-  drafts.push({ template: 'headline', title: name, text: firstWords(name, 4), frame: frameFor(['cameraA', 'cameraB', 'screen'], 0), evidence: [] });
-  if (strong) drafts.push({ template: 'banner', title: cap(strong.clean), text: chapterTitles[0] ? firstWords(chapterTitles[0], 5) : keys.length ? keys.slice(0, 2).join(' ') : firstWords(strong.clean, 4), frame: frameFor(['screen', 'cameraA'], 0), evidence: [{ sessionTime: strong.sessionTime, quote: strong.text }] });
-  else drafts.push({ template: 'banner', title: `${name}, step by step`, text: 'Step by step', frame: frameFor(['screen', 'cameraA'], 0), evidence: [] });
+  // 1. The topic in plain, searchable words.
+  drafts.push({ template: 'headline', title: name, text: thumbFor(name), frame: frameFor(['cameraA', 'cameraB', 'screen'], 0), evidence: name === rawName ? [] : [{ sessionTime: strong!.sessionTime, quote: strong!.text }] });
+  // 2. The strongest spoken moment (a warning or a how/why line when there is one).
+  if (second) drafts.push({ template: 'banner', title: cap(second.clean), text: thumbFor(cap(second.clean), [chapterAt(second.sessionTime)], hasScreen ? 'Follow along' : 'Hear why'), frame: frameFor(['screen', 'cameraA'], 0), evidence: [{ sessionTime: second.sessionTime, quote: second.text }] });
+  else drafts.push({ template: 'banner', title: `${name}, step by step`, text: thumbFor(`${name}, step by step`, ['Follow along']), frame: frameFor(['screen', 'cameraA'], 0), evidence: [] });
+  // 3. The structure: what it covers, start to finish.
   if (chapterTitles.length >= 2) {
     const list = chapterTitles.slice(0, 3);
     const joined = list.length === 3 ? `${list[0]}, ${list[1]} and ${list[2]}` : `${list[0]} and ${list[1]}`;
-    drafts.push({ template: 'badge', title: `${name}: ${joined}`, text: firstWords([...chapterTitles].sort((a, b) => a.length - b.length)[0]!, 5), frame: frameFor(['screen', 'cameraA'], 1), evidence: p.packaging.chapters.slice(0, 3).map((c) => ({ sessionTime: c.sessionTime, quote: c.title })) });
+    const title = `${name}: ${joined}`;
+    drafts.push({ template: 'badge', title, text: complementText(title, [...(warned ? [warned] : []), ...pairs], 'Start to finish'), frame: frameFor(['screen', 'cameraA'], 1), evidence: p.packaging.chapters.slice(0, 3).map((c) => ({ sessionTime: c.sessionTime, quote: c.title })) });
   } else {
-    const silent = !p.transcript?.hasSpeech;
-    drafts.push({ template: 'badge', title: silent ? `${name}: a silent walkthrough` : hasScreen ? `${name}: a walkthrough` : `${name}, explained`, text: keys.length ? keys.slice(0, 2).join(' ') : hasScreen ? 'Walkthrough' : 'Explained', frame: frameFor(['screen', 'cameraA'], 1), evidence: [] });
+    const title = silent ? `${name}: a silent walkthrough` : hasScreen ? `${name}, start to finish` : `${name}, explained`;
+    drafts.push({ template: 'badge', title, text: complementText(title, pairs, hasScreen ? 'Watch the steps' : 'The short version'), frame: frameFor(['screen', 'cameraA'], 1), evidence: [] });
   }
   const seen = new Set<string>();
   return drafts.map((d, i) => {
     let title = d.title.replace(/[<>]/g, '').slice(0, TITLE_MAX);
     if (seen.has(title.toLowerCase())) title = `${title} (${i + 1})`.slice(0, TITLE_MAX);
     seen.add(title.toLowerCase());
-    return conceptFromTemplate(d.template, title, d.text || firstWords(name, 4), d.frame, PALETTES[i % PALETTES.length]!, why, d.evidence, 'template');
+    return conceptFromTemplate(d.template, title, d.text || structure, d.frame, PALETTES[i % PALETTES.length]!, why, d.evidence, 'template');
   });
 }
 
@@ -156,6 +177,7 @@ export async function generatePackaging(ctx: JobContext): Promise<PackagingResul
       const frames: PackagingFrame[] = stills.map((s, i) => ({ index: i, file: s.file, source: s.source, sessionTime: s.sessionTime, outputTime: map.toOutput(s.sessionTime) }));
       const prompt = buildPackagingPrompt({
         projectName: p.name,
+        playbookNotes: ctx.settings.playbookNotes,
         brief: p.brief,
         outDuration: map.outDuration,
         hasSpeech,
@@ -166,7 +188,7 @@ export async function generatePackaging(ctx: JobContext): Promise<PackagingResul
         chapters: p.packaging.chapters,
         editSummary: p.firstCut?.summary ?? '',
       });
-      st.detail('packaging', `Claude is reading the finished cut${frames.length ? ` and ${frames.length} frame${frames.length === 1 ? '' : 's'}` : ''}. Video and audio stay on this Mac.`);
+      st.detail('packaging', `${gate.name} is reading the finished cut${frames.length ? ` and ${frames.length} frame${frames.length === 1 ? '' : 's'}` : ''}. Video and audio stay on this Mac.`);
       const res = await askClaude(ctx, { purpose: 'packaging', prompt, schema: PACKAGING_SCHEMA as unknown as Record<string, unknown>, imagePaths: stills.map((s) => s.path), imageDir });
       if (!res.ok && (res.error?.code === 'cancelled' || ctx.signal.aborted)) throw new JobError('packaging', 'cancelled', 'Cancelled. Your existing thumbnails and titles are unchanged.', true);
       if (res.ok) {
@@ -177,20 +199,20 @@ export async function generatePackaging(ctx: JobContext): Promise<PackagingResul
             const claim = `${c.title} ${c.thumbnailText}`;
             const bad = !checkTitle(c.title).ok ? 'its title is not valid for YouTube' : makesGuarantee(claim) ? 'it promised an outcome' : unsupportedNumbers(claim, p).length ? `it used a figure ("${unsupportedNumbers(claim, p)[0]}") that is not in the recording` : null;
             if (bad) {
-              notes.push(`One of Claude's concepts was replaced because ${bad}.`);
+              notes.push(`One of ${gate.name}'s concepts was replaced because ${bad}.`);
               return fallback[i]!;
             }
             const evidence = c.evidence.filter((e) => e.sessionTime <= p.duration && (!hasSpeech || quoteIsSpoken(e.quote, spoken)));
             const still = stills[c.frameIndex];
-            return conceptFromTemplate(c.template, c.title, c.thumbnailText, still ? { sourceId: still.sourceId, time: still.sourceTime } : null, PALETTES[c.paletteIndex] ?? PALETTES[i % PALETTES.length]!, c.rationale, evidence, 'ai');
+            return { ...conceptFromTemplate(c.template, c.title, c.thumbnailText, still ? { sourceId: still.sourceId, time: still.sourceTime } : null, PALETTES[c.paletteIndex] ?? PALETTES[i % PALETTES.length]!, c.rationale, evidence, 'ai'), aiProvider: res.provider ?? gate.provider };
           });
           if (checkDescription(reply.description).ok && !makesGuarantee(reply.description) && unsupportedNumbers(reply.description, p).length === 0) description = reply.description;
           chapters = reply.chapters.filter((c) => c.sessionTime <= p.duration);
-          ai = { mode: 'claude', reason: null, fellBack: false };
+          ai = { mode: 'claude', provider: res.provider ?? gate.provider, reason: null, fellBack: false };
         } catch (e) {
-          ai = { mode: 'local-rules', reason: e instanceof AiParseError ? `Claude's reply could not be used (${e.message})` : String(e), fellBack: true };
+          ai = { mode: 'local-rules', reason: e instanceof AiParseError ? `${gate.name}'s reply could not be used (${e.message})` : String(e), fellBack: true };
         }
-      } else ai = { mode: 'local-rules', reason: res.error?.message ?? 'Claude Code failed.', fellBack: true };
+      } else ai = { mode: 'local-rules', reason: res.error?.message ?? `${gate.app} failed.`, fellBack: true };
     }
     if (ai.mode !== 'claude') {
       fresh = fallback;
@@ -217,7 +239,7 @@ export async function generatePackaging(ctx: JobContext): Promise<PackagingResul
       },
     };
     ctx.update(() => next);
-    const how = ai.mode === 'claude' ? 'from Claude, grounded in the finished cut' : ai.fellBack ? `built from your own words because Claude was not used (${ai.reason})` : 'built from your own words on this Mac';
+    const how = ai.mode === 'claude' ? `from ${gate.name}, grounded in the finished cut` : ai.fellBack ? `built from your own words because ${gate.name} was not used (${ai.reason})` : 'built from your own words on this Mac';
     st.done('packaging', `${fresh.length} thumbnail and title concepts ${how}.${keep.length ? ` ${keep.length} you edited or selected ${keep.length === 1 ? 'was' : 'were'} kept.` : ''}`);
     return { ai, added: fresh.length, kept: keep.length, notes };
   } catch (e) {

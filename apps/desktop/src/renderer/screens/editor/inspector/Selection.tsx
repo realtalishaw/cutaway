@@ -117,7 +117,7 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
     if (!l) return null;
     const cams = camerasFor(project, l);
     const hasScreen = project.sources.some((s) => s.role === 'screen');
-    const modes = ([['screen', 'Screen', 'screen'], ['overlay', 'Both', 'layout'], ['camera', 'Camera', 'camera'], ['split', 'Split', 'split']] as const).filter(([m]) => (m === 'camera' ? true : hasScreen)).filter(([m]) => m === 'screen' || cams.length > 0 || m === l.mode);
+    const modes = ([['screen', 'Screen', 'screen'], ['overlay', 'Both', 'layout'], ['camera', 'Camera', 'camera'], ['split', 'Split', 'split'], ['presenter', 'Inset', 'camera']] as const).filter(([m]) => (m === 'camera' ? true : hasScreen)).filter(([m]) => m === 'screen' || cams.length > 0 || m === l.mode);
     return (
       <Section title="View" action={<div className="row gap-2">{lockBtn('layouts', l.meta)}{del}</div>}>
         <TimesRow project={project} range={l} />

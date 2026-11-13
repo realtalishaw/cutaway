@@ -46,7 +46,7 @@ export interface RevisionProposal {
 }
 
 /** What the built-in rules can do without Claude. */
-export const LOCAL_REVISION_HELP = 'Without Claude, Cutaway understands: "less movement", "no zooms", "more movement", "tighter", "slower" and "keep this" (lock).';
+export const LOCAL_REVISION_HELP = 'Without an AI model, Cutaway understands: "less movement", "no zooms", "more movement", "tighter", "slower" and "keep this" (lock).';
 
 function describe(lane: RevisionLane, x: Record<string, unknown>): string {
   switch (lane) {
@@ -126,7 +126,7 @@ function localRevision(ctx: JobContext, range: Range, instruction: string, ai: A
     for (const o of proposed) if (overlaps(o, range)) ops.push(o);
     understood.push(slower ? 'Slower pacing: automatic pause cuts in this section were redone with more room.' : 'Tighter pacing: pauses in this section were shortened further where nothing happens on screen.');
   } else {
-    return unchanged(ctx, ai, label, `That request needs Claude. ${LOCAL_REVISION_HELP}`);
+    return unchanged(ctx, ai, label, `That request needs Claude Code or Codex. ${LOCAL_REVISION_HELP}`);
   }
 
   if (lock) {
@@ -162,6 +162,7 @@ export async function proposeRevision(ctx: JobContext, range: Range, instruction
   const inScope = (r: Range) => r.end > scope.start && r.start < scope.end;
   const prompt = buildRevisionPrompt({
     projectName: p.name,
+    playbookNotes: ctx.settings.playbookNotes,
     instruction,
     scope,
     duration: p.duration,
@@ -181,14 +182,14 @@ export async function proposeRevision(ctx: JobContext, range: Range, instruction
   if (!res.ok && (res.error?.code === 'cancelled' || ctx.signal.aborted)) throw new JobError('assemble', 'cancelled', 'Cancelled. Nothing was changed.', true);
 
   const fallBack = (reason: string) => localRevision(ctx, scope, instruction, { mode: 'local-rules', reason, fellBack: true });
-  if (!res.ok) return fallBack(res.error?.message ?? 'Claude Code failed.');
+  if (!res.ok) return fallBack(res.error?.message ?? `${gate.app} failed.`);
   let reply: ReturnType<typeof parseRevision>;
   try {
     reply = parseRevision(res.data);
   } catch (e) {
-    return fallBack(e instanceof AiParseError ? `Claude's reply could not be used (${e.message})` : errorText(e));
+    return fallBack(e instanceof AiParseError ? `${gate.name}'s reply could not be used (${e.message})` : errorText(e));
   }
-  const ai: AiUse = { mode: 'claude', reason: null, fellBack: false };
+  const ai: AiUse = { mode: 'claude', provider: res.provider ?? gate.provider, reason: null, fellBack: false };
   // The project may not change while the creator waits, but apply to the latest state anyway.
   const q = ctx.get();
   if (reply.lock && reply.ops.length === 0) {
@@ -204,7 +205,7 @@ export async function proposeRevision(ctx: JobContext, range: Range, instruction
       ai,
       changed,
       understood: reply.understood ? [reply.understood] : [],
-      message: changed ? reply.notes.join(' ') : 'Claude did not find anything it could safely change in this section.',
+      message: changed ? reply.notes.join(' ') : `${gate.name} did not find anything it could safely change in this section.`,
       label,
       accepted: out.accepted,
       rejected: out.rejected,

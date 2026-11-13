@@ -22,8 +22,10 @@ export interface JobContext {
   setStages(s: StageState[]): void;
   signal: AbortSignal;
   settings: AppSettings;
-  /** false = the creator declined remote processing → built-in rules only. */
+  /** false = the creator declined remote processing → built-in rules only. (The name predates Codex: it means "use the AI provider".) */
   useClaude: boolean;
+  /** The provider in use when the job started, for wording. The main process decides who actually answers. */
+  provider?: 'claude' | 'codex';
 }
 
 export type JobErrorCode = 'cancelled' | 'missing-source' | 'no-sources' | 'permission' | 'native-failed' | 'failed';
@@ -44,8 +46,11 @@ export class JobError extends Error {
 
 /** How the AI part of a job was actually carried out. */
 export interface AiUse {
+  /** 'claude' = a model was used (Claude Code or Codex: see `provider`); the name predates the second provider. */
   mode: 'claude' | 'local-rules';
-  /** Why Claude was not used, when it was not. null when it was. */
+  /** Which app answered, when a model was used. */
+  provider?: 'claude' | 'codex';
+  /** Why the model was not used, when it was not. null when it was. */
   reason: string | null;
   /** true when the creator allowed Claude but it could not be used. */
   fellBack: boolean;

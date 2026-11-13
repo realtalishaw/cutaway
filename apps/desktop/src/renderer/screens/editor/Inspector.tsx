@@ -10,6 +10,7 @@ import { CaptionsTab } from './inspector/CaptionsTab';
 import { AudioTab } from './inspector/AudioTab';
 import { ShortcutsTab } from './inspector/ShortcutsTab';
 import { MotionTab } from './inspector/MotionTab';
+import { ChatTab } from './inspector/ChatTab';
 import { SelectionPanel } from './inspector/Selection';
 import { app } from './inspector/shared';
 
@@ -35,19 +36,21 @@ export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' |
   const hasKeys = useApp((s) => !!s.project?.sources.some((x) => (x as { keysFile?: string }).keysFile));
   const setPanels = useApp((s) => s.setPanels);
   // Text selections made in the transcript are acted on there, not in a separate editor.
-  const contextual = !!sel && !(tab === 'transcript' && sel.kind === 'words');
+  // …and a selected range is what a chat message is about, so the conversation stays open.
+  const contextual = !!sel && !(tab === 'transcript' && sel.kind === 'words') && !(tab === 'chat' && (sel.kind === 'range' || sel.kind === 'words'));
   const railBtn = (id: InspectorTab, icon: IconName, label: string, extra = '') => (
     <button key={id} className={`${!contextual && tab === id ? 'on' : ''} ${extra}`} aria-pressed={!contextual && tab === id} title={label} aria-label={label} onClick={() => (app().select(null), setPanels({ tab: id }))}>
       <Icon name={icon} size={20} />
       {id === 'review' && openSuggestions ? <i className="badge">{openSuggestions}</i> : null}
     </button>
   );
-  const fill = !contextual && !comparing && (tab === 'transcript' || tab === 'review' || tab === 'history');
+  const fill = !contextual && !comparing && (tab === 'transcript' || tab === 'review' || tab === 'history' || tab === 'chat');
   return (
     <aside className="inspector" aria-label="Inspector">
       <nav className="insp-rail" aria-label="Inspector sections">
         {TABS.map((t) => railBtn(t.id, t.icon, t.label, t.id === 'shortcuts' && !hasKeys ? 'dim' : ''))}
         <span className="rail-sep" />
+        {railBtn('chat', 'chat', 'Ask AI: talk about the edit and get proposed changes')}
         {railBtn('review', 'sparkle', 'AI review: what the first cut changed')}
         {railBtn('history', 'history', 'History and checkpoints')}
       </nav>
@@ -79,6 +82,8 @@ export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' |
           <AudioTab />
         ) : tab === 'shortcuts' ? (
           <ShortcutsTab />
+        ) : tab === 'chat' ? (
+          <ChatTab />
         ) : tab === 'review' ? (
           <Review />
         ) : tab === 'history' ? (

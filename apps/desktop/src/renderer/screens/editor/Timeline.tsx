@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RP, type ReactNode } from 'react';
 import { clamp, flagsOf, fmtTime, type DecisionMeta, type Project, type Range } from '@cutaway/core';
-import { timeMapOf, useApp, usePlayback, useShownProject, type Selection } from '../../state/store';
+import { timeMapOf, useApp, usePlayback, useShownProject, type Selection, readOnly } from '../../state/store';
 import { Icon, type IconName } from '../../ui/icons';
 import { addZoom, patchItem, retime, seekSource } from './ops';
 
@@ -10,6 +10,7 @@ const VIEW_LABEL: Record<string, { label: string; icon: IconName }> = {
   camera: { label: 'Camera', icon: 'camera' },
   overlay: { label: 'Screen + camera', icon: 'layout' },
   split: { label: 'Split', icon: 'split' },
+  presenter: { label: 'Camera + screen inset', icon: 'camera' },
 };
 
 type ItemKind = 'cut' | 'speed' | 'layout' | 'zoom' | 'overlay' | 'broll' | 'mask' | 'lock';
@@ -201,7 +202,7 @@ export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): vo
   const project = useShownProject();
   const selection = useApp((s) => s.selection);
   const select = useApp((s) => s.select);
-  const comparing = useApp((s) => !!s.comparison);
+  const comparing = useApp(readOnly);
   const expanded = project.ui.expandedTimeline;
   const scrollRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);

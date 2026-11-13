@@ -13,3 +13,4 @@ export * from './parity';
 export * from './sensitive';
 export * from './flags';
 export * from './lut';
+export * from './chat';

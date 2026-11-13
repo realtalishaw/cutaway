@@ -11,6 +11,8 @@ protocol CaptureSink: AnyObject {
     func sourceRestored(_ id: String, at t: Double)
     func sourceLost(_ id: String, reason: String)
     func nonFatal(_ code: String, _ message: String, source: String?)
+    /// The screen stream ended on its own (not because the take was stopped).
+    func screenStopped(_ message: String)
 }
 
 private func hostTime(of sampleBuffer: CMSampleBuffer, from clock: CMClock?) -> Double {
@@ -51,6 +53,16 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
     private let wantsAudio: Bool
     private let audioApps: [String]?
     private var filterDisplay: SCDisplay?
+    /// Window captures can leave out a margin on each side (a browser's tab strip and toolbar).
+    private var crop = RecordConfig.Insets.zero
+    private var streamConfig: SCStreamConfiguration?
+    /// What the stream was built from, so a stream the capture service dropped while starting can be rebuilt.
+    private var built: (filter: SCContentFilter, screenCfg: RecordConfig.Screen?, sourceRect: CGRect?)?
+    private let startLock = NSLock()
+    private var starting = false
+    private var droppedWhileStarting: String?
+    private var lastWindowSize: CGSize = .zero
+    private var reconfiguring = false
     private var lastExcepted: Set<CGWindowID> = []
     private var lastRefresh = 0.0
     private var refreshing = false
@@ -109,13 +121,32 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    /// Lists capturable content, riding out a restart of the system capture service.
+    /// macOS restarts that service when a privacy permission changes (granting Camera or
+    /// Microphone a moment before recording is enough), and the first request after it
+    /// fails with "connection interrupted". A short wait and another try gets through.
+    static func shareableContent(attempts: Int = 5) async throws -> SCShareableContent {
+        var last: Error = CLIError("capture-failed", "no attempt was made")
+        for attempt in 0..<attempts {
+            do {
+                return try await withTimeout(seconds: 10) {
+                    try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                }
+            } catch {
+                last = error
+                if !CGPreflightScreenCaptureAccess() { break }
+                Out.write("screen content listing failed (attempt \(attempt + 1)): \(error.localizedDescription)\n", to: STDERR_FILENO)
+                try? await Task.sleep(nanoseconds: UInt64(600_000_000 * (attempt + 1)))
+            }
+        }
+        throw last
+    }
+
     /// Resolves the capture target and builds the stream. Does not start capturing.
     func prepare() async throws {
         let content: SCShareableContent
         do {
-            content = try await withTimeout(seconds: 10) {
-                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            }
+            content = try await Self.shareableContent()
         } catch {
             if !CGPreflightScreenCaptureAccess() {
                 throw CLIError("permission-denied", "Screen Recording permission is not granted. Enable it in System Settings › Privacy & Security › Screen & System Audio Recording.")
@@ -153,8 +184,14 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
                 throw CLIError("missing-device", "The selected window is no longer available.")
             }
             filter = SCContentFilter(desktopIndependentWindow: window)
-            captureRect = window.frame
             windowId = window.windowID
+            lastWindowSize = window.frame.size
+            crop = (screenCfg?.crop ?? .zero).fitted(to: window.frame.size)
+            captureRect = crop.apply(to: window.frame)
+            if !crop.isZero {
+                // Relative to the window's own top-left corner, so it stays right when the window moves.
+                sourceRect = CGRect(x: crop.left, y: crop.top, width: captureRect.width, height: captureRect.height)
+            }
         case "region":
             guard let rect = screenCfg?.rect, rect.width >= 16, rect.height >= 16 else {
                 throw CLIError("bad-config", "A region capture needs a rect of at least 16×16 points.")
@@ -186,6 +223,7 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func buildStream(filter: SCContentFilter, screenCfg: RecordConfig.Screen?, sourceRect: CGRect?) throws {
+        built = (filter, screenCfg, sourceRect)
         scale = Double(filter.pointPixelScale)
         if scale <= 0 { scale = 2 }
         var w = captureRect.width * scale
@@ -223,6 +261,7 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
             sc.excludesCurrentProcessAudio = true
         }
 
+        streamConfig = sc
         let stream = SCStream(filter: filter, configuration: sc, delegate: self)
         if screenCfg != nil {
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: videoQueue)
@@ -233,16 +272,54 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
         self.stream = stream
     }
 
+    /// Starts the stream. The capture service sometimes drops a new connection (it restarts when a privacy
+    /// permission changes, and after another client misbehaves), so one failed start is followed by a second
+    /// attempt on a freshly built stream. Bounded: two attempts of 8 seconds, then a clear error.
     func start() async throws {
-        guard let stream else { return }
-        do {
-            try await withTimeout(seconds: 15) { try await stream.startCapture() }
-        } catch {
-            if !CGPreflightScreenCaptureAccess() {
-                throw CLIError("permission-denied", "Screen Recording permission is not granted. Enable it in System Settings › Privacy & Security › Screen & System Audio Recording.")
+        guard stream != nil else { return }
+        setStarting(true)
+        defer { setStarting(false) }
+        var last: Error = CLIError("capture-failed", "no attempt was made")
+        for attempt in 0..<2 {
+            if attempt > 0 {
+                guard CGPreflightScreenCaptureAccess() else { break }
+                Out.write("screen capture start failed, retrying on a new stream: \(last.localizedDescription)\n", to: STDERR_FILENO)
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                if let b = built {
+                    do { try buildStream(filter: b.filter, screenCfg: b.screenCfg, sourceRect: b.sourceRect) } catch { last = error; break }
+                }
             }
-            throw CLIError("capture-failed", "Screen capture could not start: \(error.localizedDescription)")
+            guard let stream else { break }
+            _ = takeDropped()
+            do {
+                try await withTimeout(seconds: 8) { try await stream.startCapture() }
+                // A stream can be accepted and then dropped a moment later; that is a failed start too.
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                if let dropped = takeDropped() { throw CLIError("capture-failed", dropped) }
+                return
+            } catch {
+                last = error
+            }
         }
+        if !CGPreflightScreenCaptureAccess() {
+            throw CLIError("permission-denied", "Screen Recording permission is not granted. Enable it in System Settings › Privacy & Security › Screen & System Audio Recording.")
+        }
+        let detail = (last as? CLIError)?.message ?? last.localizedDescription
+        throw CLIError("capture-failed", "Screen capture could not start: \(detail)")
+    }
+
+    private func setStarting(_ on: Bool) {
+        startLock.lock()
+        starting = on
+        startLock.unlock()
+    }
+
+    private func takeDropped() -> String? {
+        startLock.lock()
+        defer { startLock.unlock() }
+        let d = droppedWhileStarting
+        droppedWhileStarting = nil
+        return d
     }
 
     func stop() async {
@@ -258,7 +335,18 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
               let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], wid) as? [[String: Any]],
               let bounds = info.first?[kCGWindowBounds as String] as? [String: Any],
               let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return }
-        captureRect = rect
+        let fitted = crop.fitted(to: rect.size)
+        captureRect = fitted.apply(to: rect)
+        // A resized window keeps its margins (the toolbar does not grow), so the crop is re-applied
+        // to the new size. The picture keeps its pixel size and is scaled to fit.
+        guard !crop.isZero, rect.size != lastWindowSize, !reconfiguring, !stopped, let stream, let sc = streamConfig else { return }
+        lastWindowSize = rect.size
+        reconfiguring = true
+        sc.sourceRect = CGRect(x: fitted.left, y: fitted.top, width: captureRect.width, height: captureRect.height)
+        Task.detached { [weak self] in
+            try? await stream.updateConfiguration(sc)
+            self?.reconfiguring = false
+        }
     }
 
     /// Re-appends the frame that is still on screen so an idle display keeps producing fragments
@@ -316,10 +404,17 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         guard !stopped else { return }
         let ns = error as NSError
+        // A stream that was replaced by a rebuilt one has nothing more to say.
+        guard stream === self.stream else { return }
+        startLock.lock()
+        let duringStart = starting
+        if duringStart { droppedWhileStarting = ns.localizedDescription }
+        startLock.unlock()
+        if duringStart { return }   // start() decides: it retries once, then reports
         let reason = ns.code == -3817 ? "stopped-by-user" : "capture-stopped"   // SCStreamErrorUserStopped
         if videoWriter != nil { sink?.sourceLost("screen", reason: reason) }
         if audioWriter != nil { sink?.sourceLost("system", reason: reason) }
-        sink?.nonFatal("screen-stopped", "Screen capture stopped: \(ns.localizedDescription)", source: "screen")
+        sink?.screenStopped("Screen capture stopped: \(ns.localizedDescription)")
     }
 }
 
@@ -336,6 +431,8 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private var stopped = false
 
     var writer: SourceWriter?
+    /// Live self-view stills for the app (nil = not wanted).
+    var preview: PreviewEmitter?
     private(set) var width = 0
     private(set) var height = 0
     private(set) var fps: Double = 30
@@ -473,6 +570,7 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard !stopped, let sink, let writer, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let host = hostTime(of: sampleBuffer, from: session.synchronizationClock)
+        preview?.offer(pb, hostNow: host)
         guard let t = sink.clock.sessionTime(host: host, establish: true) else { return }
         let res = writer.appendVideo(pb, at: t)
         if res.restored { sink.sourceRestored(writer.id, at: t) }

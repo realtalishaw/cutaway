@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { fmtTime, type Brief as BriefT } from '@cutaway/core';
 import { useApp, useProject } from '../state/store';
-import { consentState, grantConsent, startFirstCut } from '../state/jobs';
+import { consentState, grantConsent, startFirstCut, useAiInfo } from '../state/jobs';
 import { ConsentSheet } from '../ui/Consent';
 import { Icon } from '../ui/icons';
 import { Banner, Button, Field, Segmented, Toggle } from '../ui/kit';
@@ -19,6 +19,7 @@ const DURATIONS: { value: string; label: string }[] = [
 export function Brief() {
   const project = useProject();
   const claude = useApp((s) => s.claude);
+  const ai = useAiInfo();
   const [sheet, setSheet] = useState(false);
   const brief = project.brief;
   const set = (patch: Partial<BriefT>) => useApp.getState().patch((p) => ({ ...p, brief: { ...p.brief, ...patch } }));
@@ -92,8 +93,8 @@ export function Brief() {
                 <span>Transcription, pause and filler cleanup, sync and export always run on this Mac.</span>
               </div>
               {consent === 'unavailable' ? (
-                <Banner icon="info" title={claude?.found ? 'Claude Code is not signed in' : 'Claude Code was not found'}>
-                  <div>The cut will be assembled with Cutaway’s built-in rules. To add Claude’s editorial pass, {claude?.found ? 'sign in to Claude Code once' : 'install Claude Code and sign in'}.</div>
+                <Banner icon="info" title={claude?.found ? `${ai.app} is not signed in` : `${ai.app} was not found`}>
+                  <div>The cut will be assembled with Cutaway’s built-in rules. To add {ai.name}’s editorial pass, {claude?.found ? `sign in to ${ai.app} once` : `install ${ai.app} and sign in`}, or choose the other AI app in Settings.</div>
                   <div className="row" style={{ gap: 8, marginTop: 10 }}>
                     {claude?.found ? (
                       <Button
@@ -107,7 +108,7 @@ export function Brief() {
                             .catch((e: Error) => useApp.getState().toast(e.message))
                         }
                       >
-                        Sign in to Claude Code…
+                        Sign in to {ai.app}…
                       </Button>
                     ) : null}
                     <Button
@@ -128,14 +129,14 @@ export function Brief() {
                 <div className="row small" style={{ alignItems: 'flex-start' }}>
                   <Icon name="sparkle" size={14} style={{ color: 'var(--ai)', marginTop: 2 }} />
                   <span>
-                    Claude reviews the transcript, edit data and a few still frames through Claude Code on this Mac. You allowed this for this project.{' '}
+                    {ai.name} reviews the transcript, edit data and a few still frames through {ai.app} on this Mac, which sends them to {ai.company}. You allowed this for this project.{' '}
                     <button className="btn ghost sm" style={{ padding: 0, height: 'auto' }} onClick={() => useApp.getState().patch((p) => ({ ...p, consent: null }))}>Withdraw</button>
                   </span>
                 </div>
               ) : (
                 <div className="row small" style={{ alignItems: 'flex-start' }}>
                   <Icon name="sparkle" size={14} style={{ color: 'var(--ai)', marginTop: 2 }} />
-                  <span>Claude can add an editorial pass (views, zooms, graphics, retake suggestions). You will be shown exactly what would be sent before anything leaves this Mac.</span>
+                  <span>{ai.name} can add an editorial pass (views, zooms, graphics, retake suggestions). You will be shown exactly what would be sent to {ai.company} before anything leaves this Mac.</span>
                 </div>
               )}
             </div>

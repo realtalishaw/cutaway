@@ -9,6 +9,11 @@
  * Browser-safe: no Node imports.
  */
 import type { Brief, EditOp, ProcessingConsent, Range, Seconds, SourceRole } from '@cutaway/core';
+import { PROVIDERS, type ProviderId } from './provider';
+import { EDITING_PLAYBOOK, THUMBNAILS_PLAYBOOK, TITLES_PLAYBOOK, withNotes, type PlaybookNotes } from './playbooks';
+
+export * from './playbooks';
+export * from './provider';
 
 // ───────────────────────────── shared ─────────────────────────────
 
@@ -83,7 +88,7 @@ const OP_PROPERTIES = {
   confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
 } as const;
 
-const OP_SCHEMA = {
+export const OP_SCHEMA = {
   type: 'object',
   properties: {
     ...OP_PROPERTIES,
@@ -98,7 +103,7 @@ const CHAPTER_SCHEMA = {
 } as const;
 
 /** The vocabulary, explained once and reused by every edit prompt. */
-const VOCABULARY = `EDIT OPERATIONS (the only things you may output; all times are SESSION seconds)
+export const VOCABULARY = `EDIT OPERATIONS (the only things you may output; all times are SESSION seconds)
 - {"op":"cut","start","end","kind":"silence|filler|retake|pacing|trim","reason","confidence"} — remove footage.
 - {"op":"speed","start","end","speed"} — 0.25–8×. Use for long silent waits or typing, never on speech.
 - {"op":"layout","start","end","mode":"screen|camera|overlay|split","camera":"A|B","transition":"cut|smooth","reason"} — which view is shown. "overlay" = screen with a small camera; "split" = screen beside camera; "camera" = camera full frame.
@@ -179,6 +184,8 @@ export interface FirstCutInput {
   flags?: Seconds[];
   /** The project's usual zoom scale (Animations tab). */
   zoomLevel?: number;
+  /** The creator's own additions to the craft playbooks (Settings). */
+  playbookNotes?: PlaybookNotes;
 }
 
 export const FIRST_CUT_SCHEMA = {
@@ -211,7 +218,7 @@ function describeOp(o: EditOp): string {
   }
 }
 
-function sourcesBlock(sources: PromptSource[]): string {
+export function sourcesBlock(sources: PromptSource[]): string {
   if (sources.length === 0) return '(none)';
   return sources
     .map((s) => {
@@ -222,21 +229,21 @@ function sourcesBlock(sources: PromptSource[]): string {
     .join('\n');
 }
 
-function sentencesBlock(sentences: PromptSentence[]): string {
+export function sentencesBlock(sentences: PromptSentence[]): string {
   return sentences.map((s) => `[S${s.index} ${span(s)}] ${s.text}`).join('\n');
 }
 
-function assetsBlock(assets: PromptAsset[]): string {
+export function assetsBlock(assets: PromptAsset[]): string {
   if (assets.length === 0) return '(none supplied — do not output any "broll" op)';
   return assets.map((a) => `- id "${a.id}" — ${a.kind} "${a.name}"${a.kind === 'video' ? `, ${t2(a.duration)}s` : ''}${a.tags.length ? `, tags: ${a.tags.join(', ')}` : ''}${a.note ? `, note: ${a.note}` : ''}`).join('\n');
 }
 
-function briefBlock(brief: Brief, duration: Seconds): string {
+export function briefBlock(brief: Brief, duration: Seconds): string {
   const target = brief.targetDuration === 'auto' ? 'natural length after cleanup (no target)' : `about ${t2(brief.targetDuration)}s of finished video (the raw take is ${t2(duration)}s); if that cannot be reached without breaking the rules, get as close as is safe and say so in "notes"`;
   return [`Audience: ${brief.audience || 'general'}`, `Target duration: ${target}`, `Pacing: ${brief.pacing}`, `Visual intensity: ${brief.visualIntensity}`, `B-roll allowed: ${brief.allowBroll ? 'yes, supplied assets only' : 'no'}`, `Creator notes: ${brief.notes.trim() || '(none)'}`].join('\n');
 }
 
-function keyframesBlock(frames: PromptKeyframe[]): string {
+export function keyframesBlock(frames: PromptKeyframe[]): string {
   if (frames.length === 0) return '(no stills available — rely on the activity data and be conservative about zoom targets)';
   return `Use the Read tool to look at these still frames (files in your working directory) before deciding views and zoom targets. Read nothing else.\n${frames.map((f) => `- ${f.file} — ${f.source} at ${t2(f.sessionTime)}s`).join('\n')}`;
 }
@@ -260,6 +267,8 @@ ${!hasScreen ? 'There is no screen recording: do not output "zoom" ops, and only
 ${VOCABULARY}
 
 ${EDITORIAL_RULES}
+
+${withNotes(EDITING_PLAYBOOK, input.playbookNotes?.editing)}
 
 ALREADY DONE BY CUTAWAY'S BUILT-IN RULES (applied; do not repeat or contradict)
 ${input.localOps.length ? input.localOps.map((o) => `- ${describeOp(o)}`).join('\n') : '(nothing)'}
@@ -342,6 +351,8 @@ export interface RevisionInput {
   locks: (Range & { note: string })[];
   keeps: Range[];
   keyframes: PromptKeyframe[];
+  /** The creator's own additions to the craft playbooks (Settings). */
+  playbookNotes?: PlaybookNotes;
 }
 
 export const REVISION_SCHEMA = {
@@ -377,6 +388,8 @@ ${sourcesBlock(input.sources)}
 ${VOCABULARY}
 
 ${EDITORIAL_RULES}
+
+${withNotes(EDITING_PLAYBOOK, input.playbookNotes?.editing)}
 
 CURRENT DECISIONS INSIDE THE SECTION
 ${input.decisions.length ? input.decisions.map((d) => `- [${d.lane}] ${span(d)} ${d.description} — made by ${d.origin === 'ai' ? 'AI' : 'the creator (cannot be changed)'}${d.locked ? ', LOCKED' : ''}`).join('\n') : '(none)'}
@@ -459,6 +472,8 @@ export interface PackagingInput {
   /** Chapters the project already has (session time), if any. */
   chapters: { sessionTime: Seconds; title: string }[];
   editSummary: string;
+  /** The creator's own additions to the craft playbooks (Settings). */
+  playbookNotes?: PlaybookNotes;
 }
 
 export const PACKAGING_SCHEMA = {
@@ -511,6 +526,10 @@ Edit summary: ${input.editSummary || '(none)'}
 
 ${PACKAGING_RULES}
 
+${withNotes(TITLES_PLAYBOOK, input.playbookNotes?.titles)}
+
+${withNotes(THUMBNAILS_PLAYBOOK, input.playbookNotes?.thumbnails)}
+
 <video>
 ${
   input.hasSpeech && input.sentences.length
@@ -533,7 +552,7 @@ Palettes are numbered 0–${Math.max(0, input.paletteCount - 1)}; vary them acro
 
 WHAT TO RETURN
 {"concepts": [exactly 3 × {"title","thumbnailText","template","frameIndex","paletteIndex","rationale","evidence":[{"sessionTime","quote"}]}], "description": string, "chapters": [{"sessionTime","title"}]}
-- "title": at most 100 characters.
+- "title": at most 100 characters; aim for 40–70 with the important words in the first 50.
 - "description": two short paragraphs in the creator's voice describing what the video actually covers. No hashtags spam, no links, no promises.
 - "chapters": session times of real section starts in the finished video; at least three sections of ten seconds or more, otherwise [].`;
 }
@@ -602,11 +621,14 @@ export function makesGuarantee(text: string): boolean {
 
 export type DisclosureScope = ProcessingConsent['scope'][number];
 
-export const PROVIDER = 'Anthropic via local Claude Code';
+/** Consent value of the default provider. Prefer `PROVIDERS[id].consent`. */
+export const PROVIDER = PROVIDERS.claude.consent;
 
 export interface Disclosure {
   /** Value stored in ProcessingConsent.provider. */
   provider: string;
+  /** Which app makes the request. */
+  providerId: ProviderId;
   destination: string;
   leaves: string[];
   stays: string[];
@@ -625,22 +647,28 @@ const SCOPE_TEXT: Record<DisclosureScope, string> = {
 };
 
 /**
- * The remote-processing consent text. It is deliberately exact: "local
- * Claude" means the Claude Code app on this Mac makes the request — the model
- * itself runs at Anthropic.
+ * The remote-processing consent text, for the provider that would be used. It
+ * is deliberately exact: "local" means the app on this Mac makes the request;
+ * the model itself runs at Anthropic or OpenAI. `images` adds what thumbnail
+ * art generation sends and does.
  */
-export function disclosure(scope: DisclosureScope[]): Disclosure {
+export function disclosure(scope: DisclosureScope[], providerId: ProviderId = 'claude', opts: { images?: boolean } = {}): Disclosure {
   const order: DisclosureScope[] = ['transcript', 'edit-metadata', 'frames'];
+  const p = PROVIDERS[providerId];
   const leaves = order.filter((s) => scope.includes(s)).map((s) => SCOPE_TEXT[s]);
+  if (opts.images) leaves.push('For thumbnail art: the concept title, a few of your own words, your direction and up to two still frames as reference');
   const d = {
-    provider: PROVIDER,
-    destination: 'Anthropic, through the Claude Code app installed on this Mac, using your existing sign-in',
+    provider: p.consent,
+    providerId,
+    destination: `${p.company}, through the ${p.app} app installed on this Mac, using your existing sign-in`,
     leaves,
     stays: ['Your video and audio files never leave this Mac', 'Transcription runs on this Mac', 'Recording, manual editing, saving and export work without this step'],
-    purpose: 'So Claude can propose edit decisions (views, zooms, graphics, retake suggestions) and thumbnail/title concepts. Every proposal is checked by Cutaway before it can change your project.',
-    cost: "Counts against your Claude plan's usage; Cutaway adds no charge.",
-    retention: "Governed by your Anthropic account's data settings; Cutaway cannot delete it for you.",
-    decline: 'If you decline, nothing is sent and Cutaway assembles the cut with its built-in rules on this Mac.',
+    purpose: opts.images
+      ? `So ${p.name} can ${scope.length ? 'propose edit decisions and thumbnail/title concepts, and ' : ''}generate background pictures for thumbnails. Generated pictures are labelled as AI-generated; the thumbnail text stays your own editable layer.`
+      : `So ${p.name} can propose edit decisions (views, zooms, graphics, retake suggestions) and thumbnail/title concepts. Every proposal is checked by Cutaway before it can change your project.`,
+    cost: `Counts against your ${p.id === 'claude' ? 'Claude' : 'ChatGPT or OpenAI'} plan's usage; Cutaway adds no charge.`,
+    retention: `Governed by your ${p.company} account's data settings; Cutaway cannot delete it for you.`,
+    decline: opts.images && scope.length === 0 ? 'If you decline, nothing is sent and no picture is made.' : 'If you decline, nothing is sent and Cutaway assembles the cut with its built-in rules on this Mac.',
   };
   const text = [
     `Where it goes: ${d.destination}. The model does not run on this Mac.`,

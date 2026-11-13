@@ -1,20 +1,26 @@
-import { disclosure } from '@cutaway/ai';
-import { AI_SCOPE } from '../state/jobs';
+import { PROVIDERS, disclosure, type DisclosureScope, type ProviderId } from '@cutaway/ai';
+import { AI_SCOPE, useAiInfo } from '../state/jobs';
 import { Icon } from './icons';
 import { Button, Modal } from './kit';
 
-/** Shown before anything is sent off this Mac. Declining sends nothing. */
-export function ConsentSheet({ onAllow, onDecline, onClose, purpose }: { onAllow(): void; onDecline(): void; onClose(): void; purpose: string }) {
-  const d = disclosure(AI_SCOPE);
+/**
+ * Shown before anything is sent off this Mac. Declining sends nothing. It
+ * always describes the provider that would be used (Anthropic through Claude
+ * Code, or OpenAI through Codex); allowing one never allows the other.
+ */
+export function ConsentSheet({ onAllow, onDecline, onClose, purpose, scope = AI_SCOPE, images = false, provider }: { onAllow(): void; onDecline(): void; onClose(): void; purpose: string; scope?: DisclosureScope[]; images?: boolean; /** Default: the provider in use. Thumbnail pictures always name Codex. */ provider?: ProviderId }) {
+  const inUse = useAiInfo();
+  const ai = provider ? PROVIDERS[provider] : inUse;
+  const d = disclosure(scope, ai.id, { images });
   return (
     <Modal
-      eyebrow="Before anything leaves this Mac"
-      title={<>Use Claude for {purpose}?</>}
+      eyebrow={`Before anything leaves this Mac · ${ai.company}`}
+      title={<>Use {ai.name} for {purpose}?</>}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onDecline}>Stay on this Mac</Button>
-          <Button variant="primary" icon="check" onClick={onAllow} data-autofocus>Allow for this project</Button>
+          <Button onClick={onDecline} data-testid="consent-decline">Stay on this Mac</Button>
+          <Button variant="primary" icon="check" onClick={onAllow} data-autofocus data-testid="consent-allow">Allow {ai.company} for this project</Button>
         </>
       }
     >

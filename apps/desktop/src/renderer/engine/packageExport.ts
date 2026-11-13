@@ -294,6 +294,12 @@ export async function runPackageExport(args: PackageExportArgs): Promise<Package
       const master = await thumbnailJpeg(selected.layers, res, { ...THUMB_MASTER, maxBytes: 48 * 1024 * 1024 });
       await put('thumbnail-master.jpg', master.data, `${THUMB_MASTER.width}×${THUMB_MASTER.height} master`);
       thumb = { file: 'thumbnail.jpg', master: 'thumbnail-master.jpg', width: 1920, height: 1080, variant: `upload JPEG under ${(THUMB_UPLOAD_MAX_BYTES / 1e6).toFixed(0)} MB` };
+      // Say so when the picture is not from the video: YouTube and viewers may need to know.
+      const made = selected.layers.flatMap((l) => (l.kind === 'image' && l.generated ? [l.generated] : []));
+      if (made.length) {
+        thumb.aiGenerated = { provider: made[0]!.provider, layers: made.length };
+        notes.push(`The thumbnail contains ${made.length === 1 ? 'an AI-generated picture' : `${made.length} AI-generated pictures`} (${made[0]!.provider}).`);
+      }
     } else notes.push('No thumbnail or title was selected, so thumbnail.jpg and title.txt were not written (draft export).');
     guard();
 

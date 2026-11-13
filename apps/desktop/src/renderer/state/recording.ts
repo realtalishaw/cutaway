@@ -5,7 +5,7 @@
  * 'cutaway-recovered-take' event the Library dispatches after recovering an
  * interrupted recording, so no wiring is needed elsewhere.
  */
-import { uid, withSources, withTakeFlags, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
+import { uid, withSources, withTakeFlags, type LayoutMode, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
 import type { ProbeResult, TakeManifest, TakeSource } from '@shared/api';
 import { useApp } from './store';
 
@@ -91,7 +91,20 @@ export interface AddTakeResult {
 const SINGLE: SourceRole[] = ['screen', 'cameraA', 'cameraB'];
 
 /** Add a take to the open project. Safe to call twice for the same take. */
-export async function addTakeToProject(manifest: TakeManifest, takeDir: string): Promise<AddTakeResult> {
+/**
+ * The layout chosen in the recorder, as the editor's base view for this take. A layout that
+ * needs both pictures is only kept when the take has both; otherwise the sources decide.
+ */
+export function baseLayoutFor(layout: LayoutMode | undefined, roles: SourceRole[]): LayoutMode | undefined {
+  if (!layout) return undefined;
+  const screen = roles.includes('screen');
+  const camera = roles.includes('cameraA') || roles.includes('cameraB');
+  if (layout === 'screen') return screen ? 'screen' : undefined;
+  if (layout === 'camera') return camera ? 'camera' : undefined;
+  return screen && camera ? layout : undefined;
+}
+
+export async function addTakeToProject(manifest: TakeManifest, takeDir: string, opts: { layout?: LayoutMode } = {}): Promise<AddTakeResult> {
   const app = useApp.getState();
   const { projectPath, project } = app;
   if (!projectPath || !project) throw new Error('No project is open.');
@@ -112,7 +125,10 @@ export async function addTakeToProject(manifest: TakeManifest, takeDir: string):
   useApp.getState().patch((p: Project) => {
     if (p.sources.some((s) => s.takeId === manifest.takeId && s.origin === 'recording')) return p;
     // Flags are take seconds; a take's clock is the session clock.
-    return withTakeFlags(withSources(p, [...p.sources, ...added]), manifest.takeId, (manifest.flags ?? []).filter((t) => t <= manifest.duration + 0.001));
+    const next = withTakeFlags(withSources(p, [...p.sources, ...added]), manifest.takeId, (manifest.flags ?? []).filter((t) => t <= manifest.duration + 0.001));
+    // The recorder's layout becomes the starting view, unless this take only added supporting media.
+    const base = baseLayoutFor(opts.layout, added.map((s) => s.role));
+    return base ? { ...next, edit: { ...next.edit, baseLayout: base } } : next;
   });
   return { added, demoted, alreadyPresent: false };
 }

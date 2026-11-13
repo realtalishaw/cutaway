@@ -17,6 +17,8 @@ import { Settings } from './screens/Settings';
 import { Processing } from './screens/Processing';
 import { Palette } from './ui/Palette';
 import { Notes } from './screens/Notes';
+import { CountdownOverlay } from './screens/recorder/CountdownOverlay';
+import { SelfView } from './screens/recorder/SelfView';
 
 const STEPS: { view: ProjectView; label: string }[] = [
   { view: 'sources', label: 'Sources' },
@@ -273,6 +275,9 @@ export function App() {
   const reduce = useApp((s) => s.settings?.reduceMotion ?? false);
   const isController = window.location.hash === '#controller';
   const isNotes = window.location.hash === '#notes';
+  // Recorder overlays: the countdown over the target and the camera bubble shown during a take.
+  const isCountdown = window.location.hash === '#countdown';
+  const isSelfView = window.location.hash === '#selfview';
   const [palette, setPalette] = useState(false);
 
   useEffect(() => {
@@ -280,7 +285,7 @@ export function App() {
   }, [reduce]);
 
   useEffect(() => {
-    if (isController || isNotes) {
+    if (isController || isNotes || isCountdown || isSelfView) {
       document.body.classList.add('controller-body');
       return;
     }
@@ -299,7 +304,7 @@ export function App() {
         .then((claude) => {
           const was = useApp.getState().claude;
           useApp.setState({ claude });
-          if (claude.signedIn === true && was?.signedIn !== true) useApp.getState().toast('Claude Code is signed in. Cutaway will use it for AI edits.');
+          if (claude.signedIn === true && was?.signedIn !== true) useApp.getState().toast(`${claude.provider === 'codex' ? 'Codex' : 'Claude Code'} is signed in. Cutaway will use it for AI edits.`);
         })
         .catch(() => {})
         .finally(() => (checking = false));
@@ -371,10 +376,12 @@ export function App() {
       window.removeEventListener('dragover', stop);
       window.removeEventListener('drop', stop);
     };
-  }, [isController, isNotes]);
+  }, [isController, isNotes, isCountdown, isSelfView]);
 
   if (isController) return <Controller />;
   if (isNotes) return <Notes />;
+  if (isCountdown) return <CountdownOverlay />;
+  if (isSelfView) return <SelfView />;
 
   return (
     <div className="app">

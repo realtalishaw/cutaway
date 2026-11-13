@@ -1,5 +1,5 @@
 import type { Project, Range } from '@cutaway/core';
-import { PROVIDER, type DisclosureScope } from '@cutaway/ai';
+import { PROVIDERS, type DisclosureScope, type ProviderId, type ProviderInfo } from '@cutaway/ai';
 import { JobError, proposeRevision, runFirstCut, type JobContext } from '../jobs';
 import { useApp, usePlayback } from './store';
 
@@ -18,18 +18,41 @@ export function jobContext(signal: AbortSignal, useClaude: boolean): JobContext 
     signal,
     settings: app.settings!,
     useClaude,
+    provider: activeProvider(),
   };
 }
 
-/** 'granted' → Claude may be used; 'needed' → ask first; 'unavailable' → not installed or not signed in. */
-export function consentState(project: Project | null): 'granted' | 'needed' | 'unavailable' {
-  const claude = useApp.getState().claude;
-  if (!claude?.found || claude.signedIn !== true) return 'unavailable';
-  return project?.consent && AI_SCOPE.every((s) => project.consent!.scope.includes(s)) ? 'granted' : 'needed';
+/** The AI app Cutaway would use right now (the main process decides; this is its last answer). */
+export function activeProvider(): ProviderId {
+  return useApp.getState().claude?.provider ?? 'claude';
 }
 
-export function grantConsent() {
-  useApp.getState().patch((p) => ({ ...p, consent: { provider: PROVIDER, scope: AI_SCOPE, grantedAt: new Date().toISOString() } }));
+export function aiInfo(): ProviderInfo {
+  return PROVIDERS[activeProvider()];
+}
+
+/** For components: the provider in use, re-rendering when it changes. */
+export function useAiInfo(): ProviderInfo {
+  return PROVIDERS[useApp((s) => s.claude?.provider) ?? 'claude'];
+}
+
+/** Has the creator allowed this project's data to go to the provider in use, for this scope? Consent to one provider never covers the other. */
+export function consentCovers(project: Project | null, scope: DisclosureScope[]): boolean {
+  const c = project?.consent;
+  return !!c && c.provider === aiInfo().consent && scope.every((s) => c.scope.includes(s));
+}
+
+/** 'granted' → the provider in use may be used; 'needed' → ask first; 'unavailable' → not installed or not signed in. */
+export function consentState(project: Project | null): 'granted' | 'needed' | 'unavailable' {
+  const ai = useApp.getState().claude;
+  if (!ai?.found || ai.signedIn !== true) return 'unavailable';
+  return consentCovers(project, AI_SCOPE) ? 'granted' : 'needed';
+}
+
+/** Record consent for the provider in use. A wider scope given earlier to the same provider is kept. */
+export function grantConsent(scope: DisclosureScope[] = AI_SCOPE) {
+  const provider = aiInfo().consent;
+  useApp.getState().patch((p) => ({ ...p, consent: { provider, scope: [...new Set([...(p.consent?.provider === provider ? p.consent.scope : []), ...scope])], grantedAt: new Date().toISOString() } }));
 }
 
 export function revokeConsent() {

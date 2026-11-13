@@ -7,7 +7,25 @@ import Accelerate
 // MARK: - Config
 
 struct RecordConfig {
+    /// Margins in points left out of a window capture.
+    struct Insets {
+        var top: Double, left: Double, bottom: Double, right: Double
+        static let zero = Insets(top: 0, left: 0, bottom: 0, right: 0)
+        var isZero: Bool { top <= 0 && left <= 0 && bottom <= 0 && right <= 0 }
+        /// Never crops a window down to less than 64 points on a side.
+        func fitted(to size: CGSize) -> Insets {
+            var i = Insets(top: max(0, top), left: max(0, left), bottom: max(0, bottom), right: max(0, right))
+            if size.width - i.left - i.right < 64 { i.left = 0; i.right = 0 }
+            if size.height - i.top - i.bottom < 64 { i.top = 0; i.bottom = 0 }
+            return i
+        }
+        func apply(to r: CGRect) -> CGRect {
+            CGRect(x: r.minX + left, y: r.minY + top, width: r.width - left - right, height: r.height - top - bottom)
+        }
+    }
     struct Screen {
+        /// type == "window": margins to leave out (for example a browser's tab strip and toolbar).
+        var crop: Insets?
         var type: String            // display | window | region | device
         var displayId: UInt32?
         var deviceId: String?       // type == "device": a connected iPhone/iPad
@@ -45,6 +63,8 @@ struct RecordConfig {
     var waitForStart: Bool
     var maxDuration: Double?
     var synthetic: Bool
+    /// Live self-view stills of each camera on the event stream: frames per second and width. nil = none.
+    var cameraPreview: (fps: Double, width: Int)?
 
     /// The screen source when it is captured with ScreenCaptureKit (display, window or region).
     var sckScreen: Screen? { screen.flatMap { $0.type == "device" ? nil : $0 } }
@@ -69,7 +89,12 @@ struct RecordConfig {
                let w = num(r["width"]), let h = num(r["height"]) {
                 rect = CGRect(x: x, y: y, width: w, height: h)
             }
+            var crop: Insets?
+            if let c = s["crop"] as? [String: Any] {
+                crop = Insets(top: num(c["top"]) ?? 0, left: num(c["left"]) ?? 0, bottom: num(c["bottom"]) ?? 0, right: num(c["right"]) ?? 0)
+            }
             screen = Screen(
+                crop: crop,
                 type: (s["type"] as? String) ?? "display",
                 displayId: num(s["displayId"]).map { UInt32($0) },
                 deviceId: s["deviceId"] as? String,
@@ -113,7 +138,8 @@ struct RecordConfig {
             minFreeBytes: Int64(num(json["minFreeBytes"]) ?? 2_000_000_000),
             waitForStart: (json["waitForStart"] as? Bool) ?? false,
             maxDuration: num(json["maxDuration"]),
-            synthetic: (json["synthetic"] as? Bool) ?? false)
+            synthetic: (json["synthetic"] as? Bool) ?? false,
+            cameraPreview: (json["cameraPreview"] as? [String: Any]).map { (fps: num($0["fps"]) ?? 12, width: Int(num($0["width"]) ?? 480)) })
     }
 }
 

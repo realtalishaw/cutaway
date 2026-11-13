@@ -72,7 +72,7 @@ try {
     const { useApp, jobs, pipeline } = window.__cutaway;
     const r = await pipeline.generatePackaging(jobs.jobContext(new AbortController().signal, true));
     const p = useApp.getState().project;
-    return { ai: r.ai, added: r.added, notes: r.notes, concepts: p.packaging.concepts.map((c) => ({ title: c.title, origin: c.meta?.origin ?? c.origin ?? null })).slice(0, 6) };
+    return { ai: r.ai, added: r.added, notes: r.notes, concepts: p.packaging.concepts.map((c) => ({ title: c.title, thumbnail: c.layers.filter((l) => l.kind === 'text').map((l) => l.text).join(' '), origin: c.meta?.origin ?? c.origin ?? null })).slice(0, 6) };
   });
   console.log('packaging', JSON.stringify(pack, null, 1));
   check('thumbnail and title concepts came from Claude', pack.ai.mode === 'claude', pack.ai.reason ?? '');

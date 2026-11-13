@@ -795,6 +795,7 @@ export function drawFrame(ctx: Ctx, state: FrameState, sources: FrameResources, 
   const poses = state.screen ? [...state.blur.map((p) => p.screen), state.screen] : [];
 
   // ── screen ──
+  const paintScreen = () => {
   if (state.screen && state.screen.opacity > 0.01 && !brollCovers) {
     const s = state.screen;
     if (env.device) drawDeviceBody(ctx, s, env, U);
@@ -851,7 +852,10 @@ export function drawFrame(ctx: Ctx, state: FrameState, sources: FrameResources, 
     }
   }
 
+  };
+
   // ── cameras ──
+  const paintCameras = () => {
   if (!brollCovers) {
     const moving = state.blur.length > 0 && state.blur.every((p) => p.cameras.length === state.cameras.length);
     for (let ci = 0; ci < state.cameras.length; ci++) {
@@ -864,6 +868,16 @@ export function drawFrame(ctx: Ctx, state: FrameState, sources: FrameResources, 
         drawCamera(ctx, cam, state, res, env, U, cam.opacity, true);
       }
     }
+  }
+
+  };
+  // The presenter layout puts the camera behind and the screen in front of it; everywhere else the camera is on top.
+  if (state.layout.mode === 'presenter') {
+    paintCameras();
+    paintScreen();
+  } else {
+    paintScreen();
+    paintCameras();
   }
 
   // ── unresolved: never an unmarked blank frame ──

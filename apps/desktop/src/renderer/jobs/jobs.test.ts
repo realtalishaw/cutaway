@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyProposal, commitEdit, createProject, defaultSync, updateById, type MediaSource, type Project } from '@cutaway/core';
+import { packagingWarnings, thumbnailWordCount } from '@cutaway/ai';
 import type { AiRequest, AiResult, AppSettings, ClaudeStatus } from '../../shared/api';
 import { JobError, clearReplyCache, generatePackaging, proposeRevision, runFirstCut, type JobContext, type StageState } from './index';
 
@@ -292,6 +293,29 @@ describe('generatePackaging', () => {
     expect(pk.concepts.every((c) => c.layers.some((l) => l.kind === 'frame') && c.layers.some((l) => l.kind === 'text'))).toBe(true);
     expect(pk).toMatchObject({ basedOnRevision: ctx.state.project.revision, stale: false, selectedId: null });
     expect(ctx.state.stages[0]).toMatchObject({ id: 'packaging', status: 'done', remote: false });
+  });
+
+  it('built-in concepts follow the playbooks: no thumbnail repeats its title, and a made-up project name is not used as a title', async () => {
+    const textOf = (c: { layers: { kind: string; text?: string }[] }) => c.layers.filter((l) => l.kind === 'text').map((l) => l.text).join(' ');
+    const m = installMock();
+    const ctx = await cut(false, m);
+    await generatePackaging(ctx);
+    const named = ctx.state.project.packaging.concepts;
+    for (const c of named) {
+      expect(packagingWarnings({ title: c.title, thumbnailText: textOf(c) }), c.title).toEqual([]);
+      expect(thumbnailWordCount(textOf(c))).toBeGreaterThan(0);
+    }
+
+    const first = makeCtx(createProject('Recording Nov 13 at 8.58 AM', [src('screen', 40, { hasAudio: false }), src('cameraA', 40)]), { useClaude: false });
+    await runFirstCut(first);
+    const second = makeCtx(first.state.project, { useClaude: false });
+    await generatePackaging(second);
+    const stamped = second.state.project.packaging.concepts;
+    expect(stamped).toHaveLength(3);
+    expect(stamped[0]!.title).not.toMatch(/^Recording Nov/);
+    expect(stamped[0]!.evidence.length).toBe(1); // the title is a line the creator said
+    expect(new Set(stamped.map((c) => c.title)).size).toBe(3);
+    for (const c of stamped) expect(packagingWarnings({ title: c.title, thumbnailText: textOf(c) }).filter((w) => w.about === 'thumbnail'), c.title).toEqual([]);
   });
 
   it('keeps Claude concepts that are grounded and replaces ones that are not', async () => {

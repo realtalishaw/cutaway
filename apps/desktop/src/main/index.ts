@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { MEDIA_SCHEME, type Permission, type PermissionKind, type RecordConfig } from '../shared/api';
+import { MEDIA_SCHEME, type CountdownState, type Permission, type PermissionKind, type RecordConfig } from '../shared/api';
 import * as native from './native';
 import * as library from './library';
 import * as exporter from './exporter';
@@ -132,7 +132,7 @@ function createMainWindow() {
 function showController() {
   if (controller && !controller.isDestroyed()) return controller.showInactive();
   const d = screen.getPrimaryDisplay().workArea;
-  const w = 460;
+  const w = 500;
   const h = 76;
   controller = new BrowserWindow({
     width: w,
@@ -156,6 +156,7 @@ function showController() {
   // Belt and braces: the helper also excludes this app's windows from capture.
   controller.setContentProtection(true);
   controller.once('ready-to-show', () => controller?.showInactive());
+  controller.webContents.once('did-finish-load', () => pushSelfView());
   controller.on('closed', () => (controller = null));
   load(controller, 'controller');
 }
@@ -184,6 +185,160 @@ function hideController() {
   if (controller && !controller.isDestroyed()) controller.close();
   controller = null;
 }
+
+// ───────────────────────────── recorder overlays ─────────────────────────────
+// Two small windows that sit on top of whatever is being recorded and are never part of it:
+// the countdown over the target, and the creator's own camera while a take runs. Both belong
+// to this app, which the recorder leaves out of every display capture; content protection is
+// a second guard, and a window capture never contains other windows at all.
+
+type Rect = { x: number; y: number; width: number; height: number };
+const intersects = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+let countdownWin: BrowserWindow | null = null;
+let countdownState: (CountdownState & { bounds: Rect }) | null = null;
+let countdownMovedMain = false;
+
+function pushCountdown() {
+  if (countdownWin && !countdownWin.isDestroyed() && countdownState) countdownWin.webContents.send('countdown:state', countdownState);
+}
+
+async function showCountdown(state: CountdownState): Promise<void> {
+  const r = state.rect;
+  const display = screen.getDisplayNearestPoint({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
+  countdownState = { ...state, bounds: display.bounds };
+  if (countdownWin && !countdownWin.isDestroyed()) return pushCountdown();
+  // Cutaway steps aside when it would cover what is about to be recorded.
+  if (mainWindow && mainWindow.isVisible() && !mainWindow.isMinimized() && intersects(mainWindow.getBounds(), r)) {
+    countdownMovedMain = true;
+    mainWindow.minimize();
+  }
+  const win = new BrowserWindow({
+    ...display.bounds,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    roundedCorners: false,
+    enableLargerThanScreen: true,
+    show: false,
+    webPreferences: webPreferences(),
+  });
+  countdownWin = win;
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.setIgnoreMouseEvents(true);
+  win.setContentProtection(true);
+  win.setBounds(display.bounds);
+  win.on('closed', () => {
+    if (countdownWin === win) countdownWin = null;
+  });
+  // The overlay takes no keyboard focus, so Escape is caught globally for these few seconds.
+  globalShortcut.register('Escape', () => mainWindow?.webContents.send('countdown:cancel'));
+  await new Promise<void>((done) => {
+    win.webContents.once('did-finish-load', () => {
+      pushCountdown();
+      win.showInactive();
+      done();
+    });
+    setTimeout(done, 1500);
+    load(win, 'countdown');
+  });
+}
+
+async function endCountdown(cancelled: boolean): Promise<void> {
+  if (globalShortcut.isRegistered('Escape')) globalShortcut.unregister('Escape');
+  countdownState = null;
+  const win = countdownWin;
+  countdownWin = null;
+  if (win && !win.isDestroyed()) {
+    await new Promise<void>((done) => {
+      win.once('closed', () => done());
+      win.destroy();
+      setTimeout(done, 400);
+    });
+    // One frame for the window server to take it off the screen before a capture can start.
+    await new Promise((done) => setTimeout(done, 60));
+  }
+  if (cancelled && countdownMovedMain && mainWindow) {
+    mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  countdownMovedMain = false;
+}
+
+let selfViewWin: BrowserWindow | null = null;
+let selfViewCameras: string[] = [];
+let selfViewSave: ReturnType<typeof setTimeout> | null = null;
+
+function pushSelfView() {
+  const state = { visible: !!selfViewWin && !selfViewWin.isDestroyed(), cameras: selfViewCameras };
+  for (const w of [controller, selfViewWin, mainWindow]) if (w && !w.isDestroyed()) w.webContents.send('selfview:state', state);
+}
+
+function showSelfView() {
+  if (selfViewWin && !selfViewWin.isDestroyed()) return selfViewWin.showInactive();
+  if (!selfViewCameras.length) return;
+  const prefs = library.getSettings().selfView ?? {};
+  const size = Math.max(120, Math.min(560, Math.round(prefs.size ?? 220)));
+  const area = screen.getPrimaryDisplay().workArea;
+  let x = Math.round(area.x + 28);
+  let y = Math.round(area.y + area.height - size - 28);
+  // A remembered position is only used while it is still on a connected display.
+  if (typeof prefs.x === 'number' && typeof prefs.y === 'number' && screen.getAllDisplays().some((d) => intersects(d.workArea, { x: prefs.x!, y: prefs.y!, width: size, height: size }))) {
+    x = Math.round(prefs.x);
+    y = Math.round(prefs.y);
+  }
+  const win = new BrowserWindow({ width: size, height: size, x, y, minWidth: 120, minHeight: 120, maxWidth: 560, maxHeight: 560, frame: false, transparent: true, resizable: true, maximizable: false, minimizable: false, fullscreenable: false, alwaysOnTop: true, skipTaskbar: true, hasShadow: false, show: false, webPreferences: webPreferences() });
+  selfViewWin = win;
+  win.setAspectRatio(1);
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // The camera is its own track; the bubble on screen is only for the creator to see.
+  win.setContentProtection(true);
+  const remember = () => {
+    if (selfViewSave) clearTimeout(selfViewSave);
+    selfViewSave = setTimeout(() => {
+      if (win.isDestroyed()) return;
+      const b = win.getBounds();
+      void library.setSettings({ selfView: { ...(library.getSettings().selfView ?? {}), x: b.x, y: b.y, size: b.width } }).catch(() => {});
+    }, 400);
+  };
+  win.on('moved', remember);
+  win.on('resized', remember);
+  win.once('ready-to-show', () => win.showInactive());
+  win.webContents.once('did-finish-load', pushSelfView);
+  win.on('closed', () => {
+    if (selfViewWin === win) selfViewWin = null;
+    native.setPreview(false);
+    pushSelfView();
+  });
+  native.setPreview(true);
+  load(win, 'selfview');
+  pushSelfView();
+}
+
+function hideSelfView() {
+  const win = selfViewWin;
+  selfViewWin = null;
+  if (win && !win.isDestroyed()) win.destroy();
+  native.setPreview(false);
+  pushSelfView();
+}
+
+native.onPreview((frame) => {
+  if (selfViewWin && !selfViewWin.isDestroyed()) selfViewWin.webContents.send('record:preview', frame);
+});
+
+if (E2E) (globalThis as { __recorderOverlays?: unknown }).__recorderOverlays = { countdown: () => countdownWin, countdownState: () => countdownState, selfView: () => selfViewWin, controller: () => controller };
 
 function sendMenu(cmd: string) {
   (BrowserWindow.getFocusedWindow() ?? mainWindow)?.webContents.send('menu', cmd);
@@ -236,6 +391,7 @@ function buildMenu() {
         item('Audio', 'tab:audio', 'Cmd+6'),
         item('Keyboard Shortcuts', 'tab:shortcuts', 'Cmd+7'),
         item('Animations', 'tab:motion', 'Cmd+8'),
+        item('Ask AI', 'tab:chat', 'Cmd+9'),
         { type: 'separator' },
         item('Sources', 'view-sources'),
         item('Edit', 'view-edit'),
@@ -391,11 +547,27 @@ function registerIpc() {
       return dest;
     },
     notesWindow: (show: boolean) => (show ? showNotes() : hideNotes()),
-    recordingMode: (on: boolean) => {
+    countdown: (state: CountdownState) => showCountdown(state),
+    countdownEnd: (cancelled: boolean) => endCountdown(cancelled),
+    selfView: async (show: boolean | 'toggle') => {
+      const visible = !!selfViewWin && !selfViewWin.isDestroyed();
+      const want = show === 'toggle' ? !visible : show;
+      if (want) showSelfView();
+      else hideSelfView();
+      // Remembered across takes: someone who hides the bubble does not want it back uninvited.
+      await library.setSettings({ selfView: { ...(library.getSettings().selfView ?? {}), hidden: !want } }).catch(() => {});
+      return !!selfViewWin && !selfViewWin.isDestroyed();
+    },
+    recordingMode: (on: boolean, opts?: { cameras?: string[] }) => {
       if (on) {
+        selfViewCameras = (opts?.cameras ?? []).filter((c) => c === 'cameraA' || c === 'cameraB');
         showController();
+        if (selfViewCameras.length && !library.getSettings().selfView?.hidden) showSelfView();
+        else pushSelfView();
         mainWindow?.minimize();
       } else {
+        selfViewCameras = [];
+        hideSelfView();
         hideController();
         if (mainWindow) {
           mainWindow.restore();
@@ -438,6 +610,9 @@ function registerIpc() {
     faces: native.faces,
     matte: native.matte,
     resizeWindow: native.resizeWindow,
+    browserTabs: native.browserTabs,
+    selectBrowserTab: native.selectBrowserTab,
+    browserContent: native.browserContent,
     voices: native.voices,
     speak: native.speak,
     removeVoiceover: native.removeVoiceover,
@@ -446,6 +621,8 @@ function registerIpc() {
 
   handle('record', {
     start: async (projectPath: string, config: RecordConfig) => {
+      // Test runs note whether the countdown overlay was still up when the recorder was asked to start.
+      if (E2E) (globalThis as { __overlayAtStart?: boolean }).__overlayAtStart = !!countdownWin && !countdownWin.isDestroyed();
       const r = await native.startRecording(projectPath, config);
       applyGlobalShortcuts();
       return r;
@@ -517,6 +694,18 @@ void app.whenReady().then(() => {
   });
 });
 
+// A helper process (recorder, Claude Code, Codex) can exit while a command is on its way to it. That is a
+// normal race, never a reason to interrupt the creator with an error box; anything else is still shown.
+const PIPE_CODES = new Set(['EPIPE', 'ERR_STREAM_DESTROYED', 'ERR_STREAM_WRITE_AFTER_END', 'ECONNRESET']);
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+  if (err && PIPE_CODES.has(err.code ?? '')) {
+    console.error('[pipe-closed]', err.code, (err.stack ?? '').split('\n').slice(1, 4).join(' | '));
+    return;
+  }
+  console.error('[uncaught]', err?.stack ?? err);
+  if (process.env.CUTAWAY_E2E !== '1') dialog.showErrorBox('Cutaway hit an unexpected error', `${err?.message ?? err}\n\nYour project is saved. If something looks wrong, quit and reopen Cutaway.`);
+});
+
 app.on('render-process-gone', (_e, wc, details) => console.error('[render-process-gone]', wc.getURL().slice(-40), JSON.stringify(details)));
 app.on('child-process-gone', (_e, details) => console.error('[child-process-gone]', JSON.stringify(details)));
 
@@ -529,7 +718,10 @@ app.on('before-quit', (e) => {
   void native.shutdownRecording().finally(() => app.quit());
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  native.killHelpers();
+});
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });

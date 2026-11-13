@@ -13,7 +13,7 @@ export type ExtraPermission = 'accessibility' | 'inputMonitoring';
 
 export interface DisplayInfo { id: number; name: string; width: number; height: number; scale: number; x: number; y: number; main: boolean }
 export interface WindowInfo { id: number; title: string; app: string; bundleId: string; x: number; y: number; width: number; height: number; displayId: number }
-export interface CameraInfo { id: string; name: string; formats: { width: number; height: number; maxFps: number }[] }
+export interface CameraInfo { id: string; name: string; /** 'iphone' = Continuity Camera (wireless or USB). */ kind?: 'builtin' | 'external' | 'iphone' | 'deskview'; formats: { width: number; height: number; maxFps: number }[] }
 export interface MicInfo { id: string; name: string; default?: boolean }
 
 export interface DeviceList {
@@ -35,6 +35,8 @@ export interface RecordConfig {
     type: 'display' | 'window' | 'region' | 'device';
     displayId?: number;
     windowId?: number;
+    /** For type 'window': margins in points to leave out, such as a browser's tab strip and toolbar. */
+    crop?: WindowInsets;
     /** For type 'device': a connected iPhone or iPad. */
     deviceId?: string;
     rect?: { x: number; y: number; width: number; height: number };
@@ -53,7 +55,70 @@ export interface RecordConfig {
   captureKeys?: boolean;
   /** Test mode: generated pictures and tones, no permissions needed. */
   synthetic?: boolean;
+  /** Small live stills of each camera on the preview channel, for the self-view bubble. */
+  cameraPreview?: { fps: number; width: number };
 }
+
+export interface WindowInsets { top: number; left: number; bottom: number; right: number }
+
+/** One tab of a running browser, as offered in the recorder. Only the title and host name are ever read. */
+export interface BrowserTab {
+  /** 1-based positions inside the browser, as AppleScript counts them. */
+  window: number;
+  tab: number;
+  active: boolean;
+  title: string;
+  host: string;
+  /** Absent when the window is minimised or on another desktop. */
+  windowId?: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserInfo {
+  bundleId: string;
+  name: string;
+  pid: number;
+  /** Whether Cutaway may ask this browser for its tabs (macOS Automation permission). */
+  permission: 'granted' | 'denied' | 'undetermined' | 'not-running' | 'unknown';
+  error?: string;
+  tabs: BrowserTab[];
+}
+
+export interface BrowserTabList { accessibility: 'granted' | 'denied'; browsers: BrowserInfo[] }
+
+/** The page area inside a browser window: measured through Accessibility, or estimated without it. */
+export interface PageArea extends WindowInsets { method: 'accessibility' | 'estimate' }
+
+export interface BrowserTabTarget {
+  bundleId?: string;
+  window?: number;
+  tab?: number;
+  windowId: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  content: PageArea;
+  accessibility: 'granted' | 'denied';
+}
+
+/** What the countdown overlay shows: a rectangle in global screen points, and the number. */
+export interface CountdownState {
+  /** The display, window or area about to be recorded. */
+  rect: { x: number; y: number; width: number; height: number };
+  /** 'display' outlines the whole screen; the others dim everything around the rectangle. */
+  kind: 'display' | 'window' | 'region';
+  label: string;
+  count: number;
+}
+
+/** A camera still for the self-view bubble while a take is being recorded. */
+export interface PreviewFrame { source: string; width: number; height: number; jpeg: string }
+
+export interface SelfViewPrefs { x?: number; y?: number; size?: number; shape?: 'circle' | 'rounded'; hidden?: boolean }
 
 export interface PreflightResult {
   ok: boolean;
@@ -207,9 +272,17 @@ export interface AppSettings {
   countdownSeconds: number;
   /** Set once macOS has been asked for Screen Recording access (it cannot tell "never asked" from "off"). */
   screenAccessAsked?: boolean;
+  /** Where the floating camera bubble sits while recording, and whether it is shown. */
+  selfView?: SelfViewPrefs;
   /** null = find `claude` on PATH. */
   claudePath: string | null;
   claudeModel: string;
+  /** Which AI app to use. 'auto' (default) = the first one that is signed in, Claude Code first. */
+  aiProvider?: 'auto' | AiProviderId;
+  /** null = find `codex` on PATH. */
+  codexPath?: string | null;
+  /** Passed to Codex as --model. Empty = Codex's own default. */
+  codexModel?: string;
   transcription: { engine: 'auto' | 'apple' | 'whisper'; whisperModelPath: string | null; locale: string };
   reduceMotion: boolean;
   transcriptTextSize: number;
@@ -218,6 +291,8 @@ export interface AppSettings {
   defaultPresetId: string | null;
   /** Unsplash access key for the background photo search. Kept in settings only; never written to a project. */
   unsplashKey: string | null;
+  /** The creator's own notes added to the editing, title and thumbnail playbooks (each capped). */
+  playbookNotes?: { editing?: string | null; titles?: string | null; thumbnails?: string | null };
   /** Changed keyboard shortcuts: command id → combo ('' = none). See shared/keymap.ts. */
   shortcuts?: Record<string, string>;
   analytics: false;
@@ -242,6 +317,13 @@ export interface ImageSearchResult {
   totalPages: number;
 }
 
+export type AiProviderId = 'claude' | 'codex';
+
+/**
+ * State of one AI command-line app on this Mac. `ai.status()` returns the one
+ * Cutaway would use (see `aiProvider` in settings), with `provider` set; the
+ * type keeps its first name because the app began with Claude Code only.
+ */
 export interface ClaudeStatus {
   found: boolean;
   path: string | null;
@@ -249,6 +331,37 @@ export interface ClaudeStatus {
   /** null = not checked yet. */
   signedIn: boolean | null;
   message: string;
+  /** Which app this describes. Absent on values made before a check. */
+  provider?: AiProviderId;
+}
+
+/** Both providers, the creator's choice and the one that would be used now. */
+export interface AiProviders {
+  choice: 'auto' | AiProviderId;
+  active: AiProviderId;
+  claude: ClaudeStatus;
+  codex: ClaudeStatus;
+}
+
+/** One generated picture for a thumbnail. Codex only. */
+export interface AiImageRequest {
+  id: string;
+  projectPath: string;
+  /** The whole instruction, built by `buildArtPrompt`. */
+  prompt: string;
+  /** Up to two stills for context. Must live inside the project cache dir. */
+  referencePaths: string[];
+}
+
+export interface AiImageResult {
+  ok: boolean;
+  /** Project-relative path of the saved picture (media/generated/…). */
+  path?: string;
+  /** The model's one-line description of what it made. */
+  note?: string;
+  provider: AiProviderId;
+  error?: AiResult['error'];
+  durationMs: number;
 }
 
 export interface AiRequest {
@@ -271,6 +384,8 @@ export interface AiResult {
   durationMs: number;
   costUsd?: number | null;
   model?: string | null;
+  /** The app that answered. */
+  provider?: AiProviderId;
 }
 
 export interface ExportSession {
@@ -303,8 +418,20 @@ export interface CutawayApi {
     relaunch(): Promise<void>;
     /** Thumbnails of displays and windows for the source picker. Empty without screen permission. */
     captureThumbnails(): Promise<{ kind: 'display' | 'window'; id: number; displayId: number | null; name: string; dataUrl: string }[]>;
-    /** Minimise the main window and show the floating recording controller (or undo that). */
-    recordingMode(on: boolean): Promise<void>;
+    /** Minimise the main window and show the floating recording controller (or undo that). `cameras` lists the camera sources of the take, for the self-view bubble. */
+    recordingMode(on: boolean, opts?: { cameras?: string[] }): Promise<void>;
+    /** Show or update the countdown over the thing about to be recorded. */
+    countdown(state: CountdownState): Promise<void>;
+    /** Take the countdown overlay down. `cancelled` brings the Cutaway window back. Resolves once the overlay is gone. */
+    countdownEnd(cancelled: boolean): Promise<void>;
+    /** Overlay window only: the state to draw. */
+    onCountdown(cb: (state: CountdownState & { bounds: { x: number; y: number; width: number; height: number } }) => void): () => void;
+    /** Escape was pressed while the countdown overlay was up. */
+    onCountdownCancel(cb: () => void): () => void;
+    /** Show, hide or toggle the floating camera bubble during a take. Resolves to whether it is now visible. */
+    selfView(show: boolean | 'toggle'): Promise<boolean>;
+    /** The camera bubble was shown or hidden (controller and bubble windows). */
+    onSelfView(cb: (state: { visible: boolean; cameras: string[] }) => void): () => void;
     /** Put a file on the clipboard so it can be pasted into another app. */
     copyFile(path: string): Promise<void>;
     /** Ask where to save, then copy a finished file there. Resolves to the chosen path, or null if cancelled. */
@@ -354,6 +481,12 @@ export interface CutawayApi {
     /** Person-segmentation matte video for camera cutout, written to the project cache. */
     matte(projectPath: string, file: string): Promise<{ path: string; duration: number; frames: number; width: number; height: number }>;
     resizeWindow(windowId: number, width: number, height: number): Promise<void>;
+    /** Tabs of the running browsers. `ask` names one browser to request macOS Automation permission for (shows the system prompt). */
+    browserTabs(ask?: string): Promise<BrowserTabList>;
+    /** Bring a tab to the front of its window (`raise` also brings the window and browser forward) and measure the page area. */
+    selectBrowserTab(bundleId: string, window: number, tab: number, raise: boolean): Promise<BrowserTabTarget>;
+    /** Re-measure the page area of a browser window. */
+    browserContent(bundleId: string, windowId: number): Promise<BrowserTabTarget>;
     voices(): Promise<VoiceInfo[]>;
     /** Synthesise narration on this Mac into the project's media folder. Returns a project-relative path. */
     speak(projectPath: string, text: string, voiceId: string, rate?: number): Promise<{ path: string; duration: number }>;
@@ -372,13 +505,23 @@ export interface CutawayApi {
     stop(): Promise<TakeManifest>;
     cancel(): Promise<void>;
     onEvent(cb: (e: RecordEvent) => void): () => void;
+    /** Camera stills from the take being recorded (self-view bubble only). */
+    onPreview(cb: (frame: PreviewFrame) => void): () => void;
   };
   ai: {
+    /** The provider Cutaway would use now. */
     status(force?: boolean): Promise<ClaudeStatus>;
-    /** Open Terminal on `claude auth login`; the creator signs in there. */
-    signIn(): Promise<{ ok: boolean; message: string }>;
+    /** Both providers and which one is in use. */
+    providers(force?: boolean): Promise<AiProviders>;
+    /** Open Terminal on the provider's own sign-in command; the creator signs in there. Default: the provider in use. */
+    signIn(provider?: AiProviderId): Promise<{ ok: boolean; message: string }>;
+    /** One structured request, sent through the provider in use. */
     run(req: AiRequest): Promise<AiResult>;
     cancel(id: string): Promise<void>;
+    /** Make one thumbnail picture and save it in the project (Codex only). Cancel with `cancel(id)`. */
+    generateImage(req: AiImageRequest): Promise<AiImageResult>;
+    /** Delete a generated picture that is no longer used. Only files in media/generated/ are touched. */
+    removeImage(projectPath: string, relPath: string): Promise<void>;
   };
   /** Look assets kept inside the project folder: colour LUTs and downloaded background photos. */
   looks: {

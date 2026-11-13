@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fmtTime } from '@cutaway/core';
-import type { CameraInfo, DeviceList, DisplayInfo, ExtraPermission, Permission, PermissionKind, PreflightResult, RecordConfig, RecordEvent, TakeManifest } from '@shared/api';
+import type { BrowserTabTarget, CameraInfo, CountdownState, DeviceList, DisplayInfo, ExtraPermission, Permission, PermissionKind, PreflightResult, RecordConfig, RecordEvent, TakeManifest, WindowInsets } from '@shared/api';
 import { useApp } from '../state/store';
 import { backToLibrary, errorText, pickAndImport, setRecordingActive } from '../state/actions';
 import { addTakeToProject, describeTake } from '../state/recording';
@@ -8,10 +8,14 @@ import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Meter, Segmented, Toggle, fmtBytes } from '../ui/kit';
 import { QuickShare, type QuickShareExit } from './QuickShare';
 import { keyHint } from '../state/keymap';
+import { LayoutPicker, toLayoutMode, type RecLayout } from './recorder/LayoutPicker';
+import { TabPicker, type TabChoice } from './recorder/TabPicker';
 import './Notes';
 import './record.css';
+import './recorder/recorder.css';
 
-type Mode = 'display' | 'window' | 'region' | 'device' | 'none';
+type Mode = 'display' | 'window' | 'region' | 'tab' | 'device' | 'none';
+type ScreenLayout = Exclude<RecLayout, 'camera'>;
 type Thumb = { kind: 'display' | 'window'; id: number; displayId: number | null; name: string; dataUrl: string };
 type Phase = 'setup' | 'checking' | 'countdown' | 'starting' | 'recording' | 'finishing' | 'done' | 'failed';
 type Region = { x: number; y: number; width: number; height: number };
@@ -231,6 +235,12 @@ function fitRegion(d: DisplayInfo, w: number, h: number): Region {
   return { x: Math.round((d.width - width) / 2), y: Math.round((d.height - height) / 2), width, height };
 }
 
+/** Margins to leave out of a browser window so only the page is recorded. `trim` is the creator's own correction to the top edge. */
+function pageCrop(t: BrowserTabTarget, trim: number): WindowInsets {
+  const top = Math.max(0, Math.min(t.height - 80, Math.round(t.content.top + trim)));
+  return { top, left: Math.max(0, Math.round(t.content.left)), bottom: Math.max(0, Math.round(t.content.bottom)), right: Math.max(0, Math.round(t.content.right)) };
+}
+
 const short = (s: string, n = 18) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
 // ───────────────────────────── remembered options ─────────────────────────────
@@ -241,15 +251,17 @@ interface Prefs {
   hideIcons: boolean;
   hideNotifs: boolean;
   captureKeys: boolean;
+  /** How screen and camera are arranged (Camera only is the Camera target, not a preference). */
+  layout: ScreenLayout;
 }
 const PREFS_KEY = 'cutaway.recorder';
 const NOTES_OPEN_KEY = 'cutaway.notes.open';
 
 function loadPrefs(): Prefs {
-  const d: Prefs = { fps: 60, cursor: 'clean', hideIcons: false, hideNotifs: false, captureKeys: false };
+  const d: Prefs = { fps: 60, cursor: 'clean', hideIcons: false, hideNotifs: false, captureKeys: false, layout: 'overlay' };
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<Prefs>;
-    return { fps: p.fps === 30 ? 30 : 60, cursor: p.cursor === 'baked' ? 'baked' : 'clean', hideIcons: !!p.hideIcons, hideNotifs: !!p.hideNotifs, captureKeys: !!p.captureKeys };
+    return { fps: p.fps === 30 ? 30 : 60, cursor: p.cursor === 'baked' ? 'baked' : 'clean', hideIcons: !!p.hideIcons, hideNotifs: !!p.hideNotifs, captureKeys: !!p.captureKeys, layout: p.layout === 'split' || p.layout === 'presenter' || p.layout === 'screen' ? p.layout : 'overlay' };
   } catch {
     return d;
   }
@@ -265,6 +277,7 @@ const MODES: { value: Mode; label: string; icon: IconName }[] = [
   { value: 'display', label: 'Display', icon: 'screen' },
   { value: 'window', label: 'Window', icon: 'window' },
   { value: 'region', label: 'Area', icon: 'region' },
+  { value: 'tab', label: 'Tab', icon: 'globe' },
   { value: 'device', label: 'Device', icon: 'phone' },
   { value: 'none', label: 'Camera', icon: 'camera' },
 ];
@@ -287,6 +300,13 @@ export function Record() {
   const [windowId, setWindowId] = useState<number | null>(null);
   const [extId, setExtId] = useState<string | null>(null);
   const [region, setRegion] = useState<Region | null>(null);
+  // browser tab target
+  const [tabChoice, setTabChoice] = useState<TabChoice | null>(null);
+  const [tabTarget, setTabTarget] = useState<BrowserTabTarget | null>(null);
+  const [tabBusy, setTabBusy] = useState(false);
+  const [tabError, setTabError] = useState<string | null>(null);
+  const [trimTop, setTrimTop] = useState(0);
+  const lastScreenMode = useRef<Exclude<Mode, 'none'>>('display');
   const [camA, setCamA] = useState<string | null>(null);
   const [camB, setCamB] = useState<string | null>(null);
   const [mic, setMic] = useState<string | null>(null);
@@ -322,6 +342,12 @@ export function Record() {
   phaseRef.current = phase;
   const finished = useRef(false);
   const takeDirRef = useRef<string | null>(null);
+  /** The exact config the take is started with (a tab is brought forward and measured again just before). */
+  const startConfig = useRef<RecordConfig | null>(null);
+  /** What the countdown overlay is drawn over, while it is up. */
+  const overlay = useRef<Omit<CountdownState, 'count'> | null>(null);
+  const takeCameras = useRef<string[]>([]);
+  const takeLayout = useRef<RecLayout>('overlay');
 
   // ── devices and permissions ──
   const refresh = useCallback(async () => {
@@ -416,23 +442,52 @@ export function Record() {
   }, [mode, ext, externals]);
   useEffect(() => setResizeNote(null), [windowId, mode]);
 
-  const onMac = mode === 'display' || mode === 'window' || mode === 'region';
+  const onMac = mode === 'display' || mode === 'window' || mode === 'region' || mode === 'tab';
   const wantsScreen = mode !== 'none';
+  // The Camera target is the "Camera only" layout; every other target uses the remembered arrangement.
+  const layout: RecLayout = mode === 'none' ? 'camera' : prefs.layout;
+  const camerasOn = layout !== 'screen';
+  const chooseLayout = (l: RecLayout) => {
+    if (l === 'camera') {
+      if (mode !== 'none') lastScreenMode.current = mode;
+      setMode('none');
+      return;
+    }
+    setPrefs({ layout: l });
+    if (mode === 'none') setMode(lastScreenMode.current);
+  };
   const screenBlocked = onMac && perms.screen !== 'granted';
-  const cameraBlocked = (!!camA || !!camB) && perms.camera !== 'granted';
+  const cameraBlocked = camerasOn && (!!camA || !!camB) && perms.camera !== 'granted';
   const micBlocked = !!mic && perms.microphone !== 'granted';
-  const screenReady = wantsScreen && !screenBlocked && (mode === 'window' ? !!win : mode === 'device' ? !!ext : !!display);
+  const screenReady = wantsScreen && !screenBlocked && (mode === 'window' ? !!win : mode === 'tab' ? !!tabTarget : mode === 'device' ? !!ext : !!display);
   const previewsOn = phase === 'setup' || phase === 'checking';
   const systemAudioOn = audioMode === 'all' || (audioMode === 'apps' && audioApps.length > 0);
 
-  const previewA = useCameraPreview(cameraA?.name ?? null, previewsOn && perms.camera === 'granted');
-  const previewB = useCameraPreview(cameraB?.name ?? null, previewsOn && perms.camera === 'granted');
+  const previewA = useCameraPreview(cameraA?.name ?? null, previewsOn && camerasOn && perms.camera === 'granted');
+  const previewB = useCameraPreview(cameraB?.name ?? null, previewsOn && camerasOn && perms.camera === 'granted');
+
+  const pickTab = useCallback(async (c: TabChoice) => {
+    setTabBusy(true);
+    setTabError(null);
+    try {
+      // Brings the tab to the front of its own window (the browser itself stays where it is) and measures the page area.
+      const t = await api().native.selectBrowserTab(c.bundleId, c.window, c.tab, false);
+      setTabChoice(c);
+      setTabTarget(t);
+      setTrimTop(0);
+      void api().app.captureThumbnails().then(setThumbs).catch(() => {});
+    } catch (e) {
+      setTabError(errorText(e));
+    } finally {
+      setTabBusy(false);
+    }
+  }, []);
   const micDb = useMicLevel(microphone?.name ?? null, previewsOn && perms.microphone === 'granted');
 
   const config = useMemo<RecordConfig | null>(() => {
     if (!devices) return null;
     const cameras: RecordConfig['cameras'] = [];
-    if (!cameraBlocked) {
+    if (!cameraBlocked && camerasOn) {
       if (cameraA) cameras.push({ slot: 'A', deviceId: cameraA.id, ...pickFormat(cameraA) });
       if (cameraB) cameras.push({ slot: 'B', deviceId: cameraB.id, ...pickFormat(cameraB) });
     }
@@ -442,6 +497,8 @@ export function Record() {
       const hide = { hideDesktopIcons: prefs.hideIcons || undefined, hideNotifications: prefs.hideNotifs || undefined };
       if (mode === 'display' && display) screen = { type: 'display', displayId: display.id, showCursor, ...hide };
       else if (mode === 'window' && win) screen = { type: 'window', windowId: win.id, showCursor };
+      // A tab is its browser window with the tab strip and toolbar left out.
+      else if (mode === 'tab' && tabTarget) screen = { type: 'window', windowId: tabTarget.windowId, crop: pageCrop(tabTarget, trimTop), showCursor };
       else if (mode === 'region' && region && display) screen = { type: 'region', displayId: display.id, rect: { x: display.x + region.x, y: display.y + region.y, width: region.width, height: region.height }, showCursor, ...hide };
       else if (mode === 'device' && ext) screen = { type: 'device', deviceId: ext.id, showCursor: true };
     }
@@ -455,8 +512,10 @@ export function Record() {
       systemAudio,
       // Shortcuts and typing ticks only; meaningless without a Mac screen in the take.
       ...(prefs.captureKeys && screen && screen.type !== 'device' ? { captureKeys: true } : {}),
+      // Stills of the camera for the floating self-view; the recorder skips them while nobody is looking.
+      cameraPreview: { fps: 12, width: 480 },
     };
-  }, [devices, cameraA, cameraB, cameraBlocked, screenReady, display, win, ext, region, mode, cursor, fps, microphone, micBlocked, audioMode, audioApps, perms.screen, prefs.hideIcons, prefs.hideNotifs, prefs.captureKeys]);
+  }, [devices, cameraA, cameraB, cameraBlocked, camerasOn, screenReady, display, win, ext, region, tabTarget, trimTop, mode, cursor, fps, microphone, micBlocked, audioMode, audioApps, perms.screen, prefs.hideIcons, prefs.hideNotifs, prefs.captureKeys]);
 
   const sourceCount = config ? (config.screen ? 1 : 0) + config.cameras.length + (config.microphone ? 1 : 0) + (config.systemAudio ? 1 : 0) : 0;
   const hasPicture = !!config && (!!config.screen || config.cameras.length > 0);
@@ -501,7 +560,8 @@ export function Record() {
       app.toast(r.text, r.tone ?? 'info');
     } catch (e) {
       finished.current = false;
-      setFailure({ title: 'The take could not be added to the project', detail: `${errorText(e)} The recorded files are still on disk; the library will offer to recover them.` });
+      if ((e as { nothingRecorded?: boolean }).nothingRecorded) setFailure({ title: 'Nothing was recorded', detail: `${errorText(e)} You can start again right away.` });
+      else setFailure({ title: 'The take could not be added to the project', detail: `${errorText(e)} The recorded files are still on disk; the library will offer to recover them.` });
       setPhase('failed');
     }
   }, []);
@@ -512,6 +572,7 @@ export function Record() {
       if (p !== 'starting' && p !== 'recording') return;
       switch (e.type) {
         case 'started':
+          takeCameras.current = e.sources.map((s) => s.id).filter((id) => id === 'cameraA' || id === 'cameraB');
           setLive((l) => ({ ...l, sources: e.sources.map((s) => s.id) }));
           break;
         case 'tick':
@@ -547,7 +608,7 @@ export function Record() {
           if (!takeDir) break;
           const manifest = e.manifest;
           void finish(async () => {
-            const r = await addTakeToProject(manifest, takeDir);
+            const r = await addTakeToProject(manifest, takeDir, { layout: toLayoutMode(takeLayout.current) });
             const gaps = manifest.sources.some((s) => s.gaps.length > 0);
             const demoted = r.demoted.length ? ` ${r.demoted.length} track${r.demoted.length === 1 ? ' was' : 's were'} added as supporting media because that role was already filled.` : '';
             const note = `${gaps ? 'Missing stretches are marked on the track.' : ''}${demoted}`.trim();
@@ -559,8 +620,15 @@ export function Record() {
           const takeDir = e.takeDir;
           void finish(async () => {
             // Movie fragments are flushed every two seconds, so everything up to the last checkpoint is playable.
-            const manifest = await api().library.recover(takeDir);
-            await addTakeToProject(manifest, takeDir);
+            let manifest: TakeManifest;
+            try {
+              manifest = await api().library.recover(takeDir);
+            } catch (err) {
+              // Nothing playable was written (the recorder stopped before its first checkpoint).
+              throw Object.assign(new Error(`The recorder stopped before anything could be saved: ${e.message}`), { nothingRecorded: true, cause: err });
+            }
+            if (!manifest.sources.length || manifest.duration <= 0) throw Object.assign(new Error(`The recorder stopped before anything could be saved: ${e.message}`), { nothingRecorded: true });
+            await addTakeToProject(manifest, takeDir, { layout: toLayoutMode(takeLayout.current) });
             return { text: `The recorder stopped unexpectedly. Recovered ${fmtTime(manifest.duration)} up to the last checkpoint: ${describeTake(manifest)}.`, tone: 'error' };
           });
           break;
@@ -578,22 +646,75 @@ export function Record() {
         void api().record.stop().catch(() => {});
         void api().app.recordingMode(false).catch(() => {});
       }
+      if (phaseRef.current === 'countdown') void api().app.countdownEnd(true).catch(() => {});
     },
     [],
   );
 
   // ── start flow ──
+  const cancelCountdown = useCallback(() => {
+    if (phaseRef.current !== 'countdown') return;
+    overlay.current = null;
+    setPhase('setup');
+    void api().app.countdownEnd(true).catch(() => {});
+  }, []);
+
+  const start = useCallback(async () => {
+    const cfg = startConfig.current ?? config;
+    if (!cfg || !projectPath) return;
+    setPhase('starting');
+    finished.current = false;
+    takeCameras.current = [];
+    setLive({ elapsed: 0, paused: false, frames: {}, mic: null, lost: [], diskLow: false, sources: [], warnings: [], flags: 0 });
+    try {
+      // The countdown is taken off the screen before the first frame can be captured.
+      if (overlay.current) await api().app.countdownEnd(false).catch(() => {});
+      overlay.current = null;
+      const { takeDir } = await api().record.start(projectPath, cfg);
+      takeDirRef.current = takeDir;
+      setRecordingActive(true);
+      setPhase('recording');
+      await api().app.recordingMode(true, { cameras: takeCameras.current.length ? takeCameras.current : cfg.cameras.map((c) => `camera${c.slot}`) });
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      setStartError(code === 'permission-denied' ? `${errorText(e)} Check the permissions, or record with the remaining sources.` : `${errorText(e)} Nothing was recorded. Press Start recording to try again.`);
+      setPhase('setup');
+      // Bring Cutaway back in front, with the reason on screen.
+      void api().app.recordingMode(false).catch(() => {});
+      void refresh();
+    }
+  }, [config, projectPath, refresh]);
+
   const begin = async () => {
     if (!config || !projectPath) return;
     setStartError(null);
     setBlocking(null);
     setPhase('checking');
+    let cfg = config;
+    let target: Omit<CountdownState, 'count'> | null = null;
     try {
       // Ask for what is enabled and still undecided, nothing else.
       if (onMac && perms.screen === 'undetermined') await request('screen');
-      if ((camA || camB) && perms.camera === 'undetermined') await request('camera');
+      if (camerasOn && (camA || camB) && perms.camera === 'undetermined') await request('camera');
       if (mic && perms.microphone === 'undetermined') await request('microphone');
-      const pre = await api().native.preflight(config);
+      if (mode === 'tab' && tabChoice && cfg.screen) {
+        // Bring the browser and the tab forward now, and measure again: the window may have moved since it was picked.
+        const t = await api().native.selectBrowserTab(tabChoice.bundleId, tabChoice.window, tabChoice.tab, true);
+        setTabTarget(t);
+        setTabChoice({ ...tabChoice, window: t.window ?? 1 });
+        const crop = pageCrop(t, trimTop);
+        cfg = { ...cfg, screen: { ...cfg.screen, windowId: t.windowId, crop } };
+        target = { kind: 'window', label: tabChoice.title || tabChoice.host || tabChoice.browser, rect: { x: t.x + crop.left, y: t.y + crop.top, width: t.width - crop.left - crop.right, height: t.height - crop.top - crop.bottom } };
+      } else if (mode === 'window' && win) {
+        // The window may have been moved since the list was read.
+        const now = (await api().native.devices().catch(() => null))?.windows.find((w) => w.id === win.id) ?? win;
+        target = { kind: 'window', label: now.app, rect: { x: now.x, y: now.y, width: now.width, height: now.height } };
+      } else if (mode === 'region' && display && region) {
+        target = { kind: 'region', label: `${region.width} × ${region.height} area`, rect: { x: display.x + region.x, y: display.y + region.y, width: region.width, height: region.height } };
+      } else if (mode === 'display' && display) {
+        target = { kind: 'display', label: display.name, rect: { x: display.x, y: display.y, width: display.width, height: display.height } };
+      }
+      const pre = await api().native.preflight(cfg);
       setPreflight(pre);
       if (!pre.ok) {
         setBlocking(pre.issues);
@@ -601,34 +722,21 @@ export function Record() {
         return;
       }
     } catch (e) {
-      setStartError(errorText(e));
+      const code = (e as { code?: string }).code;
+      setStartError(mode === 'tab' && (code === 'missing-device' || code === 'permission-denied' || code === 'browser-script') ? `${errorText(e)} Pick the tab again below.` : errorText(e));
       setPhase('setup');
       return;
     }
+    startConfig.current = cfg;
+    takeLayout.current = layout;
     const seconds = Math.max(0, Math.round(settings?.countdownSeconds ?? 3));
     if (seconds === 0) return void start();
+    // The countdown is shown over the thing being recorded, not only inside Cutaway.
+    overlay.current = cfg.screen && target ? target : null;
+    if (overlay.current) await api().app.countdown({ ...overlay.current, count: seconds }).catch(() => (overlay.current = null));
     setCount(seconds);
     setPhase('countdown');
   };
-
-  const start = useCallback(async () => {
-    if (!config || !projectPath) return;
-    setPhase('starting');
-    finished.current = false;
-    setLive({ elapsed: 0, paused: false, frames: {}, mic: null, lost: [], diskLow: false, sources: [], warnings: [], flags: 0 });
-    try {
-      const { takeDir } = await api().record.start(projectPath, config);
-      takeDirRef.current = takeDir;
-      setRecordingActive(true);
-      setPhase('recording');
-      await api().app.recordingMode(true);
-    } catch (e) {
-      const code = (e as { code?: string }).code;
-      setStartError(code === 'permission-denied' ? `${errorText(e)} Check the permissions, or record with the remaining sources.` : errorText(e));
-      setPhase('setup');
-      void refresh();
-    }
-  }, [config, projectPath, refresh]);
 
   useEffect(() => {
     if (phase !== 'countdown') return;
@@ -636,16 +744,22 @@ export function Record() {
       void start();
       return;
     }
+    if (overlay.current) void api().app.countdown({ ...overlay.current, count }).catch(() => {});
     const t = setTimeout(() => setCount((c) => c - 1), 1000);
     return () => clearTimeout(t);
   }, [phase, count, start]);
 
   useEffect(() => {
-    if (phase !== 'countdown') return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setPhase('setup');
+    // Escape cancels, whether Cutaway has the keyboard or the overlay caught it globally.
+    const off = api().app.onCountdownCancel(cancelCountdown);
+    if (phase !== 'countdown') return off;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && cancelCountdown();
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [phase]);
+    return () => {
+      off();
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [phase, cancelCountdown]);
 
   const stop = () => void api().record.stop().catch((e) => useApp.getState().toast(errorText(e), 'error'));
   const togglePause = () => void (live.paused ? api().record.resume() : api().record.pause()).catch((e) => useApp.getState().toast(errorText(e), 'error'));
@@ -762,6 +876,12 @@ export function Record() {
             Saved to disk every 2 seconds. Each source is its own file in the project. Nothing is uploaded.
             <br />
             Stop from the floating control or with <span className="kbd">⌃⌥⌘R</span>.
+            {config?.cameras.length ? (
+              <>
+                <br />
+                Your camera shows in a floating bubble that only you see. It is never part of the screen recording.
+              </>
+            ) : null}
           </div>
         </div>
       </div>
@@ -783,8 +903,10 @@ export function Record() {
   }
 
   const thumbFor = (kind: 'display' | 'window', id: number) => thumbs.find((t) => t.kind === kind && (t.id === id || (kind === 'display' && t.displayId === id)))?.dataUrl ?? null;
-  const stageShot = mode === 'window' ? (win ? thumbFor('window', win.id) : null) : onMac && display ? thumbFor('display', display.id) : null;
-  const stageAspect = mode === 'window' ? (win ? win.width / Math.max(1, win.height) : null) : mode === 'device' ? (ext ? ext.width / Math.max(1, ext.height) : null) : display ? display.width / Math.max(1, display.height) : null;
+  const tabCrop = tabTarget ? pageCrop(tabTarget, trimTop) : null;
+  const tabPage = tabTarget && tabCrop ? { width: tabTarget.width - tabCrop.left - tabCrop.right, height: tabTarget.height - tabCrop.top - tabCrop.bottom } : null;
+  const stageShot = mode === 'window' ? (win ? thumbFor('window', win.id) : null) : mode === 'tab' ? (tabTarget ? thumbFor('window', tabTarget.windowId) : null) : onMac && display ? thumbFor('display', display.id) : null;
+  const stageAspect = mode === 'window' ? (win ? win.width / Math.max(1, win.height) : null) : mode === 'tab' ? (tabTarget ? tabTarget.width / Math.max(1, tabTarget.height) : 16 / 10) : mode === 'device' ? (ext ? ext.width / Math.max(1, ext.height) : null) : display ? display.width / Math.max(1, display.height) : null;
   const minutes = preflight && preflight.estimatedBytesPerMinute > 0 ? Math.floor(preflight.freeBytes / preflight.estimatedBytesPerMinute) : null;
   const cannotStart = !helper
     ? 'The capture helper is not built.'
@@ -794,6 +916,8 @@ export function Record() {
         ? 'Camera A and Camera B use the same device.'
         : mode === 'window' && !win && !screenBlocked
           ? 'Choose a window to record.'
+          : mode === 'tab' && !tabTarget && !screenBlocked
+            ? 'Choose a browser tab to record.'
           : mode === 'device' && !ext
             ? 'Connect an iPhone or iPad to record it.'
             : sourceCount === 0
@@ -805,13 +929,13 @@ export function Record() {
   const countdown = Math.max(0, Math.round(settings?.countdownSeconds ?? 3));
   const keysPerm = extra('inputMonitoring');
   const parts = [
-    config?.screen ? (mode === 'window' ? 'Window' : mode === 'region' ? 'Area' : mode === 'device' ? 'Device' : 'Display') : null,
+    config?.screen ? (mode === 'window' ? 'Window' : mode === 'tab' ? 'Browser tab' : mode === 'region' ? 'Area' : mode === 'device' ? 'Device' : 'Display') : null,
     ...(config?.cameras.map((c) => `Camera ${c.slot}`) ?? []),
     config?.microphone ? 'Microphone' : null,
     config?.systemAudio ? (typeof config.systemAudio === 'object' ? `Sound from ${config.systemAudio.apps.length} app${config.systemAudio.apps.length === 1 ? '' : 's'}` : 'System audio') : null,
   ].filter(Boolean) as string[];
-  const targetName = mode === 'window' ? (win ? win.app : 'No window chosen') : mode === 'device' ? (ext ? ext.name : 'No device') : mode === 'none' ? (cameraA?.name ?? cameraB?.name ?? 'Camera') : (display?.name ?? 'Display');
-  const targetDims = mode === 'window' ? (win ? `${win.width} × ${win.height}` : null) : mode === 'region' ? (region ? `${region.width} × ${region.height}` : null) : mode === 'device' ? (ext ? `${ext.width} × ${ext.height}` : null) : mode === 'none' ? null : display ? `${display.width} × ${display.height}` : null;
+  const targetName = mode === 'window' ? (win ? win.app : 'No window chosen') : mode === 'tab' ? (tabChoice && tabTarget ? tabChoice.title || tabChoice.host || 'Browser tab' : 'No tab chosen') : mode === 'device' ? (ext ? ext.name : 'No device') : mode === 'none' ? (cameraA?.name ?? cameraB?.name ?? 'Camera') : (display?.name ?? 'Display');
+  const targetDims = mode === 'window' ? (win ? `${win.width} × ${win.height}` : null) : mode === 'tab' ? (tabPage ? `${tabPage.width} × ${tabPage.height}` : null) : mode === 'region' ? (region ? `${region.width} × ${region.height}` : null) : mode === 'device' ? (ext ? `${ext.width} × ${ext.height}` : null) : mode === 'none' ? null : display ? `${display.width} × ${display.height}` : null;
 
   const startButton = (
     <button className="btn primary lg rec-start" disabled={!!cannotStart || phase === 'checking'} onClick={() => void begin()} title={cannotStart ?? (countdown ? `Starts after a ${countdown} second countdown` : 'Starts immediately')} data-testid="start-recording">
@@ -824,7 +948,7 @@ export function Record() {
     <div className={`target${mode === 'none' ? ' compact' : ''}`}>
       {mode !== 'none' ? (
         <span className="target-icon">
-          <Icon name={mode === 'window' ? 'window' : mode === 'device' ? 'phone' : mode === 'region' ? 'region' : 'screen'} size={22} />
+          <Icon name={mode === 'window' ? 'window' : mode === 'tab' ? 'globe' : mode === 'device' ? 'phone' : mode === 'region' ? 'region' : 'screen'} size={22} />
         </span>
       ) : null}
       <div className="target-name">{targetName}</div>
@@ -904,20 +1028,54 @@ export function Record() {
             <Button size="sm" icon="sync" onClick={() => (setLoading(true), void refresh())}>Look again</Button>
           </div>
         ) : (
-          <div className="stage-shot" style={stageAspect ? { aspectRatio: String(stageAspect), ...(stageAspect >= 16 / 9 ? { width: '100%' } : { height: '100%' }) } : { width: '100%', height: '100%' }}>
-            {stageShot ? <img src={stageShot} alt="" draggable={false} /> : <div className={`stage-blank${mode === 'device' ? ' device' : ''}`} />}
-            {mode === 'region' && display && region ? (
-              <div className="region-veil" aria-hidden>
-                <div className="region-box" style={{ left: `${(region.x / display.width) * 100}%`, top: `${(region.y / display.height) * 100}%`, width: `${(region.width / display.width) * 100}%`, height: `${(region.height / display.height) * 100}%` }} />
+          <div className="comp" data-layout={layout} data-testid="stage-comp">
+            <div className="comp-screen">
+              <div className="stage-shot" style={{ ['--ar' as string]: String(stageAspect ?? 16 / 9) }}>
+                {stageShot ? <img src={stageShot} alt="" draggable={false} /> : <div className={`stage-blank${mode === 'device' ? ' device' : ''}`} />}
+                {mode === 'region' && display && region ? (
+                  <div className="region-veil" aria-hidden>
+                    <div className="region-box" style={{ left: `${(region.x / display.width) * 100}%`, top: `${(region.y / display.height) * 100}%`, width: `${(region.width / display.width) * 100}%`, height: `${(region.height / display.height) * 100}%` }} />
+                  </div>
+                ) : mode === 'tab' && tabTarget && tabCrop ? (
+                  // The browser's own tab strip and toolbar are hatched out: only the page is recorded.
+                  <div className="crop-veil" aria-hidden data-testid="tab-crop">
+                    <i style={{ left: 0, right: 0, top: 0, height: `${(tabCrop.top / tabTarget.height) * 100}%` }} />
+                    <i style={{ left: 0, right: 0, bottom: 0, height: `${(tabCrop.bottom / tabTarget.height) * 100}%` }} />
+                    <i style={{ left: 0, top: `${(tabCrop.top / tabTarget.height) * 100}%`, bottom: `${(tabCrop.bottom / tabTarget.height) * 100}%`, width: `${(tabCrop.left / tabTarget.width) * 100}%` }} />
+                    <i style={{ right: 0, top: `${(tabCrop.top / tabTarget.height) * 100}%`, bottom: `${(tabCrop.bottom / tabTarget.height) * 100}%`, width: `${(tabCrop.right / tabTarget.width) * 100}%` }} />
+                    <div className="keep" style={{ left: `${(tabCrop.left / tabTarget.width) * 100}%`, right: `${(tabCrop.right / tabTarget.width) * 100}%`, top: `${(tabCrop.top / tabTarget.height) * 100}%`, bottom: `${(tabCrop.bottom / tabTarget.height) * 100}%` }} />
+                  </div>
+                ) : (
+                  <div className="stage-tint" aria-hidden />
+                )}
               </div>
-            ) : (
-              <div className="stage-tint" aria-hidden />
-            )}
+            </div>
+            {layout === 'split' || layout === 'presenter' ? (
+              <div className="comp-cam" data-testid="comp-cam">
+                {(camA ? previewA.stream : previewB.stream) ? (
+                  <LiveVideo stream={camA ? previewA.stream : previewB.stream} mirror />
+                ) : (
+                  <div className="stage-empty">
+                    <Icon name="camera" size={22} />
+                    <div className="small">{camA || camB ? (cameraBlocked ? 'Camera access is off' : 'Starting camera…') : 'Choose a camera in the bar below'}</div>
+                  </div>
+                )}
+                {camA || camB ? <span className="comp-tag">{camA ? 'A' : 'B'}</span> : null}
+              </div>
+            ) : null}
           </div>
         )}
         {!(onMac && screenBlocked) && !loading && !(mode === 'device' && !ext) ? target : null}
-        {mode !== 'none' && camA && !cameraBlocked ? <div className="cam-bubble a">{previewA.stream ? <LiveVideo stream={previewA.stream} /> : <Icon name="camera" size={18} />}<span>A</span></div> : null}
-        {camB && !cameraBlocked ? <div className={`cam-bubble b${mode === 'none' ? ' solo' : ''}`}>{previewB.stream ? <LiveVideo stream={previewB.stream} /> : <Icon name="camera" size={18} />}<span>B</span></div> : null}
+        {!(onMac && screenBlocked) && !loading && mode !== 'none' && !(mode === 'device' && !ext) ? (
+          <div className="target-chip" data-testid="target-chip" title="This is what will be recorded">
+            <Icon name={mode === 'window' ? 'window' : mode === 'tab' ? 'globe' : mode === 'device' ? 'phone' : mode === 'region' ? 'region' : 'screen'} size={14} />
+            <b>{mode === 'region' ? `Area of ${display?.name ?? 'the display'}` : targetName}</b>
+            {targetDims ? <span className="dim mono">{targetDims}</span> : null}
+            {mode === 'tab' && tabTarget ? <span className="dim">page only</span> : null}
+          </div>
+        ) : null}
+        {layout === 'overlay' && camA && !cameraBlocked ? <div className="cam-bubble a">{previewA.stream ? <LiveVideo stream={previewA.stream} mirror /> : <Icon name="camera" size={18} />}<span>A</span></div> : null}
+        {camerasOn && camB && !cameraBlocked && (layout === 'overlay' || layout === 'camera' || !!camA) ? <div className={`cam-bubble b${mode === 'none' ? ' solo' : ''}`}>{previewB.stream ? <LiveVideo stream={previewB.stream} mirror /> : <Icon name="camera" size={18} />}<span>B</span></div> : null}
       </div>
 
       <div className="rec-strip">
@@ -959,6 +1117,29 @@ export function Record() {
           )
         ) : null}
 
+        {!screenBlocked && mode === 'tab' ? (
+          <>
+            <TabPicker choice={tabChoice} onPick={(c) => void pickTab(c)} busy={tabBusy} />
+            {tabError ? (
+              <div className="perm-note denied" role="alert">
+                <Icon name="warn" size={14} />
+                <span className="grow">{tabError}</span>
+                <Button size="sm" variant="ghost" icon="x" aria-label="Dismiss" onClick={() => setTabError(null)} />
+              </div>
+            ) : null}
+            {tabTarget ? (
+              <div className="region-row" data-testid="tab-area">
+                <span className="tiny dim" style={{ maxWidth: 560 }}>
+                  {tabTarget.content.method === 'accessibility'
+                    ? 'Only the page is recorded. The tab strip and toolbar were measured and are left out, also if you move or resize the window.'
+                    : 'Only the page is recorded. Cutaway has no Accessibility access, so the height of the browser’s toolbar is an estimate: adjust it here if a strip of toolbar shows, or allow Cutaway in System Settings → Privacy & Security → Accessibility for an exact fit.'}
+                </span>
+                <NumberField label="Trim top" min={-200} value={trimTop} onChange={(v) => setTrimTop(Math.max(-200, Math.min(400, v)))} />
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
         {mode === 'device' && externals.length > 0 ? (
           <div className="picker" role="radiogroup" aria-label="Device">
             {externals.map((d) => (
@@ -988,8 +1169,19 @@ export function Record() {
         ) : null}
       </div>
 
+      {!(onMac && screenBlocked) ? (
+        <>
+          <LayoutPicker value={layout} onChange={chooseLayout} />
+          {(layout === 'overlay' || layout === 'split' || layout === 'presenter') && !camA && !camB ? (
+            <div className="tiny dim lay-note" data-testid="layout-note">This layout needs a camera. Choose one in the bar below, or only the screen is recorded.</div>
+          ) : layout === 'screen' && (camA || camB) ? (
+            <div className="tiny dim lay-note" data-testid="layout-note">Screen only: the camera is not recorded in this layout.</div>
+          ) : null}
+        </>
+      ) : null}
+
       <div className="rec-alerts">
-        {(camA || camB) && perms.camera !== 'granted' ? (
+        {camerasOn && (camA || camB) && perms.camera !== 'granted' ? (
           <PermissionNote kind="camera" status={perms.camera} onRequest={() => void request('camera')}>
             <button className="link-btn" onClick={() => (setCamA(null), setCamB(null))}>Record without a camera</button>
           </PermissionNote>
@@ -1014,7 +1206,11 @@ export function Record() {
               </Banner>
             ))
           : null}
-        {startError ? <Banner tone="danger" title="Recording did not start">{startError}</Banner> : null}
+        {startError ? (
+          <Banner tone="danger" title="Recording did not start" action={<Button size="sm" onClick={() => void begin()} disabled={!!cannotStart}>Try again</Button>}>
+            {startError}
+          </Banner>
+        ) : null}
       </div>
 
       <div className="rec-bar" role="toolbar" aria-label="Recorder">
@@ -1023,7 +1219,7 @@ export function Record() {
         </button>
         <div className="rb-modes" role="group" aria-label="What to record">
           {MODES.map((m) => (
-            <button key={m.value} className="rb-mode" data-mode={m.value} aria-pressed={mode === m.value} onClick={() => setMode(m.value)} title={m.value === 'none' ? 'Camera only, no screen' : m.value === 'device' ? 'A connected iPhone or iPad' : `Record ${m.label === 'Area' ? 'an area' : `a ${m.label.toLowerCase()}`}`}>
+            <button key={m.value} className="rb-mode" data-mode={m.value} aria-pressed={mode === m.value} onClick={() => (m.value !== 'none' ? (lastScreenMode.current = m.value) : mode !== 'none' ? (lastScreenMode.current = mode) : undefined, setMode(m.value))} title={m.value === 'none' ? 'Camera only, no screen' : m.value === 'tab' ? 'One browser tab: just the page, without the tab strip and toolbar' : m.value === 'device' ? 'A connected iPhone or iPad' : `Record ${m.label === 'Area' ? 'an area' : `a ${m.label.toLowerCase()}`}`}>
               <Icon name={m.icon} size={18} />
               <span>{m.label}</span>
             </button>
@@ -1037,11 +1233,18 @@ export function Record() {
               <div className="rb-head">Camera A</div>
               <MenuRow checked={!camA} onClick={() => (setCamA(null), close())}>Don’t record camera</MenuRow>
               {devices?.cameras.map((c) => (
-                <MenuRow key={c.id} checked={camA === c.id} disabled={c.id === camB} note={c.id === camB ? 'used by B' : undefined} onClick={() => (setCamA(c.id), close(), perms.camera === 'undetermined' ? void request('camera') : undefined)}>
+                <MenuRow key={c.id} checked={camA === c.id} disabled={c.id === camB} note={c.id === camB ? 'used by B' : c.kind === 'iphone' ? 'iPhone camera' : c.kind === 'deskview' ? 'Desk View' : undefined} onClick={() => (setCamA(c.id), close(), perms.camera === 'undetermined' ? void request('camera') : undefined)}>
                   {c.name}
                 </MenuRow>
               ))}
               {devices && devices.cameras.length === 0 ? <div className="tiny dim rb-note">No camera is connected.</div> : null}
+              {devices && !devices.cameras.some((c) => c.kind === 'iphone') ? (
+                <div className="tiny dim rb-note" data-testid="iphone-hint">
+                  To use an iPhone as a camera: sign in to the same Apple Account on both, turn on Wi-Fi and Bluetooth, and bring the locked phone close to this Mac (or plug it in with a cable). It then appears in this list.{' '}
+                  <button className="link-btn" onClick={() => void refresh()}>Look again</button>
+                </div>
+              ) : null}
+              {!camerasOn && camA ? <div className="tiny dim rb-note">Not recorded while the layout is Screen only.</div> : null}
               {cameraA && !cameraBlocked ? <div className="tiny dim rb-note">{(() => { const f = pickFormat(cameraA); return `${f.width} × ${f.height} · ${f.fps} fps · its own track`; })()}</div> : null}
             </>
           )}
@@ -1053,13 +1256,19 @@ export function Record() {
               <div className="rb-head">Camera B · second angle</div>
               <MenuRow checked={!camB} onClick={() => (setCamB(null), close())}>Don’t record a second camera</MenuRow>
               {devices?.cameras.map((c) => (
-                <MenuRow key={c.id} checked={camB === c.id} disabled={c.id === camA} note={c.id === camA ? 'used by A' : undefined} onClick={() => (setCamB(c.id), close(), perms.camera === 'undetermined' ? void request('camera') : undefined)}>
+                <MenuRow key={c.id} checked={camB === c.id} disabled={c.id === camA} note={c.id === camA ? 'used by A' : c.kind === 'iphone' ? 'iPhone camera' : c.kind === 'deskview' ? 'Desk View' : undefined} onClick={() => (setCamB(c.id), close(), perms.camera === 'undetermined' ? void request('camera') : undefined)}>
                   {c.name}
                 </MenuRow>
               ))}
               <div className="tiny dim rb-note">
-                {devices && devices.cameras.length < 2 ? (devices.cameras.length === 0 ? 'No camera is connected.' : 'Only one camera is connected. One device cannot fill both slots: connect a second camera, or import its file later.') : 'Both cameras share one clock, so they stay in sync.'}
+                {devices && devices.cameras.length < 2 ? (devices.cameras.length === 0 ? 'No camera is connected.' : 'Only one camera is connected. One device cannot fill both slots: connect a second camera (an iPhone works), or import its file later.') : 'Both cameras share one clock, so they stay in sync.'}
               </div>
+              {devices && !devices.cameras.some((c) => c.kind === 'iphone') ? (
+                <div className="tiny dim rb-note" data-testid="iphone-hint">
+                  To use an iPhone as a camera: sign in to the same Apple Account on both, turn on Wi-Fi and Bluetooth, and bring the locked phone close to this Mac (or plug it in with a cable). It then appears in this list.{' '}
+                  <button className="link-btn" onClick={() => void refresh()}>Look again</button>
+                </div>
+              ) : null}
             </>
           )}
         </PillMenu>
@@ -1129,6 +1338,17 @@ export function Record() {
                 onChange={(v) => setPrefs({ captureKeys: v })}
               />
               <Toggle label="Show speaker notes" hint="A floating notepad that is not recorded." checked={notesOpen} onChange={toggleNotes} />
+              <Toggle
+                label="Show my camera while recording"
+                hint="A floating bubble only you can see. The camera is its own track, so the bubble is never in the screen recording."
+                checked={!settings?.selfView?.hidden}
+                onChange={(v) =>
+                  void api()
+                    .app.setSettings({ selfView: { ...(settings?.selfView ?? {}), hidden: !v } })
+                    .then((next) => useApp.getState().setSettings(next))
+                    .catch((e) => useApp.getState().toast(errorText(e), 'error'))
+                }
+              />
               <div className="sep" />
               <div className="row between">
                 <span className="rb-opt-label">Frame rate</span>
@@ -1159,7 +1379,7 @@ export function Record() {
         <div className="countdown" role="alertdialog" aria-label="Recording starts soon">
           <div key={count} className="countdown-num">{count}</div>
           <div className="muted">Recording starts at zero.</div>
-          <Button size="lg" onClick={() => setPhase('setup')}>Cancel <span className="kbd" style={{ marginLeft: 6 }}>esc</span></Button>
+          <Button size="lg" onClick={cancelCountdown}>Cancel <span className="kbd" style={{ marginLeft: 6 }}>esc</span></Button>
         </div>
       ) : null}
     </div>

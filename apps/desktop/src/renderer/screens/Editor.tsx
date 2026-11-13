@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { flagsOf, fmtTime, type Range } from '@cutaway/core';
-import { timeMapOf, useApp, usePlayback, useShownProject } from '../state/store';
+import { readOnly, timeMapOf, useApp, usePlayback, useShownProject, viewedProject } from '../state/store';
 import { acceptComparison, discardComparison, reviseSection } from '../state/jobs';
 import { Preview, type PreviewPoint } from '../engine/Preview';
 import { Icon } from '../ui/icons';
@@ -10,6 +10,7 @@ import { Inspector } from './editor/Inspector';
 import { CropSheet } from './editor/CropSheet';
 import { SensitiveSheet } from './editor/SensitiveSheet';
 import { commandForEvent } from '../state/keymap';
+import { stepVersion } from '../state/chat';
 import { addMask, addOverlay, addZoom, cutRange, lockRange, patchItem, playheadSource, removeSelected, seekSource, selectedRange, setLayout, splitSelected } from './editor/ops';
 import './editor/editor.css';
 
@@ -216,10 +217,45 @@ function CompareBar() {
   );
 }
 
+/** Keys that still work while an earlier version is being looked at: they only move the playhead. */
+const VIEW_ONLY_KEYS = new Set(['frame-back', 'frame-forward', 'second-back', 'second-forward', 'flag-prev', 'flag-next', 'version-prev', 'version-next']);
+
+/** Shown while an earlier checkpoint is on screen. Looking changes nothing; restoring is one undoable step. */
+function VersionBar() {
+  const v = useApp((s) => s.viewing);
+  const rec = useApp((s) => (s.viewing && s.project ? (s.project.revisions.find((r) => r.revision === s.viewing!.revision && r.label === s.viewing!.label) ?? s.project.revisions.find((r) => r.revision === s.viewing!.revision) ?? null) : null));
+  const isLatest = useApp((s) => !!s.viewing && s.project?.revision === s.viewing.revision);
+  if (!v) return null;
+  const app = () => useApp.getState();
+  return (
+    <div className="compare-bar version-bar" role="region" aria-label="Viewing an earlier version" data-testid="version-bar">
+      <div className="row between">
+        <div className="row" style={{ minWidth: 0 }}>
+          <span className="pill"><Icon name="history" size={10} /> {v.showing === 'version' ? 'Viewing a version' : 'Latest, for comparison'}</span>
+          <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} data-testid="version-label">{v.label}</span>
+          {rec ? <span className="tiny dim">{new Date(rec.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span> : null}
+        </div>
+        <div className="row">
+          {isLatest ? (
+            <span className="tiny dim">This is the edit you have now.</span>
+          ) : (
+            <Segmented value={v.showing} onChange={(side) => app().showViewing(side)} options={[{ value: 'version', label: 'This version' }, { value: 'latest', label: 'Latest' }]} label="Compare with latest" />
+          )}
+          <Button onClick={() => app().exitViewing()} data-testid="version-back">Back to latest</Button>
+          {isLatest ? null : (
+            <Button variant="primary" icon="history" onClick={() => app().restoreViewed()} data-testid="version-restore">Restore this version</Button>
+          )}
+        </div>
+      </div>
+      <div className="tiny muted" style={{ marginTop: 6 }}>Nothing is changed by looking. Play it, scrub it, open the panels. Editing is off until you go back or restore.</div>
+    </div>
+  );
+}
+
 /** Move the playhead to the next or previous recording flag that is still in the video. */
 function jumpFlag(dir: 1 | -1) {
   const app = useApp.getState();
-  const p = app.project;
+  const p = viewedProject(app) ?? app.project;
   if (!p) return;
   const flags = flagsOf(p);
   if (!flags.length) return app.toast('This recording has no flags. Press the flag shortcut while recording to mark a moment.');
@@ -236,7 +272,7 @@ function jumpFlag(dir: 1 | -1) {
 export function Editor() {
   const project = useShownProject();
   const selection = useApp((s) => s.selection);
-  const comparing = useApp((s) => !!s.comparison);
+  const comparing = useApp(readOnly);
   const inspector = useApp((s) => s.panels.inspector);
   const [zoom, setZoom] = useState(0);
   const [pick, setPick] = useState<Pick>(null);
@@ -281,6 +317,7 @@ export function Editor() {
         if (r) lockRange(r);
       } else if (cmd === 'toggle-timeline') useApp.getState().patch((q) => ({ ...q, ui: { ...q.ui, expandedTimeline: !q.ui.expandedTimeline } }));
       else if (cmd === 'flag-next' || cmd === 'flag-prev') jumpFlag(cmd === 'flag-next' ? 1 : -1);
+      else if (cmd === 'version-prev' || cmd === 'version-next') stepVersion(cmd === 'version-next' ? 1 : -1);
       else if (cmd === 'crop' && p.sources.some((x) => x.role === 'screen')) setSheet('crop');
       else if (cmd === 'find-sensitive' && p.sources.some((x) => x.role === 'screen')) setSheet('sensitive');
     };
@@ -297,18 +334,21 @@ export function Editor() {
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
       const app = useApp.getState();
-      const p = app.project;
+      // While an earlier version is on screen, the keys move around in that version and change nothing.
+      const p = viewedProject(app) ?? app.project;
       // A sheet or the command menu on top owns the keyboard.
       if (!p || app.comparison || document.querySelector('.scrim, .qs')) return;
       if (e.key === 'Escape') {
         setPick(null);
-        app.select(null);
+        if (app.viewing) app.exitViewing();
+        else app.select(null);
         return;
       }
       // Bindings come from the keymap, so shortcuts changed in Settings apply here. ⌦ always removes, like ⌫.
       const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
       const cmd = commandForEvent(e) ?? (e.key === 'Delete' && plain ? 'delete' : null);
       if (!cmd) return;
+      if (app.viewing && !VIEW_ONLY_KEYS.has(cmd)) return;
       const fps = p.edit.appearance.output.fps;
       const pb = usePlayback.getState();
       const step = (seconds: number) => (e.preventDefault(), pb.seek(Math.max(0, Math.min(timeMapOf(p).outDuration, pb.time + seconds))));
@@ -347,6 +387,14 @@ export function Editor() {
         case 'flag-next':
           e.preventDefault();
           jumpFlag(1);
+          break;
+        case 'version-prev':
+          e.preventDefault();
+          stepVersion(-1);
+          break;
+        case 'version-next':
+          e.preventDefault();
+          stepVersion(1);
           break;
         case 'mark-in':
           setMark(playheadSource(p));
@@ -404,7 +452,7 @@ export function Editor() {
   const scissors = () => {
     const app = useApp.getState();
     const p = app.project;
-    if (!p || app.comparison) return;
+    if (!p || readOnly(app)) return;
     const r = selectedRange(app.selection);
     if (r) return cutRange(r, app.selection?.kind === 'words' ? 'transcript' : 'manual');
     if (splitSelected(p)) return;
@@ -431,6 +479,7 @@ export function Editor() {
           </div>
         ) : null}
         <CompareBar />
+        <VersionBar />
         <div className="stage-preview">
           {!comparing ? <PreviewToolbar pickMask={() => setPick('mask')} findSensitive={() => setSheet('sensitive')} /> : null}
           <Preview onPointer={pick ? onPointer : undefined} cursorStyle={pick ? 'crosshair' : undefined} selectedMaskId={selection?.kind === 'mask' ? selection.id : null} />

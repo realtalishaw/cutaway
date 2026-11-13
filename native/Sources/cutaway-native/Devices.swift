@@ -43,11 +43,19 @@ enum RequestScreenCommand {
 enum DeviceCatalog {
     static func cameras() -> [AVCaptureDevice] {
         let session = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
+            deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera, .deskViewCamera],
             mediaType: .video,
             position: .unspecified)
         var seen = Set<String>()
         return session.devices.filter { seen.insert($0.uniqueID).inserted }
+    }
+
+    /// "iphone" for Continuity Camera (wireless or USB), "deskview" for its Desk View, else "builtin" / "external".
+    static func kind(of d: AVCaptureDevice) -> String {
+        if d.deviceType == .deskViewCamera { return "deskview" }
+        if d.deviceType == .continuityCamera || d.isContinuityCamera { return "iphone" }
+        if d.deviceType == .builtInWideAngleCamera { return "builtin" }
+        return "external"
     }
 
     static func microphones() -> [AVCaptureDevice] {
@@ -132,7 +140,7 @@ enum DevicesCommand {
 
         let cameras: [[String: Any]] = DeviceCatalog.cameras().map { d in
             [
-                "id": d.uniqueID, "name": d.localizedName,
+                "id": d.uniqueID, "name": d.localizedName, "kind": DeviceCatalog.kind(of: d),
                 "formats": DeviceCatalog.formats(of: d).map { ["width": $0.width, "height": $0.height, "maxFps": r3($0.maxFps)] },
             ]
         }

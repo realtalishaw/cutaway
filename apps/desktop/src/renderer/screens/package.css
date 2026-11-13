@@ -500,3 +500,41 @@
   align-items: center;
   gap: 6px;
 }
+
+/* ── AI pictures ── */
+.art-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.art-item {
+  position: relative;
+  margin: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-2, #1b1d22);
+  border: 1px solid transparent;
+}
+.art-item.on {
+  border-color: var(--accent-border, #4f4d71);
+}
+.art-item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+.art-item figcaption {
+  padding: 4px;
+}
+.art-tag {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(8, 9, 13, 0.72);
+  color: #fff;
+}

@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { applyOps, fmtTime, proposePacing, sentences, type EditOp, type Project, type Range, type Word } from '@cutaway/core';
-import { timeMapOf, useApp, usePlayback, useShownProject } from '../../state/store';
+import { timeMapOf, useApp, usePlayback, useShownProject, readOnly } from '../../state/store';
 import { Icon } from '../../ui/icons';
 import { Button, Empty } from '../../ui/kit';
 import { cutRange, lockRange, restore, seekSource } from './ops';
@@ -32,7 +32,7 @@ export function Transcript() {
   const selection = useApp((s) => s.selection);
   const select = useApp((s) => s.select);
   const textSize = useApp((s) => s.settings?.transcriptTextSize ?? 15);
-  const comparing = useApp((s) => !!s.comparison);
+  const comparing = useApp(readOnly);
   const [fixing, setFixing] = useState<{ id: string; draft: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);

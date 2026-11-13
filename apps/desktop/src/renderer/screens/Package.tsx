@@ -27,6 +27,9 @@ import { drawThumbnail, hitTest, layerBox, layerFailed, layerLabel, prepareThumb
 import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Modal, Segmented, Slider, Toggle } from '../ui/kit';
 import './package.css';
+import { CraftWarnings } from './package/CraftWarnings';
+import { ArtPanel } from './package/ArtPanel';
+import { aiInfo, consentCovers, useAiInfo } from '../state/jobs';
 
 type TextLayer = Extract<ThumbnailLayer, { kind: 'text' }>;
 type ShapeLayer = Extract<ThumbnailLayer, { kind: 'shape' }>;
@@ -622,6 +625,8 @@ function Inspector({ concept, selectedId, onSelect }: { concept: PackagingConcep
       <hr className="hr" />
       <Layers concept={concept} selectedId={selectedId} onSelect={onSelect} />
       <hr className="hr" />
+      <ArtPanel concept={concept} />
+      <hr className="hr" />
       {layer ? (
         <section className="col" style={{ gap: 12 }} key={layer.id}>
           <div className="pkg-heading" style={{ textTransform: 'capitalize' }}>{layer.kind === 'scrim' ? 'Shade' : layer.kind}</div>
@@ -665,8 +670,13 @@ function ConceptCard({ concept, index, focused, selected, onFocus, onChoose, pro
         <div className="row gap-2 wrap">
           <span className={`pill ${concept.origin === 'ai' ? 'ai' : ''}`}>
             <Icon name={concept.origin === 'ai' ? 'sparkle' : 'pencil'} size={10} />
-            {concept.origin === 'ai' ? 'From Claude' : 'From your words'}
+            {concept.origin === 'ai' ? `From ${concept.aiProvider === 'codex' ? 'Codex' : 'Claude'}` : 'From your words'}
           </span>
+          {concept.layers.some((l) => l.kind === 'image' && l.generated) ? (
+            <span className="pill ai" title="The background picture was made by an AI image model" data-testid="art-pill">
+              <Icon name="image" size={10} /> AI picture
+            </span>
+          ) : null}
           {concept.editedByCreator ? (
             <span className="pill you">
               <Icon name="pencil" size={10} /> Edited by you
@@ -697,17 +707,18 @@ function ConceptCard({ concept, index, focused, selected, onFocus, onChoose, pro
 // ───────────────────────────── consent ─────────────────────────────
 
 function ConsentSheet({ onAllow, onDecline, onClose }: { onAllow: () => void; onDecline: () => void; onClose: () => void }) {
-  const d = disclosure(FULL_SCOPE);
+  const ai = useAiInfo();
+  const d = disclosure(FULL_SCOPE, ai.id);
   return (
     <Modal
-      eyebrow="Before anything leaves this Mac"
-      title="Let Claude read the finished cut?"
+      eyebrow={`Before anything leaves this Mac · ${ai.company}`}
+      title={`Let ${ai.name} read the finished cut?`}
       onClose={onClose}
       footer={
         <>
           <Button onClick={onDecline}>Use on-device templates only</Button>
           <Button variant="primary" icon="sparkle" onClick={onAllow} data-autofocus>
-            Allow for this project
+            Allow {ai.company} for this project
           </Button>
         </>
       }
@@ -980,6 +991,7 @@ export function Package() {
         signal: abort.signal,
         settings,
         useClaude,
+        provider: aiInfo().id,
       };
       try {
         const r = await generatePackaging(ctx);
@@ -995,8 +1007,6 @@ export function Package() {
   );
 
   const create = useCallback(async () => {
-    const consent = useApp.getState().project!.consent;
-    const covered = !!consent && FULL_SCOPE.every((s) => consent.scope.includes(s));
     let status = useApp.getState().claude;
     try {
       status = await window.cutaway.ai.status();
@@ -1005,14 +1015,16 @@ export function Package() {
       /* treated as unavailable below */
     }
     const signedIn = !!status?.found && status.signedIn === true;
-    if (!signedIn) return void run(false, !status?.found ? 'Claude Code is not installed on this Mac, so nothing was sent anywhere.' : 'Claude Code is not signed in on this Mac, so nothing was sent anywhere.');
-    if (covered) return void run(true);
+    const app = aiInfo().app;
+    if (!signedIn) return void run(false, !status?.found ? `${app} is not installed on this Mac, so nothing was sent anywhere.` : `${app} is not signed in on this Mac, so nothing was sent anywhere.`);
+    // Asked again after a switch of provider: consent to one never covers the other.
+    if (consentCovers(useApp.getState().project, FULL_SCOPE)) return void run(true);
     setConsentOpen(true);
   }, [run]);
 
   const allow = () => {
     setConsentOpen(false);
-    const d = disclosure(FULL_SCOPE);
+    const d = disclosure(FULL_SCOPE, aiInfo().id);
     useApp.getState().patch((p) => ({ ...p, consent: { provider: d.provider, scope: FULL_SCOPE, grantedAt: new Date().toISOString() } }));
     void run(true);
   };
@@ -1021,6 +1033,7 @@ export function Package() {
   const running = gen.status === 'running';
   const stage = gen.stages.find((s) => s.status === 'running') ?? gen.stages[gen.stages.length - 1] ?? null;
   const claude = useApp((s) => s.claude);
+  const ai = useAiInfo();
 
   const consent = consentOpen ? <ConsentSheet onAllow={allow} onDecline={() => (setConsentOpen(false), void run(false))} onClose={() => setConsentOpen(false)} /> : null;
 
@@ -1030,7 +1043,7 @@ export function Package() {
         <span className="row" style={{ gap: 8 }}>
           <span className="spinner" />
           <b>{stage?.label ?? 'Creating concepts'}</b>
-          {stage?.remote ? <span className="pill ai">Sending text and stills to Claude</span> : <span className="pill">On this Mac</span>}
+          {stage?.remote ? <span className="pill ai">Sending text and stills to {ai.name}</span> : <span className="pill">On this Mac</span>}
         </span>
         <Button size="sm" variant="ghost" onClick={() => gen.abort?.abort()}>
           Cancel
@@ -1072,8 +1085,8 @@ export function Package() {
                 <div className="row between wrap" style={{ gap: 12 }}>
                   <span className="tiny dim" style={{ maxWidth: 420 }}>
                     {claude?.found && claude.signedIn
-                      ? 'With your permission, Claude reads the transcript and a few stills. Video and audio never leave this Mac.'
-                      : 'Claude Code is not signed in on this Mac, so concepts are built on-device from your own words. Sign in from Settings to use Claude.'}
+                      ? `With your permission, ${ai.name} reads the transcript and a few stills (sent to ${ai.company}). Video and audio never leave this Mac.`
+                      : `${ai.app} is not signed in on this Mac, so concepts are built on-device from your own words. Sign in from Settings to use ${ai.name}.`}
                   </span>
                   <div className="row">
                     {claude?.found && claude.signedIn ? (
@@ -1151,6 +1164,7 @@ export function Package() {
             </div>
             <ThumbEditor key={focused.id} concept={focused} selectedId={layerId} onSelect={setLayerId} />
             <TitleCard concept={focused} others={others} />
+            <CraftWarnings concept={focused} />
             <BrowsePreview concept={focused} duration={map.outDuration} />
             <TextSection project={project} />
           </section>

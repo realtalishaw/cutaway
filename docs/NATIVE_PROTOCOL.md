@@ -385,3 +385,99 @@ Recognises text on sampled frames of a screen recording with Vision, on this Mac
 - Privacy: the command writes nothing to disk and logs no text. The app's main process classifies each line
   in memory (`findSensitive` in `packages/core/src/sensitive.ts`) and passes on only a category and a box;
   the recognised text never reaches the renderer, the project file or a log.
+
+## Recorder additions: self-view stills, window crop, browser tabs
+
+### Camera stills for the self-view (`cameraPreview`)
+
+`record` config: `"cameraPreview": {"fps": 12, "width": 480}`. While set, every camera source
+also emits small JPEG stills on stdout, taken from the very buffers being recorded:
+
+```json
+{"type":"preview","source":"cameraA","width":480,"height":270,"jpeg":"<base64>"}
+```
+
+The app shows them in a floating bubble so the creator can see themselves during a take. They
+exist so the app never opens the camera a second time (a second reader can renegotiate the
+device's format under the recording). Encoding never blocks capture: a still is skipped while
+the previous one is being encoded. stdin `preview-off` / `preview-on` pause and resume them
+(the app sends `preview-off` while the bubble is hidden). They start before the take's clock
+does and continue while paused. `devices` cameras carry `"kind"`: `builtin`, `external`,
+`iphone` (Continuity Camera, wireless or USB) or `deskview`; the embedded Info.plist carries
+`NSCameraUseContinuityCameraDeviceType`.
+
+### Window crop (`screen.crop`)
+
+For `"type": "window"`: `"crop": {"top": 87, "left": 0, "bottom": 0, "right": 0}` in points leaves
+those margins out (a browser's tab strip and toolbar). It is applied as the stream's source
+rectangle relative to the window, so it holds when the window moves. When the window is resized
+the same margins are applied to the new size and the picture, which keeps its pixel size, is
+scaled to fit. `pointWidth`/`pointHeight` and cursor positions refer to the cropped area. A crop
+that would leave less than 64 points on a side is ignored.
+
+### `browser-tabs [--ask <bundleId>]`
+
+Tabs of the running browsers (Safari, Safari Technology Preview, Chrome, Edge, Brave, Vivaldi, Arc):
+
+```json
+{"accessibility":"granted|denied","browsers":[{"bundleId":"com.apple.Safari","name":"Safari","pid":123,
+  "permission":"granted|denied|undetermined|not-running|unknown","tabs":[
+    {"window":1,"tab":2,"active":true,"title":"…","host":"example.com","windowId":4321,"x":0,"y":25,"width":1440,"height":900}]}]}
+```
+
+Listing goes through Apple Events, which macOS gates per browser. The state is read with
+`AEDeterminePermissionToAutomateTarget` **without prompting**; the system prompt is shown only
+for the browser named by `--ask`. Tabs are returned only for browsers with `granted`. Only the
+tab title and the host name are read: the rest of each address is dropped inside the helper and
+nothing is logged. `windowId` is absent for windows that are minimised or on another desktop.
+
+`browser-tabs --select --bundle <id> --window <n> --tab <n> [--raise]` brings that tab to the
+front of its window (`--raise` also brings the window and the browser forward) and returns the
+window with its page area:
+
+```json
+{"bundleId":"…","window":1,"tab":2,"windowId":4321,"x":0,"y":25,"width":1440,"height":900,
+ "content":{"top":87,"left":0,"bottom":0,"right":0,"method":"accessibility|estimate"},"accessibility":"granted|denied"}
+```
+
+`content` is the margin around the web page inside the window. With Accessibility permission it
+is measured (the window's `AXWebArea`); without it, it is a per-browser estimate of the tab strip
+and toolbar height (Safari 88, Chromium browsers 87, Arc 44 points) and the app offers a manual
+trim. `browser-tabs --content --bundle <id> --window-id <n>` measures again without selecting.
+The app records the tab as `{"type":"window","windowId":…,"crop":content}`.
+
+## Process lifetime (every command)
+
+A helper is never left running after it has stopped being useful.
+
+* **Parent gone.** Each command watches its parent process once a second. When
+  the app that started it has gone (the helper would be re-parented to
+  launchd), a recording is asked to finalise with stop reason `parent-exited`
+  and the process exits within 8 seconds; any other command exits at once.
+* **Deadlines.** Commands that answer in seconds end with a `timeout` error if
+  they run long: `devices`, `request-screen`, `voices`, `speech-status`,
+  `resize-window` 40 s; `probe` 90 s; `preflight`, `browser-tabs` 180 s (they
+  can wait on a macOS permission prompt).
+* **Signals.** `SIGTERM` or `SIGINT` during `record` asks for a normal stop;
+  the process exits within 10 seconds even if a system call never returns.
+  After `stdin` closes the limit is 20 seconds.
+* **Timeouts are real.** `withTimeout` runs the guarded call in its own task
+  and returns when the time is up. It must not be built on a task group: the
+  ScreenCaptureKit calls do not respond to cancellation, and a group waits for
+  its children, so the timeout would never return.
+* **Closed pipes.** Writing to `stdout` or `stderr` after the reader has gone
+  is ignored (no exception, no crash report).
+
+Why this exists: a helper stuck in a ScreenCaptureKit call keeps reconnecting
+to the capture service (`replayd`). With two such leftovers on the reference
+Mac, every new screen or window stream was dropped with "Failed during stream
+due to application connection being interrupted" until they were ended.
+
+### Screen stream start
+
+`record` makes two attempts to start the screen stream, 8 seconds each, the
+second on a newly built stream. A stream that is accepted and then dropped
+within 350 ms counts as a failed attempt. If both fail the command ends with a
+fatal `capture-failed` error and leaves no take folder behind. A stream that
+stops on its own before `started` is also fatal (`capture-failed`); after
+`started` it is reported as the non-fatal `screen-stopped` plus `source-lost`.
