@@ -40,6 +40,7 @@ Unit tests: 140 passing (core 73, AI layer 34, desktop 33).
 | Recording and editing UX (`e2e/ux.mjs`) | 52/52: quick share after a take, flags during recording (survive `kill -9`), crop sheet, shortcut rebinding with conflict handling, sensitive-data scan on a frame of made-up secrets with no recognised text written to disk. |
 | Looks (`e2e/render-parity.mjs`) | 56/56: a red↔blue 3D LUT swaps the exported pixel, 50% strength lands halfway, identity LUT 58 dB PSNR, GPU and CPU paths agree, sharpening raises edge contrast only, graded 1080p30 export at 106 fps, image search end to end against a local mock. |
 | Screen Recording permission screens (`e2e/permissions.mjs`) | 9/9 with the state pinned to "not allowed": Allow…, then the settings card, System Settings request recorded, state remembered. |
+| **AI pass through the real Claude Code CLI** (`e2e/claude-real.mjs`, CLI 2.1.193, signed in) | 9/9. First cut in "claude" mode on the 38.1 s fixture: 9 cuts, 3 view changes, 4 zooms at the project's 1.8×, 2 graphics, 1 suggestion left for review, 22.6 s out; 339 s end to end including transcription and stills. A section revision ("no zooms, screen only") came back from Claude as a comparison and changed only that section. Three thumbnail/title concepts came from Claude. |
 | Packaged `Cutaway.app` (`e2e/packaged.mjs`) | Boots, finds its bundled helper, probes, analyses and imports media. |
 
 Core behaviours covered by unit tests: time map through cuts and speed;
@@ -57,7 +58,7 @@ complete export.
 
 | Item | Status |
 | --- | --- |
-| **Claude editorial pass and AI thumbnail/title concepts** | Code and prompts are written and tested against a fake CLI. No real model call was possible: the `claude` command on this Mac answers "Not logged in" in the owner's own terminal (the saved login has no refresh token and is expired). `e2e/claude-real.mjs` is ready and skips until `claude auth login` is done. |
+| Claude on real footage beyond the fixture | The fixture run below passed. Prompt quality on long, real recordings, and the time a long take needs, are not measured. |
 | **The real macOS Screen Recording prompt** | The request path (`request-screen` → `CGRequestScreenCaptureAccess`) is new. The permission screens are tested with a pinned state; switching the toggle in System Settings is the owner's action. |
 | **Camera capture and camera previews** | Code-complete. Camera permission on this Mac is undetermined and granting it is the owner's action. |
 | **Two physical cameras at once** | Verified only through the helper's synthetic mode (same clock, writers, manifest and recovery code). One camera is attached here. |
@@ -146,9 +147,8 @@ preferences file on this Mac.
 
 1. **Name and identity.** "Cutaway" is a working choice; no trademark search
    was done beyond a quick web check.
-2. **Sign in to Claude Code** (`claude auth login`) so the editorial pass can
-   be evaluated on real footage, then run `e2e/claude-real.mjs`. Prompt
-   quality is untested until then.
+2. **Judge the AI cut on your own footage.** The pass works end to end on the
+   test fixture; whether its choices suit your videos is yours to decide.
 3. **Reverse engineering Screen Studio.** If you want binary inspection for
    the remaining parity items, the app has to be installed first; check its
    licence terms before doing so.
