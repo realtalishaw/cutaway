@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RP, type ReactNode } from 'react';
-import { clamp, fmtTime, type DecisionMeta, type Project, type Range } from '@cutaway/core';
+import { clamp, flagsOf, fmtTime, type DecisionMeta, type Project, type Range } from '@cutaway/core';
 import { timeMapOf, useApp, usePlayback, useShownProject, type Selection } from '../../state/store';
 import { Icon, type IconName } from '../../ui/icons';
 import { addZoom, patchItem, retime, seekSource } from './ops';
@@ -208,6 +208,7 @@ export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): vo
   const [width, setWidth] = useState(800);
   const [scrollLeft, setScrollLeft] = useState(0);
   const map = timeMapOf(project);
+  const flags = useMemo(() => flagsOf(project), [project.flags]);
   const duration = Math.max(0.1, project.duration);
   const fitPps = Math.max(2, (width - GUTTER - 24) / duration);
   // zoom 0 = whole recording fits; 1 = 240 px per second
@@ -323,6 +324,11 @@ export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): vo
                 <i />
               </span>
             ))}
+            {flags.map((f) => (
+              <button key={f.id} className="tl-flag" style={{ left: f.t * scale }} title={`Flag at ${fmtTime(f.t)}: you marked this moment while recording`} aria-label={`Flag at ${fmtTime(f.t)}. Go to it.`} onPointerDown={(ev) => ev.stopPropagation()} onClick={() => seekSource(project, f.t)}>
+                <Icon name="flag" size={11} />
+              </button>
+            ))}
           </div>
 
           <Lane kind="clip" height={48} onBackground={ro ? undefined : clipHandlers}>
@@ -410,6 +416,9 @@ export function Timeline({ zoom, onZoom }: { zoom: number; onZoom(z: number): vo
 
           {/* locks span every lane */}
           <div className="tl-locks" style={{ left: GUTTER }}>
+            {flags.map((f) => (
+              <i key={f.id} className="tl-flagline" style={{ left: f.t * scale }} />
+            ))}
             {e.locks.map((l) => (
               <button key={l.id} className={`tl-lock${isSel('lock', l.id) ? ' selected' : ''}`} style={{ left: l.start * scale, width: Math.max(4, (l.end - l.start) * scale) }} title={`Locked: ${l.note}`} onClick={() => select({ kind: 'lock', id: l.id })}>
                 <Icon name="lock" size={10} />

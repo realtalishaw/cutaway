@@ -30,9 +30,16 @@ pnpm package      # → apps/desktop/release/mac-arm64/Cutaway.app
 ```
 
 The first recording asks macOS for Screen Recording, Camera and Microphone
-permission, one source at a time and only for the sources you switch on. In
-`pnpm dev` macOS shows the app as "Electron"; the packaged app shows as
-"Cutaway".
+permission, one source at a time and only for the sources you switch on.
+
+**Screen recording permission.** Press **Allow…** on the recorder. macOS shows
+its prompt once and adds the app to System Settings → Privacy & Security →
+Screen & System Audio Recording; switch it on there and come back (the
+recorder notices without a restart). The entry is "Cutaway" for the packaged
+app, and the terminal or editor you ran `pnpm dev` from in development. Because
+the package is ad-hoc signed, macOS treats every rebuild as a new app: after
+`pnpm package`, switch the entry off and on again, or sign the build with a
+real certificate.
 
 ### AI features use your own Claude Code
 
@@ -40,8 +47,14 @@ Cutaway has no API key and no server. The editorial pass and the
 thumbnail/title concepts run through the **Claude Code CLI already installed
 on your Mac**, using your existing sign-in:
 
+Cutaway finds and runs `claude` through your login shell, so it is the same
+command, PATH and environment as your terminal. If that command says "Not
+logged in", so does Cutaway: choose **Sign in to Claude Code…** in Settings or
+on the brief screen (it opens Terminal on `claude auth login`), or run it
+yourself:
+
 ```bash
-claude            # then type /login once
+claude auth login
 ```
 
 Be clear about what that means: the model does not run on your Mac. When you
@@ -73,12 +86,19 @@ still yours.
 ## Tests
 
 ```bash
-pnpm test                               # 91 unit tests (core, AI layer, jobs)
+pnpm test                               # 140 unit tests (core, AI layer, desktop)
 ./fixtures/make.sh                      # generate test footage (needs ffmpeg + say)
 pnpm --filter @cutaway/desktop build
 pnpm --filter @cutaway/desktop e2e      # journeys through the real app and helper
+node apps/desktop/e2e/ux.mjs            # quick share, flags, crop, shortcuts, sensitive data
+node apps/desktop/e2e/render-parity.mjs # frame checks: looks, LUTs, sharpening, motion
+node apps/desktop/e2e/permissions.mjs   # the Screen Recording permission screens
 pnpm --filter @cutaway/desktop e2e:real # records your real screen for 7 s (needs permission)
+node apps/desktop/e2e/claude-real.mjs   # the AI pass through your signed-in Claude Code (uses your account)
 ```
+
+Every other end-to-end run sets `CUTAWAY_CLAUDE=off`, so tests never call
+Claude or depend on your sign-in.
 
 The end-to-end scripts launch the built app against a throwaway profile, so
 they never touch your real projects.

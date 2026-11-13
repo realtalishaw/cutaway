@@ -46,13 +46,14 @@ export const EXPORT_STAGES: { id: ExportStage; label: string }[] = [
   { id: 'commit', label: 'Move the package into place' },
 ];
 
-export type ExportFormat = 'mp4' | 'gif';
+/** 'mov' is ProRes 422 in a QuickTime movie. */
+export type ExportFormat = 'mp4' | 'mov' | 'gif';
 export type ExportTarget = 'file' | 'clipboard' | 'package';
 
-/** Stages of a single-file export (MP4 or GIF, to a folder or the clipboard). */
+/** Stages of a single-file export (MP4, ProRes or GIF, to a file or the clipboard). */
 export function fileStages(format: ExportFormat, target: ExportTarget): { id: ExportStage; label: string }[] {
   return [
-    { id: 'prepare', label: 'Reserve the folder' },
+    { id: 'prepare', label: 'Reserve the file name' },
     { id: 'video', label: 'Render the video' },
     ...(format === 'gif' ? [{ id: 'gif' as const, label: 'Convert to GIF' }] : []),
     { id: 'validate', label: 'Check the file' },
@@ -144,6 +145,24 @@ export function estimateExportBytes(project: Project, bitrate?: number | null): 
   return Math.round((((bitrate ?? estimateVideoBitrate(width, height, fps)) + 192_000) / 8) * out + 6_000_000);
 }
 
+/**
+ * True once the renderer can hand its result to the ProRes encoder. Until then
+ * the format is not offered.
+ */
+export const PRORES_SUPPORTED = (exporterModule as unknown as Record<string, unknown>).RENDER_SUPPORTS_PRORES === true;
+
+/** Apple's published target rate for ProRes 422 (147 Mbps at 1920×1080, 29.97 fps), scaled to the output. */
+export function proresBitrate(width: number, height: number, fps: number): number {
+  return Math.round(147e6 * ((width * height) / (1920 * 1080)) * (fps / 29.97));
+}
+
+/** Rough size of a ProRes 422 export: the video at Apple's target rate plus uncompressed 48 kHz stereo sound. */
+export function estimateProresBytes(project: Project): number {
+  const { width, height, fps } = project.edit.appearance.output;
+  const out = TimeMap.fromEdit(project.duration, project.edit).outDuration;
+  return Math.round(((proresBitrate(width, height, fps) + 48000 * 16 * 2) / 8) * out);
+}
+
 /** Rough size of a single exported video file. */
 export function estimateVideoBytes(project: Project, bitrate: number): number {
   const out = TimeMap.fromEdit(project.duration, project.edit).outDuration;
@@ -174,7 +193,7 @@ function messageFor(code: string, e: unknown): string {
   if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') return 'Cutaway is not allowed to write to this folder. Choose another folder and export again.';
   if (code === 'ENOENT') return 'The destination folder is no longer there (a drive may have been unplugged). Choose another folder and export again.';
   if (code === 'missing-source') return `A source file is missing: ${e instanceof Error ? e.message : String(e)}`;
-  if (code === 'exists') return 'A folder with this name appeared while exporting. Nothing was overwritten; export again to use a new name.';
+  if (code === 'exists') return 'Something with this name appeared while exporting. Nothing was overwritten; export again to use a new name.';
   return e instanceof Error ? e.message : String(e);
 }
 
@@ -428,14 +447,19 @@ export function startPackageExport(args: Omit<PackageExportArgs, 'onProgress' | 
   });
 }
 
-// ───────────────────────────── single-file export (MP4 or GIF, to a folder or the clipboard) ─────────────────────────────
+// ───────────────────────────── single-file export (MP4, ProRes or GIF, to a file or the clipboard) ─────────────────────────────
 
 export interface FileExportArgs {
   project: Project;
   projectPath: string;
+  /** Used when `filePath` is not given: the file gets a free name in this folder. */
   destDir: string;
   format: ExportFormat;
   target: 'file' | 'clipboard';
+  /** Where the creator chose to save the file. */
+  filePath?: string | null;
+  /** The creator picked an existing file in the save dialog and agreed to replace it. */
+  replace?: boolean;
   /** GIF only: frames per second and pixels on the short side. */
   gif: { fps: number; short: number };
   bitrate?: number | null;
@@ -444,19 +468,16 @@ export interface FileExportArgs {
   render?: (args: RenderArgs) => Promise<RenderResult>;
 }
 
-function fileFolderName(projectName: string, format: ExportFormat, existing: string[]): string {
-  const base = `${slugify(projectName)}-${format === 'gif' ? 'gif' : 'video'}`;
-  const taken = new Set(existing);
-  if (!taken.has(base)) return base;
-  for (let i = 2; i < 1000; i++) if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
-  return `${base}-${Date.now()}`;
-}
+const dirOf = (p: string) => p.slice(0, Math.max(1, p.lastIndexOf('/')));
+const nameOf = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 
 /**
- * Export one video or GIF file. Like the package export it never throws,
- * writes into a hidden working folder first and never overwrites anything:
- * the file lands in its own new folder. With target 'clipboard' the finished
- * file is also put on the clipboard so it can be pasted into another app.
+ * Export one video or GIF as a single file. Like the package export it never
+ * throws. The file is assembled in a hidden working folder beside its
+ * destination and renamed into place when complete, so nothing half-written
+ * ever carries the final name, and an existing file is only replaced when the
+ * creator agreed to that in the save dialog. With target 'clipboard' the
+ * finished file is also put on the clipboard so it can be pasted elsewhere.
  */
 export async function runFileExport(args: FileExportArgs): Promise<PackageExportResult> {
   const { projectPath, destDir, format, target, signal } = args;
@@ -470,12 +491,11 @@ export async function runFileExport(args: FileExportArgs): Promise<PackageExport
       : args.project;
   const { width, height, fps } = project.edit.appearance.output;
   const slug = slugify(project.name);
-  const finalName = `${slug}.${format}`;
   const notes: string[] = [];
   const createdAt = new Date().toISOString();
   let stage: ExportStage = 'prepare';
   let sessionId: string | null = null;
-  let folderName = fileFolderName(project.name, format, []);
+  let filePath = args.filePath ?? `${destDir}/${slug}.${format}`;
   let video: RenderResult | null = null;
   let finalBytes = 0;
   let committed: string | null = null;
@@ -486,10 +506,11 @@ export async function runFileExport(args: FileExportArgs): Promise<PackageExport
   const guard = () => {
     if (signal.aborted) throw Object.assign(new Error('Export cancelled.'), { code: 'cancelled' });
   };
-  const record = (status: ExportRecord['status'], folder: string, files: ExportRecord['files'], failedStage?: ExportStage): ExportRecord => ({
+  // For a single file the record points at the file itself, so history can reveal it.
+  const record = (status: ExportRecord['status'], files: ExportRecord['files'], failedStage?: ExportStage): ExportRecord => ({
     id: uid('exp'),
     revision: project.revision,
-    folder,
+    folder: filePath,
     createdAt,
     status,
     draft: false,
@@ -497,11 +518,13 @@ export async function runFileExport(args: FileExportArgs): Promise<PackageExport
     settings: { width, height, fps: format === 'gif' ? args.gif.fps : fps },
     failedStage,
   });
+  const fileNote = format === 'gif' ? `Animated GIF, ${args.gif.fps} fps` : format === 'mov' ? `${width}×${height}, ${fps} fps, ProRes 422 + PCM` : `${width}×${height}, ${fps} fps, H.264 + AAC`;
   try {
     guard();
-    step('prepare', 'Choosing a folder name that does not collide with an earlier export…');
-    folderName = fileFolderName(project.name, format, await api.existingFolders(destDir));
-    sessionId = (await api.begin(destDir, folderName)).id;
+    step('prepare', 'Reserving the file name…');
+    if (!args.filePath) filePath = await api.freeFilePath(destDir, `${slug}.${format}`);
+    const finalName = nameOf(filePath);
+    sessionId = (await api.beginFile(filePath)).id;
 
     guard();
     step('video', 'Starting the encoder…');
@@ -512,8 +535,11 @@ export async function runFileExport(args: FileExportArgs): Promise<PackageExport
       sessionId,
       fileName: videoName,
       signal,
+      ...(format === 'mov' ? { codec: 'prores422' as const } : {}),
       ...(args.bitrate && format === 'mp4' ? { bitrate: args.bitrate } : {}),
-      onProgress: (r) => (noteSpeed(r, width, height), step('video', r.stage === 'audio' ? 'Mixing audio…' : r.stage === 'finalize' ? 'Finalising the MP4…' : r.stage === 'prepare' ? 'Opening the sources…' : 'Encoding frames…', r)),
+      onProgress: (r) =>
+        (noteSpeed(r, width, height),
+        step('video', r.stage === 'audio' ? 'Mixing audio…' : r.stage === 'finalize' ? (format === 'mov' ? 'Encoding ProRes 422. This step cannot report progress…' : 'Finalising the MP4…') : r.stage === 'prepare' ? 'Opening the sources…' : 'Encoding frames…', r)),
     });
     finalBytes = video.bytes;
     guard();
@@ -525,37 +551,40 @@ export async function runFileExport(args: FileExportArgs): Promise<PackageExport
       notes.push(`${g.frames.toLocaleString()} frames at ${args.gif.fps} fps, ${width}×${height}. GIFs have no sound.`);
       guard();
     }
+    if (format === 'mov') notes.push('ProRes 422 with uncompressed sound, for editing in another app. It is made from a high-bitrate 8-bit render of the edit.');
 
     step('validate', 'Confirming the file is on disk and not empty…');
     const st = await api.stat(sessionId, finalName);
     if (!st || st.bytes <= 0) throw Object.assign(new Error(`${finalName} is missing or empty.`), { code: 'validation-failed' });
     finalBytes = st.bytes;
+    guard();
 
     step('commit', 'Moving the file into place…');
-    const done = await api.commit(sessionId, [finalName]);
+    const done = await api.commitFile(sessionId, finalName, !!args.replace);
     sessionId = null;
-    committed = done.folder;
-    const files: ExportRecord['files'] = done.files.map((f) => ({ name: f.name, bytes: f.bytes, ok: f.bytes > 0, note: format === 'gif' ? `Animated GIF, ${args.gif.fps} fps` : `${width}×${height}, ${fps} fps, H.264 + AAC` }));
+    committed = done.path;
+    const files: ExportRecord['files'] = [{ name: finalName, bytes: done.bytes, ok: done.bytes > 0, note: fileNote }];
 
     if (target === 'clipboard') {
       step('clipboard', 'Putting the file on the clipboard…');
-      await window.cutaway.app.copyFile(`${done.folder}/${finalName}`);
+      await window.cutaway.app.copyFile(done.path);
       notes.push('The file is on the clipboard. Paste it into Finder, Slack, Mail, Messages or any app that accepts files.');
     }
-    return { status: 'complete', folder: done.folder, folderName, files, failedStage: null, error: null, record: record('complete', done.folder, files), notes, video };
+    return { status: 'complete', folder: dirOf(done.path), folderName: finalName, files, failedStage: null, error: null, record: record('complete', files), notes, video };
   } catch (e) {
     const code = signal.aborted ? 'cancelled' : codeOf(e);
     const error = { code, message: messageFor(code, e) };
     const failedStage = stage;
+    const finalName = nameOf(filePath);
     if (committed) {
       // The file itself is finished and in place; only the clipboard step failed.
-      const files: ExportRecord['files'] = [{ name: finalName, bytes: finalBytes, ok: true }];
+      const files: ExportRecord['files'] = [{ name: finalName, bytes: finalBytes, ok: true, note: fileNote }];
       notes.push('The file was exported, but it could not be put on the clipboard. Copy it from Finder instead.');
-      return { status: 'complete', folder: committed, folderName, files, failedStage, error, record: record('complete', committed, files), notes, video };
+      return { status: 'complete', folder: dirOf(committed), folderName: finalName, files, failedStage, error, record: record('complete', files), notes, video };
     }
     if (sessionId) await api.abort(sessionId, false).catch(() => {});
-    if (code === 'cancelled') return { status: 'cancelled', folder: null, folderName, files: [], failedStage, error, record: null, notes, video };
-    return { status: 'failed', folder: null, folderName, files: [], failedStage, error, record: record('failed', `${destDir}/${folderName}`, [], failedStage), notes, video };
+    if (code === 'cancelled') return { status: 'cancelled', folder: null, folderName: finalName, files: [], failedStage, error, record: null, notes, video };
+    return { status: 'failed', folder: null, folderName: finalName, files: [], failedStage, error, record: record('failed', [], failedStage), notes, video };
   }
 }
 

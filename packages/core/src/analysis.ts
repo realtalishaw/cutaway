@@ -233,8 +233,9 @@ const ZOOM = {
  * Click clusters become candidate zooms. A click is a hint, not proof, so
  * density is capped and calmer styles require a cluster of clicks.
  */
-export function proposeZooms(clicks: { t: Seconds; x: number; y: number }[], duration: Seconds, intensity: Brief['visualIntensity']): EditOp[] {
-  const z = ZOOM[intensity];
+export function proposeZooms(clicks: { t: Seconds; x: number; y: number }[], duration: Seconds, intensity: Brief['visualIntensity'], scale?: number): EditOp[] {
+  // `scale` is the project's default zoom level; without one the intensity picks a scale.
+  const z = { ...ZOOM[intensity], ...(scale ? { scale } : {}) };
   const sorted = [...clicks].filter((c) => c.x >= 0 && c.x <= 1 && c.y >= 0 && c.y <= 1).sort((a, b) => a.t - b.t);
   const clusters: (typeof sorted)[] = [];
   for (const c of sorted) {

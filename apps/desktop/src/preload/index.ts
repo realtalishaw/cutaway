@@ -37,18 +37,19 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: CutawayApi = {
   app: {
-    ...ns<CutawayApi['app']>('app', ['info', 'getSettings', 'setSettings', 'pickFiles', 'pickFolder', 'reveal', 'openPath', 'freeBytes', 'permission', 'requestPermission', 'openPrivacySettings', 'captureThumbnails', 'recordingMode', 'copyFile', 'notesWindow']),
+    ...ns<CutawayApi['app']>('app', ['info', 'getSettings', 'setSettings', 'pickFiles', 'pickFolder', 'reveal', 'openPath', 'freeBytes', 'permission', 'requestPermission', 'openPrivacySettings', 'relaunch', 'captureThumbnails', 'recordingMode', 'copyFile', 'saveCopyAs', 'notesWindow']),
     onMenu: (cb) => on<string>('menu', cb),
     pathForFile: (file) => webUtils.getPathForFile(file),
   },
   library: ns<CutawayApi['library']>('library', ['list', 'create', 'open', 'save', 'rename', 'trash', 'savePoster', 'importMedia', 'recoverable', 'recover', 'discardTake', 'cacheInfo', 'clearCache', 'exists', 'exportBundle']),
-  native: ns<CutawayApi['native']>('native', ['devices', 'preflight', 'probe', 'frames', 'activity', 'transcribe', 'analyzeVoice', 'correlate', 'readCursor', 'readKeys', 'faces', 'matte', 'resizeWindow', 'voices', 'speak']),
+  native: ns<CutawayApi['native']>('native', ['devices', 'preflight', 'probe', 'frames', 'activity', 'transcribe', 'analyzeVoice', 'correlate', 'readCursor', 'readKeys', 'faces', 'matte', 'resizeWindow', 'voices', 'speak', 'removeVoiceover', 'sensitive']),
   record: {
-    ...ns<CutawayApi['record']>('record', ['start', 'pause', 'resume', 'stop', 'cancel']),
+    ...ns<CutawayApi['record']>('record', ['start', 'pause', 'resume', 'flag', 'stop', 'cancel']),
     onEvent: (cb) => on<RecordEvent>('record:event', cb),
   },
-  ai: ns<CutawayApi['ai']>('ai', ['status', 'run', 'cancel']),
-  export: ns<CutawayApi['export']>('export', ['existingFolders', 'begin', 'write', 'writeFile', 'mux', 'stat', 'gif', 'commit', 'abort']),
+  ai: ns<CutawayApi['ai']>('ai', ['status', 'signIn', 'run', 'cancel']),
+  export: ns<CutawayApi['export']>('export', ['existingFolders', 'begin', 'write', 'writeFile', 'mux', 'stat', 'gif', 'commit', 'abort', 'pickFile', 'freeFilePath', 'beginFile', 'commitFile']),
+  looks: ns<CutawayApi['looks']>('looks', ['importLut', 'searchImages', 'useImage', 'openCredit']),
   media: { url: (absPath) => `${MEDIA_SCHEME}://local/${encodeURIComponent(absPath)}` },
 };
 

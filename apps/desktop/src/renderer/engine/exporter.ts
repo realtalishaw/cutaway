@@ -1,9 +1,11 @@
 import { ALL_FORMATS, AudioSampleSink, CanvasSource, Input, Mp4OutputFormat, Output, StreamTarget, UrlSource, VideoSampleSink, type InputAudioTrack, type StreamTargetChunk, type VideoSample } from 'mediabunny';
 import { TimeMap, buildCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, estimateVideoBitrate, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorSample, type FaceTrackSmooth, type KeyStroke, type MediaSource, type Project } from '@cutaway/core';
 import { resolveSourcePath } from '@shared/api';
+import { TimeStretcher, VoiceCleaner, type StereoBlock } from './audioDsp';
 import { drawFrame, neededSources, type Drawable, type FrameResources } from './compositor';
 import { loadCursor, voiceGain } from './media';
 import { ensureFaces, ensureKeys, ensureMatte } from './parityData';
+import { ensureGrade, gradeLuts } from './lut';
 
 export interface RenderProgress {
   stage: 'prepare' | 'video' | 'audio' | 'finalize';
@@ -37,6 +39,23 @@ export interface RenderArgs {
   signal: AbortSignal;
   /** Video bitrate in bits per second. Defaults to YouTube's recommendation for the size and frame rate. */
   bitrate?: number | null;
+  /**
+   * 'h264' (default) writes an MP4 with H.264 + AAC. 'prores422' writes a
+   * QuickTime movie with ProRes 422 + uncompressed sound, for editing elsewhere;
+   * `fileName` should then end in .mov and `bitrate` is ignored.
+   */
+  codec?: 'h264' | 'prores422';
+}
+
+/** The renderer honours RenderArgs.codec. */
+export const RENDER_SUPPORTS_PRORES = true;
+
+/**
+ * ProRes is encoded by the native helper from a rendered H.264 pass, so that
+ * pass is made at a bitrate high enough to be visually transparent.
+ */
+export function proresIntermediateBitrate(width: number, height: number, fps: number): number {
+  return Math.round(Math.min(240e6, Math.max(60e6, estimateVideoBitrate(width, height, fps) * 8)));
 }
 
 /** The renderer honours RenderArgs.bitrate. */
@@ -187,31 +206,6 @@ class TrackReader {
   }
 }
 
-/** One-pole DC/rumble high-pass (≈85 Hz). Same corner as the preview's BiquadFilter. */
-class HighPass {
-  private xl = 0;
-  private yl = 0;
-  private xr = 0;
-  private yr = 0;
-  private a: number;
-  constructor(cutoff = 85) {
-    const rc = 1 / (2 * Math.PI * cutoff);
-    this.a = rc / (rc + 1 / SAMPLE_RATE);
-  }
-  run(l: Float32Array, r: Float32Array) {
-    for (let i = 0; i < l.length; i++) {
-      const yl = this.a * (this.yl + l[i]! - this.xl);
-      this.xl = l[i]!;
-      this.yl = yl;
-      l[i] = yl;
-      const yr = this.a * (this.yr + r[i]! - this.xr);
-      this.xr = r[i]!;
-      this.yr = yr;
-      r[i] = yr;
-    }
-  }
-}
-
 function wavHeader(dataBytes: number): Uint8Array {
   const b = new ArrayBuffer(44);
   const v = new DataView(b);
@@ -237,7 +231,10 @@ interface AudioTrackPlan {
   gain: number;
   /** 'session' tracks follow cuts; 'output' tracks (music) run straight through. */
   clock: 'session' | 'output';
-  cleanup: HighPass | null;
+  /** Rumble filter, level, expander and limiter for the master voice. */
+  cleanup: VoiceCleaner | null;
+  /** Pitch-preserving stretcher for the speed section being rendered. */
+  stretch: { seg: object; stretcher: TimeStretcher } | null;
   duck: boolean;
   coverage: { start: number; end: number }[];
   input: Input;
@@ -274,12 +271,15 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
     const track = await input.getPrimaryAudioTrack();
     if (!track || !(await track.canDecode())) continue;
     const isVoice = s.id === audio.masterVoiceId;
+    const clean = isVoice && audio.voiceCleanup.enabled && !audio.voiceCleanup.bypass;
     plans.push({
       source: s,
       reader: new TrackReader(track),
-      gain: isMusic ? audio.music!.gain : (t?.gain ?? 1) * (isVoice && audio.voiceCleanup.enabled && !audio.voiceCleanup.bypass ? speechGain : 1),
+      // the cleanup chain applies the speech level itself, so its expander and limiter see the final level
+      gain: isMusic ? audio.music!.gain : (t?.gain ?? 1),
       clock: isMusic ? 'output' : 'session',
-      cleanup: isVoice && audio.voiceCleanup.enabled && !audio.voiceCleanup.bypass ? new HighPass() : null,
+      cleanup: clean ? new VoiceCleaner(SAMPLE_RATE, { makeup: speechGain, expander: project.analysis?.voiceLevelDb != null }) : null,
+      stretch: null,
       duck: isMusic && !!audio.music?.duck,
       coverage: isMusic ? [{ start: 0, end: Infinity }] : brollWithAudio ? project.edit.broll.filter((b) => b.assetId === s.id).map((b) => ({ start: b.start, end: b.end })) : coverage(s),
       input,
@@ -301,9 +301,32 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
   const BLOCK = SAMPLE_RATE; // one second
   const FADE = Math.round(SAMPLE_RATE * 0.006);
   let duckLevel = 1;
+  /** `frames` frames of a session-clock track at normal speed, starting at session time `t0`. Silent outside its coverage. */
+  const readSession = async (p: AudioTrackPlan, t0: number, frames: number): Promise<StereoBlock> => {
+    const l = new Float32Array(frames);
+    const r = new Float32Array(frames);
+    const t1 = t0 + frames / SAMPLE_RATE;
+    const spans = p.coverage.filter((c) => t0 < c.end && t1 > c.start);
+    if (spans.length === 0) return { l, r };
+    const insert = project.edit.broll.find((b) => b.assetId === p.source.id && t0 >= b.start - 1 && t0 < b.end);
+    const local = insert ? insert.assetIn + (t0 - insert.start) : toSourceTime(p.source.sync, t0);
+    const ratio = ((insert ? 1 : p.source.sync.rate) * p.reader.rate) / SAMPLE_RATE;
+    await p.reader.read(local, ratio, frames, l, r, 1);
+    // silence anything outside real coverage inside this block
+    if (!spans.some((c) => c.start <= t0 && c.end >= t1)) {
+      for (let i = 0; i < frames; i++) {
+        const t = t0 + i / SAMPLE_RATE;
+        if (!spans.some((c) => t >= c.start && t < c.end)) l[i] = r[i] = 0;
+      }
+    }
+    return { l, r };
+  };
   try {
     for (const seg of map.segments) {
       const segFrames = Math.max(0, Math.round(seg.outEnd * SAMPLE_RATE) - Math.round(seg.outStart * SAMPLE_RATE));
+      const stretched = Math.abs(seg.speed - 1) > 1e-3;
+      // the limiter's look-ahead must not carry sound across a cut
+      for (const p of plans) if (p.clock === 'session') p.cleanup?.flush();
       for (let off = 0; off < segFrames; off += BLOCK) {
         if (args.signal.aborted) throw new RenderError('cancelled', 'Export cancelled.');
         const n = Math.min(BLOCK, segFrames - off);
@@ -312,23 +335,23 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
         const sessionT = seg.srcStart + (off / SAMPLE_RATE) * seg.speed;
         const outT = seg.outStart + off / SAMPLE_RATE;
         for (const p of plans) {
-          const l = new Float32Array(n);
-          const r = new Float32Array(n);
+          let l: Float32Array = new Float32Array(n);
+          let r: Float32Array = new Float32Array(n);
           if (p.clock === 'output') {
             if (outT >= p.source.duration) continue;
             await p.reader.read(outT, p.reader.rate / SAMPLE_RATE, n, l, r, 1);
-          } else {
-            const blockEnd = sessionT + (n / SAMPLE_RATE) * seg.speed;
+          } else if (!stretched) {
+            const blockEnd = sessionT + n / SAMPLE_RATE;
             if (!p.coverage.some((c) => sessionT < c.end && blockEnd > c.start)) continue;
-            const insert = project.edit.broll.find((b) => b.assetId === p.source.id && sessionT >= b.start - 1 && sessionT < b.end);
-            const local = insert ? insert.assetIn + (sessionT - insert.start) : toSourceTime(p.source.sync, sessionT);
-            const ratio = ((insert ? 1 : p.source.sync.rate) * seg.speed * p.reader.rate) / SAMPLE_RATE;
-            await p.reader.read(local, ratio, n, l, r, 1);
-            // silence anything outside real coverage inside this block
-            for (let i = 0; i < n; i++) {
-              const t = sessionT + (i / SAMPLE_RATE) * seg.speed;
-              if (!p.coverage.some((c) => t >= c.start && t < c.end)) l[i] = r[i] = 0;
+            ({ l, r } = await readSession(p, sessionT, n));
+          } else {
+            // A sped-up or slowed-down section: the sound is time-stretched so voices keep their pitch.
+            if (!p.coverage.some((c) => seg.srcStart < c.end && seg.srcEnd > c.start)) continue;
+            if (p.stretch?.seg !== seg) {
+              const inputFrames = Math.max(0, Math.round((seg.srcEnd - seg.srcStart) * SAMPLE_RATE));
+              p.stretch = { seg, stretcher: new TimeStretcher(seg.speed, inputFrames, (start, count) => readSession(p, seg.srcStart + start / SAMPLE_RATE, count), SAMPLE_RATE) };
             }
+            ({ l, r } = await p.stretch.stretcher.render(n));
           }
           p.cleanup?.run(l, r);
           for (let i = 0; i < n; i++) {
@@ -438,7 +461,8 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
     for (const s of [screen, camA, camB]) await open(s);
     for (const id of new Set(project.edit.broll.map((b) => b.assetId))) await open(project.sources.find((s) => s.id === id));
     let backgroundImage: Drawable | null = null;
-    if (ap.background.type === 'image') backgroundImage = await loadImage(window.cutaway.media.url(ap.background.path));
+    if (ap.background.type === 'image') backgroundImage = await loadImage(window.cutaway.media.url(resolveSourcePath(projectPath, ap.background.path)));
+    await ensureGrade(projectPath, ap); // colour LUTs parsed before the first frame
 
     const samples: CursorSample[] = screen && !screen.cursorBaked && screen.cursorFile ? await loadCursor(projectPath, screen) : [];
     const extra = cursorExtrasOf(ap);
@@ -486,7 +510,8 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
       },
     });
     output = new Output({ format: new Mp4OutputFormat({ fastStart: false }), target: new StreamTarget(writable, { chunked: true, chunkSize: 4 * 1024 * 1024 }) });
-    const videoSource = new CanvasSource(canvas, { codec: 'avc', bitrate: args.bitrate ?? estimateVideoBitrate(W, H, fps), keyFrameInterval: 2, latencyMode: 'quality' });
+    const prores = args.codec === 'prores422';
+    const videoSource = new CanvasSource(canvas, { codec: 'avc', bitrate: prores ? proresIntermediateBitrate(W, H, fps) : (args.bitrate ?? estimateVideoBitrate(W, H, fps)), keyFrameInterval: prores ? 0.5 : 2, latencyMode: 'quality' });
     output.addVideoTrack(videoSource, { frameRate: fps });
     await output.start();
 
@@ -519,7 +544,7 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
         else res.matteB = sample ? sampleDrawable(sample) : null;
       }
       if (need.broll && state.broll) res.broll = await grab(project.sources.find((s) => s.id === need.broll), state.broll.assetTime);
-      drawFrame(ctx, state, res, { appearance: ap, screenPoints: screen?.pointWidth && screen.pointHeight ? { width: screen.pointWidth, height: screen.pointHeight } : null, cue: cues.length ? cueAt(cues, out) : null, device });
+      drawFrame(ctx, state, res, { appearance: ap, screenPoints: screen?.pointWidth && screen.pointHeight ? { width: screen.pointWidth, height: screen.pointHeight } : null, cue: cues.length ? cueAt(cues, out) : null, device, luts: gradeLuts(projectPath, ap) });
       await videoSource.add(i / fps, 1 / fps);
       if (i % 5 === 0 || i === totalFrames - 1) {
         const elapsed = (performance.now() - started) / 1000;
@@ -536,11 +561,12 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
     check();
 
     args.onProgress({ stage: 'finalize', frames: totalFrames, totalFrames, fps: 0 });
-    // Native pass: AAC-LC 48 kHz stereo, BT.709 tags, moov at the front. Video samples are not re-encoded.
-    const muxed = await window.cutaway.export.mux(args.sessionId, tmpVideo, hasAudio ? tmpAudio : null, args.fileName).catch((e) => {
+    // Native pass. MP4: AAC-LC 48 kHz stereo, BT.709 in the stream and the container, moov at the front; the video
+    // samples are not re-encoded. ProRes: the rendered pass is decoded and written as ProRes 422 with PCM sound.
+    const muxed = await window.cutaway.export.mux(args.sessionId, tmpVideo, hasAudio ? tmpAudio : null, args.fileName, prores ? 'prores422' : 'h264').catch((e) => {
       throw ipcError(e);
     });
-    return { fileName: args.fileName, bytes: muxed.bytes, duration: muxed.duration, width: W, height: H, fps, hasAudio, videoCodec: 'H.264', audioCodec: hasAudio ? 'AAC-LC' : null };
+    return { fileName: args.fileName, bytes: muxed.bytes, duration: muxed.duration, width: W, height: H, fps, hasAudio, videoCodec: prores ? 'ProRes 422' : 'H.264', audioCodec: hasAudio ? (prores ? 'PCM' : 'AAC-LC') : null };
   } catch (e) {
     if (output) await output.cancel().catch(() => {});
     if (e instanceof RenderError) throw e;

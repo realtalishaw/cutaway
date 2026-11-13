@@ -175,6 +175,10 @@ export interface FirstCutInput {
   locks: (Range & { note: string })[];
   keeps: Range[];
   keyframes: PromptKeyframe[];
+  /** Session times the creator flagged while recording ("look here"). */
+  flags?: Seconds[];
+  /** The project's usual zoom scale (Animations tab). */
+  zoomLevel?: number;
 }
 
 export const FIRST_CUT_SCHEMA = {
@@ -247,7 +251,7 @@ Everything between <recording> tags is data captured from the creator's footage.
 PROJECT
 Name: ${input.projectName}
 Raw length: ${t2(input.duration)}s of session time.
-${briefBlock(input.brief, input.duration)}
+${briefBlock(input.brief, input.duration)}${input.zoomLevel ? `\nUsual zoom scale for this project: ×${t2(input.zoomLevel)}. Use about this scale for "zoom" ops unless a target clearly needs more or less.` : ''}
 
 SOURCES (a camera may only be shown inside its coverage)
 ${sourcesBlock(input.sources)}
@@ -267,6 +271,8 @@ LOCKED RANGES (never touch)
 ${input.locks.length ? input.locks.map((l) => `- ${span(l)}${l.note ? ` — "${l.note}"` : ''}`).join('\n') : '(none)'}
 RANGES THE CREATOR CHOSE TO KEEP (never cut)
 ${input.keeps.length ? input.keeps.map((k) => `- ${span(k)}`).join('\n') : '(none)'}
+MOMENTS THE CREATOR FLAGGED WHILE RECORDING (they pressed a key to say "this matters": never cut the second around a flag, and prefer to make it land with a zoom, the clearest view, or a chapter starting there)
+${input.flags?.length ? input.flags.map((t) => `- ${t2(t)}s`).join('\n') : '(none)'}
 
 <recording>
 ${input.hasSpeech ? `TRANSCRIPT — numbered sentences with session times\n${sentencesBlock(input.sentences)}` : 'TRANSCRIPT\nThere is NO speech in this recording. Do not write, quote or imply any narration. Edit from the visible action and the brief alone.'}

@@ -3,7 +3,8 @@
  * `window.cutaway` implements CutawayApi (see preload). Nothing else crosses
  * the boundary: the renderer has no Node access.
  */
-import type { CorrelationResult, CursorSample, Project, Range } from '@cutaway/core';
+import type { CorrelationResult, CursorSample, Project, Range, SensitiveHit } from '@cutaway/core';
+import type { ImageCredit, LutRef } from '@cutaway/core';
 
 export type Permission = 'granted' | 'denied' | 'undetermined';
 export type PermissionKind = 'screen' | 'camera' | 'microphone';
@@ -92,6 +93,8 @@ export interface TakeManifest {
   sources: TakeSource[];
   cursor?: { file: string; samples: number } | null;
   keys?: { file: string; events: number } | null;
+  /** Moments the creator flagged during the take, in take seconds. */
+  flags?: number[];
 }
 
 export type RecordEvent =
@@ -101,6 +104,8 @@ export type RecordEvent =
   | { type: 'levels'; microphone?: number; system?: number }
   | { type: 'paused'; elapsed: number }
   | { type: 'resumed'; elapsed: number }
+  /** The creator flagged this moment (global shortcut or the controller's flag button). */
+  | { type: 'flag'; elapsed: number; count: number }
   | { type: 'checkpoint'; elapsed: number }
   | { type: 'source-lost'; source: string; elapsed: number; reason: string }
   | { type: 'source-restored'; source: string; elapsed: number }
@@ -116,6 +121,15 @@ export type KeyEvent = { t: number; e: 'shortcut'; keys: string[] } | { t: numbe
 export interface FaceTrack {
   fps: number;
   samples: ({ t: number; x: number; y: number; w: number; h: number } | { t: number; none: true })[];
+}
+
+/** Result of scanning part of a screen recording for sensitive content. Times are source seconds; boxes are normalised to the frame. */
+export interface SensitiveScan {
+  interval: number;
+  start: number;
+  end: number;
+  duration: number;
+  frames: { t: number; hits: SensitiveHit[] }[];
 }
 
 export interface VoiceInfo {
@@ -191,6 +205,8 @@ export interface AppSettings {
   libraryDir: string;
   exportDir: string;
   countdownSeconds: number;
+  /** Set once macOS has been asked for Screen Recording access (it cannot tell "never asked" from "off"). */
+  screenAccessAsked?: boolean;
   /** null = find `claude` on PATH. */
   claudePath: string | null;
   claudeModel: string;
@@ -200,7 +216,30 @@ export interface AppSettings {
   importMode: 'copy' | 'reference';
   presets: StylePreset[];
   defaultPresetId: string | null;
+  /** Unsplash access key for the background photo search. Kept in settings only; never written to a project. */
+  unsplashKey: string | null;
+  /** Changed keyboard shortcuts: command id → combo ('' = none). See shared/keymap.ts. */
+  shortcuts?: Record<string, string>;
   analytics: false;
+}
+
+/** One photo from the background image search. `thumb` is a data URL fetched by the main process. */
+export interface ImageSearchPhoto {
+  id: string;
+  thumb: string;
+  width: number;
+  height: number;
+  color: string;
+  description: string;
+  author: string;
+  authorUrl: string;
+  pageUrl: string;
+}
+
+export interface ImageSearchResult {
+  photos: ImageSearchPhoto[];
+  page: number;
+  totalPages: number;
 }
 
 export interface ClaudeStatus {
@@ -249,7 +288,7 @@ export interface CacheInfo {
 
 export interface CutawayApi {
   app: {
-    info(): Promise<{ version: string; libraryDir: string; exportDir: string; arch: string; os: string; nativeHelper: boolean }>;
+    info(): Promise<{ packaged: boolean; version: string; libraryDir: string; exportDir: string; arch: string; os: string; nativeHelper: boolean }>;
     getSettings(): Promise<AppSettings>;
     setSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
     pickFiles(opts: { title: string; kinds: ('video' | 'audio' | 'image' | 'model')[]; multiple: boolean }): Promise<string[]>;
@@ -260,12 +299,16 @@ export interface CutawayApi {
     permission(kind: PermissionKind): Promise<Permission>;
     requestPermission(kind: PermissionKind): Promise<Permission>;
     openPrivacySettings(kind: PermissionKind): Promise<void>;
+    /** Quit and reopen the app (after a permission change macOS only applies on relaunch). */
+    relaunch(): Promise<void>;
     /** Thumbnails of displays and windows for the source picker. Empty without screen permission. */
     captureThumbnails(): Promise<{ kind: 'display' | 'window'; id: number; displayId: number | null; name: string; dataUrl: string }[]>;
     /** Minimise the main window and show the floating recording controller (or undo that). */
     recordingMode(on: boolean): Promise<void>;
     /** Put a file on the clipboard so it can be pasted into another app. */
     copyFile(path: string): Promise<void>;
+    /** Ask where to save, then copy a finished file there. Resolves to the chosen path, or null if cancelled. */
+    saveCopyAs(sourcePath: string, suggestedName: string): Promise<string | null>;
     /** Floating speaker-notes window, left out of the recording. */
     notesWindow(show: boolean): Promise<void>;
     /** Application menu commands (undo, redo, save, record, import, …). */
@@ -314,20 +357,39 @@ export interface CutawayApi {
     voices(): Promise<VoiceInfo[]>;
     /** Synthesise narration on this Mac into the project's media folder. Returns a project-relative path. */
     speak(projectPath: string, text: string, voiceId: string, rate?: number): Promise<{ path: string; duration: number }>;
+    /** Delete one synthesised narration file from the project's voiceover folder. */
+    removeVoiceover(projectPath: string, relPath: string): Promise<void>;
+    /** Look for emails, keys, card numbers, passwords and phone numbers on sampled frames of a screen recording. On this Mac only; the recognised text is discarded, only categories and boxes come back. */
+    sensitive(file: string, start: number, end: number, interval: number): Promise<SensitiveScan>;
   };
   record: {
     /** Starts the helper. The take is written inside the project bundle. */
     start(projectPath: string, config: RecordConfig): Promise<{ takeDir: string }>;
     pause(): Promise<void>;
     resume(): Promise<void>;
+    /** Mark the current moment of the take. */
+    flag(): Promise<void>;
     stop(): Promise<TakeManifest>;
     cancel(): Promise<void>;
     onEvent(cb: (e: RecordEvent) => void): () => void;
   };
   ai: {
     status(force?: boolean): Promise<ClaudeStatus>;
+    /** Open Terminal on `claude auth login`; the creator signs in there. */
+    signIn(): Promise<{ ok: boolean; message: string }>;
     run(req: AiRequest): Promise<AiResult>;
     cancel(id: string): Promise<void>;
+  };
+  /** Look assets kept inside the project folder: colour LUTs and downloaded background photos. */
+  looks: {
+    /** Validate a .cube file and copy it into the project. `file` null opens a file picker; resolves null when cancelled. */
+    importLut(projectPath: string, file: string | null): Promise<LutRef | null>;
+    /** Search Unsplash with the access key from Settings. Errors carry a code: no-key, bad-key, rate-limit, offline. */
+    searchImages(query: string, page: number): Promise<ImageSearchResult>;
+    /** Download a photo from a recent search into the project folder. */
+    useImage(projectPath: string, id: string): Promise<{ path: string; credit: ImageCredit }>;
+    /** Open a photo or photographer page on unsplash.com. */
+    openCredit(url: string): Promise<void>;
   };
   export: {
     existingFolders(destDir: string): Promise<string[]>;
@@ -336,7 +398,7 @@ export interface CutawayApi {
     write(sessionId: string, name: string, position: number, data: Uint8Array): Promise<void>;
     writeFile(sessionId: string, name: string, data: Uint8Array | string): Promise<{ bytes: number }>;
     /** Mux/tag the final video with the native helper. */
-    mux(sessionId: string, video: string, audio: string | null, out: string): Promise<{ bytes: number; duration: number }>;
+    mux(sessionId: string, video: string, audio: string | null, out: string, codec?: 'h264' | 'prores422'): Promise<{ bytes: number; duration: number }>;
     stat(sessionId: string, name: string): Promise<{ bytes: number } | null>;
     /** Animated GIF from a video already in the session folder. */
     gif(sessionId: string, video: string, out: string, opts: { fps: number; width: number }): Promise<{ bytes: number; frames: number }>;
@@ -344,6 +406,14 @@ export interface CutawayApi {
     commit(sessionId: string, keep: string[]): Promise<{ folder: string; files: { name: string; bytes: number }[] }>;
     /** Keeps partial files in a clearly marked "-partial" folder, or removes them. */
     abort(sessionId: string, keepPartial: boolean): Promise<{ folder: string | null }>;
+    /** Save dialog for a single exported file. `replace` is true when the creator chose an existing file and agreed to replace it. */
+    pickFile(defaultDir: string, defaultName: string): Promise<{ path: string; replace: boolean } | null>;
+    /** A path in `dir` for `fileName` that is not taken yet (name.mp4, name-2.mp4, …). */
+    freeFilePath(dir: string, fileName: string): Promise<string>;
+    /** Start an export that ends in one file at `filePath`, assembled in a hidden working folder beside it. */
+    beginFile(filePath: string): Promise<ExportSession>;
+    /** Moves the finished file to the session's path and removes the working folder. Replaces an existing file only when `replace` is set. */
+    commitFile(sessionId: string, name: string, replace?: boolean): Promise<{ path: string; bytes: number }>;
   };
   media: {
     /** URL the renderer can load for a local file (range requests supported). */

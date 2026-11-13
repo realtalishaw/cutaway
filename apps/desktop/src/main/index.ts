@@ -7,7 +7,9 @@ import { MEDIA_SCHEME, type Permission, type PermissionKind, type RecordConfig }
 import * as native from './native';
 import * as library from './library';
 import * as exporter from './exporter';
+import * as looks from './looks';
 import { registerAi } from './ai';
+import { bindingOf, toAccelerator } from '../shared/keymap';
 
 const DEV_URL = process.env.CUTAWAY_DEV_URL;
 // Tests point the app at a throwaway profile so they never touch real projects.
@@ -130,7 +132,7 @@ function createMainWindow() {
 function showController() {
   if (controller && !controller.isDestroyed()) return controller.showInactive();
   const d = screen.getPrimaryDisplay().workArea;
-  const w = 420;
+  const w = 460;
   const h = 76;
   controller = new BrowserWindow({
     width: w,
@@ -187,8 +189,36 @@ function sendMenu(cmd: string) {
   (BrowserWindow.getFocusedWindow() ?? mainWindow)?.webContents.send('menu', cmd);
 }
 
+/** Electron accelerator for a keymap command, honouring the creator's changes. */
+function accelerator(id: string): string | undefined {
+  return toAccelerator(bindingOf(id, library.getSettings().shortcuts));
+}
+
+let globalAccelerators: string[] = [];
+
+/** Shortcuts that work from any app: start/stop always, the flag only while a take is running. */
+function applyGlobalShortcuts() {
+  for (const a of globalAccelerators) globalShortcut.unregister(a);
+  globalAccelerators = [];
+  const register = (id: string, run: () => void) => {
+    const a = accelerator(id);
+    if (!a) return;
+    try {
+      if (globalShortcut.register(a, run)) globalAccelerators.push(a);
+    } catch {
+      /* a combination macOS refuses is simply not registered */
+    }
+  };
+  register('record-toggle', () => {
+    if (native.isRecording()) void native.stopRecording().catch(() => {});
+    else sendMenu('record');
+  });
+  if (native.isRecording()) register('flag', () => void native.flagRecording().catch(() => {}));
+}
+
 function buildMenu() {
-  const item = (label: string, cmd: string, accelerator?: string): MenuItemConstructorOptions => ({ label, accelerator, click: () => sendMenu(cmd) });
+  // Accelerators come from the keymap, so shortcuts changed in Settings apply to the menu too.
+  const item = (label: string, cmd: string, _default?: string): MenuItemConstructorOptions => ({ label, accelerator: accelerator(cmd), click: () => sendMenu(cmd) });
   const template: MenuItemConstructorOptions[] = [
     { label: 'Cutaway', submenu: [{ role: 'about' }, { type: 'separator' }, item('Settings…', 'settings', 'Cmd+,'), { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'File', submenu: [item('New Recording', 'record', 'Cmd+N'), item('Import Media…', 'import', 'Cmd+I'), { type: 'separator' }, item('Project Library', 'library', 'Cmd+Shift+L'), item('Save', 'save', 'Cmd+S'), { type: 'separator' }, item('Export…', 'export', 'Shift+Cmd+E'), { type: 'separator' }, { role: 'close' }] },
@@ -224,21 +254,51 @@ function buildMenu() {
 
 // ───────────────────────────── permissions ─────────────────────────────
 
-function permission(kind: PermissionKind): Permission {
+function mediaPermission(kind: PermissionKind): Permission {
   const s = systemPreferences.getMediaAccessStatus(kind);
   if (s === 'granted') return 'granted';
   if (s === 'not-determined') return 'undetermined';
   return 'denied';
 }
 
+/**
+ * Screen Recording is checked through the helper: it is the process that
+ * captures, and a new process sees a grant at once, while this one keeps the
+ * answer it got at launch. macOS cannot tell "never asked" from "off", so that
+ * part is remembered in settings.
+ */
+async function permission(kind: PermissionKind): Promise<Permission> {
+  if (kind !== 'screen') return mediaPermission(kind);
+  if (process.platform !== 'darwin') return 'granted';
+  // Test runs can pin the state, so the permission screens are exercised without touching macOS privacy settings.
+  const pinned = E2E ? process.env.CUTAWAY_E2E_SCREEN : undefined;
+  if (pinned === 'granted') return 'granted';
+  if (pinned === 'off') return library.getSettings().screenAccessAsked ? 'denied' : 'undetermined';
+  try {
+    const r = await native.screenAccess(false);
+    if (r.screen === 'granted') return 'granted';
+  } catch {
+    if (mediaPermission('screen') === 'granted') return 'granted';
+  }
+  return library.getSettings().screenAccessAsked ? 'denied' : 'undetermined';
+}
+
 async function requestPermission(kind: PermissionKind): Promise<Permission> {
   if (kind === 'screen') {
-    // macOS only shows its screen-recording prompt when capture is attempted.
-    if (permission('screen') === 'undetermined') await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 16, height: 16 } }).catch(() => {});
-    return permission('screen');
+    if ((await permission('screen')) === 'granted') return 'granted';
+    if (E2E && process.env.CUTAWAY_E2E_SCREEN === 'off') {
+      await library.setSettings({ screenAccessAsked: true });
+      return 'denied';
+    }
+    // Shows the macOS prompt the first time and adds the app to the Screen & System Audio Recording list.
+    const r = await native.screenAccess(true).catch(() => null);
+    // The same from this process, so the app's own window previews are covered too.
+    await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 16, height: 16 } }).catch(() => {});
+    if (!library.getSettings().screenAccessAsked) await library.setSettings({ screenAccessAsked: true });
+    return r?.screen === 'granted' ? 'granted' : permission('screen');
   }
-  if (permission(kind) === 'undetermined') await systemPreferences.askForMediaAccess(kind);
-  return permission(kind);
+  if (mediaPermission(kind) === 'undetermined') await systemPreferences.askForMediaAccess(kind);
+  return mediaPermission(kind);
 }
 
 const PRIVACY_PANE: Record<PermissionKind, string> = { screen: 'Privacy_ScreenCapture', camera: 'Privacy_Camera', microphone: 'Privacy_Microphone' };
@@ -268,9 +328,16 @@ const FILTERS = {
 
 function registerIpc() {
   handle('app', {
-    info: () => ({ version: app.getVersion(), libraryDir: library.getSettings().libraryDir, exportDir: library.getSettings().exportDir, arch: process.arch, os: `macOS ${process.getSystemVersion()}`, nativeHelper: native.helperAvailable() }),
+    info: () => ({ packaged: app.isPackaged, version: app.getVersion(), libraryDir: library.getSettings().libraryDir, exportDir: library.getSettings().exportDir, arch: process.arch, os: `macOS ${process.getSystemVersion()}`, nativeHelper: native.helperAvailable() }),
     getSettings: () => library.getSettings(),
-    setSettings: (patch: Parameters<typeof library.setSettings>[0]) => library.setSettings(patch),
+    setSettings: async (patch: Parameters<typeof library.setSettings>[0]) => {
+      const next = await library.setSettings(patch);
+      if ('shortcuts' in patch) {
+        buildMenu();
+        applyGlobalShortcuts();
+      }
+      return next;
+    },
     pickFiles: async (opts: { title: string; kinds: (keyof typeof FILTERS)[]; multiple: boolean }) => {
       const all = opts.kinds.flatMap((k) => FILTERS[k].extensions);
       const r = await dialog.showOpenDialog(mainWindow!, { title: opts.title, properties: opts.multiple ? ['openFile', 'multiSelections'] : ['openFile'], filters: [{ name: 'Supported media', extensions: all }, ...opts.kinds.map((k) => FILTERS[k])] });
@@ -287,9 +354,17 @@ function registerIpc() {
     freeBytes: (p: string) => library.freeBytes(p),
     permission: (kind: PermissionKind) => permission(kind),
     requestPermission: (kind: PermissionKind) => requestPermission(kind),
-    openPrivacySettings: (kind: PermissionKind) => shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${PRIVACY_PANE[kind]}`),
+    relaunch: () => {
+      app.relaunch();
+      app.exit(0);
+    },
+    openPrivacySettings: async (kind: PermissionKind) => {
+      // Test runs record the request instead of opening System Settings on the machine.
+      if (E2E) return void ((globalThis as { __openedPrivacy?: string[] }).__openedPrivacy ??= []).push(kind);
+      await shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${PRIVACY_PANE[kind]}`);
+    },
     captureThumbnails: async () => {
-      if (permission('screen') !== 'granted') return [];
+      if ((await permission('screen')) !== 'granted') return [];
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 480, height: 300 }, fetchWindowIcons: false });
       return sources
         .filter((s) => !s.thumbnail.isEmpty())
@@ -301,6 +376,19 @@ function registerIpc() {
       const script = 'function run(argv){ObjC.import("AppKit");var pb=$.NSPasteboard.generalPasteboard;pb.clearContents;return pb.writeObjects($.NSArray.arrayWithObject($.NSURL.fileURLWithPath(argv[0])))}';
       const out = await new Promise<string>((res, rej) => execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script, p], (err, stdout) => (err ? rej(err) : res(stdout.trim()))));
       if (out !== 'true') throw new Error('The file could not be placed on the clipboard.');
+    },
+    saveCopyAs: async (source: string, suggestedName: string) => {
+      // Test runs name the folder up front instead of answering a dialog.
+      const pinned = E2E ? process.env.CUTAWAY_E2E_SAVE_DIR : undefined;
+      let dest: string;
+      if (pinned) dest = path.join(pinned, suggestedName);
+      else {
+        const r = await dialog.showSaveDialog(mainWindow!, { title: 'Save video as', defaultPath: suggestedName, buttonLabel: 'Save' });
+        if (r.canceled || !r.filePath) return null;
+        dest = r.filePath;
+      }
+      await fsp.copyFile(source, dest);
+      return dest;
     },
     notesWindow: (show: boolean) => (show ? showNotes() : hideNotes()),
     recordingMode: (on: boolean) => {
@@ -352,12 +440,19 @@ function registerIpc() {
     resizeWindow: native.resizeWindow,
     voices: native.voices,
     speak: native.speak,
+    removeVoiceover: native.removeVoiceover,
+    sensitive: native.sensitive,
   });
 
   handle('record', {
-    start: native.startRecording,
+    start: async (projectPath: string, config: RecordConfig) => {
+      const r = await native.startRecording(projectPath, config);
+      applyGlobalShortcuts();
+      return r;
+    },
     pause: native.pauseRecording,
     resume: native.resumeRecording,
+    flag: native.flagRecording,
     stop: native.stopRecording,
     cancel: native.cancelRecording,
   });
@@ -372,6 +467,23 @@ function registerIpc() {
     gif: exporter.gif,
     commit: exporter.commit,
     abort: exporter.abort,
+    pickFile: async (defaultDir: string, defaultName: string) => {
+      const ext = defaultName.split('.').pop() ?? 'mp4';
+      const r = await dialog.showSaveDialog(mainWindow!, { title: 'Export', buttonLabel: 'Export', defaultPath: await exporter.freeFilePath(defaultDir, defaultName), filters: [{ name: ext.toUpperCase(), extensions: [ext] }], properties: ['createDirectory', 'showOverwriteConfirmation'] });
+      if (r.canceled || !r.filePath) return null;
+      const chosen = r.filePath.toLowerCase().endsWith(`.${ext}`) ? r.filePath : `${r.filePath}.${ext}`;
+      return { path: chosen, replace: fs.existsSync(chosen) };
+    },
+    freeFilePath: exporter.freeFilePath,
+    beginFile: exporter.beginFile,
+    commitFile: exporter.commitFile,
+  });
+
+  handle('looks', {
+    importLut: looks.importLut,
+    searchImages: looks.searchImages,
+    useImage: looks.useImage,
+    openCredit: looks.openCredit,
   });
 
   registerAi(ipcMain, () => library.getSettings());
@@ -396,10 +508,9 @@ void app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'media'));
   session.defaultSession.setPermissionCheckHandler((_wc, perm) => perm === 'media');
   createMainWindow();
-  globalShortcut.register('Control+Alt+Command+R', () => {
-    if (native.isRecording()) void native.stopRecording().catch(() => {});
-    else sendMenu('record');
-  });
+  applyGlobalShortcuts();
+  // The flag shortcut exists only while a take is running.
+  native.onSessionEnded(() => applyGlobalShortcuts());
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     else mainWindow?.show();

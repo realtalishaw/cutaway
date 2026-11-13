@@ -153,6 +153,10 @@ try {
         await controller.waitForSelector('.controller-pill', { timeout: 5000 }).catch(() => {});
         await controller.screenshot({ path: path.join(out, '05-controller.png'), omitBackground: true }).then(() => console.log('shot', path.join(out, '05-controller.png'))).catch((e) => console.log('controller shot failed', e.message));
         results.controller = await controller.evaluate(() => ({ time: document.querySelector('.controller-pill .time')?.textContent, chips: [...document.querySelectorAll('.controller-pill .chip')].map((c) => c.getAttribute('title')), order: [...document.querySelector('.controller-pill').children].map((c) => c.className.split(' ')[0]) })).catch(() => null);
+        // flag a moment from the controller, then pause and resume
+        await controller.click('[data-testid="controller-flag"]').catch(() => {});
+        await page.waitForTimeout(400);
+        results.controller = { ...results.controller, flags: await controller.evaluate(() => document.querySelector('.ctl.flag .count')?.textContent ?? '0').catch(() => null) };
         await controller.click('button[aria-label="Pause recording"]').catch(() => {});
         await page.waitForTimeout(1200);
         await controller.click('button[aria-label="Resume recording"]').catch(() => {});
@@ -160,6 +164,12 @@ try {
       } else results.controller = 'controller window not found';
       await shot(page, '06-recording-main');
       await page.evaluate(() => window.cutaway.record.stop());
+      // A finished take lands on the quick-share sheet; carry on to Sources from there.
+      await page.waitForSelector('[data-testid="quick-share"]', { timeout: 30000 });
+      await page.waitForFunction(() => document.querySelector('.qs-thumb img')?.naturalWidth > 0, null, { timeout: 15000 }).catch(() => {});
+      results.quickShare = await page.evaluate(() => ({ title: document.querySelector('.qs-title')?.textContent, sub: document.querySelector('.qs-sub')?.textContent, thumb: document.querySelector('.qs-thumb img')?.naturalWidth ?? 0, actions: [...document.querySelectorAll('.qs-card button')].map((b) => b.textContent.trim()) }));
+      await shot(page, '06b-quick-share');
+      await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.setView('sources'); s.go('project'); });
       await page.waitForSelector('.source-row', { timeout: 30000 });
       await page.waitForTimeout(800);
       await shot(page, '07-sources-after-recording');
@@ -168,7 +178,7 @@ try {
         const bundle = fs.readdirSync(libraryDir).find((n) => n.endsWith('.cutaway'));
         const saved = JSON.parse(fs.readFileSync(path.join(libraryDir, bundle, 'project.json'), 'utf8'));
         const takeDir = path.join(libraryDir, bundle, 'media', 'take-001');
-        results.take = { files: fs.existsSync(takeDir) ? fs.readdirSync(takeDir).sort() : null, manifestKeys: fs.existsSync(path.join(takeDir, 'manifest.json')) ? JSON.parse(fs.readFileSync(path.join(takeDir, 'manifest.json'), 'utf8')).keys ?? null : null, sources: saved.sources.map((x) => ({ role: x.role, keysFile: x.keysFile ?? null, cursorFile: x.cursorFile ?? null, deviceKind: x.deviceKind ?? null })) };
+        results.take = { flags: fs.existsSync(path.join(takeDir, 'manifest.json')) ? JSON.parse(fs.readFileSync(path.join(takeDir, 'manifest.json'), 'utf8')).flags ?? null : null, projectFlags: (saved.flags ?? []).length, files: fs.existsSync(takeDir) ? fs.readdirSync(takeDir).sort() : null, manifestKeys: fs.existsSync(path.join(takeDir, 'manifest.json')) ? JSON.parse(fs.readFileSync(path.join(takeDir, 'manifest.json'), 'utf8')).keys ?? null : null, sources: saved.sources.map((x) => ({ role: x.role, keysFile: x.keysFile ?? null, cursorFile: x.cursorFile ?? null, deviceKind: x.deviceKind ?? null })) };
       }
       results.recording = await page.evaluate(() => [...document.querySelectorAll('.source-row')].map((r) => ({ name: r.querySelector('.source-name')?.textContent, badges: [...r.querySelectorAll('.source-name ~ .pill')].map((p) => p.textContent.trim()), meta: [...r.querySelectorAll('.mono span')].map((s) => s.textContent).join(' | '), sync: r.querySelector('.cov + .row .pill')?.textContent?.trim() })));
     }

@@ -29,7 +29,43 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [made, setMade] = useState<{ key: string; path: string; duration: number } | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  /** The generated take that has not been added to the project yet; its file is removed if it is abandoned. */
+  const pending = useRef<string | null>(null);
+
+  const removeFile = (path: string) => window.cutaway.native.removeVoiceover(projectPath, path);
+  const dropPending = () => {
+    const path = pending.current;
+    pending.current = null;
+    if (path) void removeFile(path).catch(() => {});
+  };
+  // Closing the sheet without adding the take leaves no stray audio file behind.
+  useEffect(() => dropPending, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Narration this project already holds. */
+  const takes = project.sources.filter((s) => s.path.startsWith('media/voiceover/'));
+  const useOf = (s: MediaSource) => (project.edit.audio.masterVoiceId === s.id ? 'This project’s voice' : project.edit.audio.music?.sourceId === s.id ? 'Plays under the video' : 'Not in use');
+
+  const deleteTake = async (s: MediaSource) => {
+    if (confirming !== s.id) {
+      setConfirming(s.id);
+      return;
+    }
+    setConfirming(null);
+    audioRef.current?.pause();
+    useApp.getState().patch((p) => {
+      const next = withSources(p, p.sources.filter((x) => x.id !== s.id));
+      // Decisions that pointed at this take go with it.
+      return { ...next, edit: { ...next.edit, broll: next.edit.broll.filter((b) => b.assetId !== s.id), audio: { ...next.edit.audio, music: next.edit.audio.music?.sourceId === s.id ? null : next.edit.audio.music } } };
+    });
+    try {
+      await removeFile(s.path);
+      useApp.getState().toast(`Deleted “${s.name}” and its audio file.`);
+    } catch (e) {
+      useApp.getState().toast(`The take was removed from the project, but its file could not be deleted: ${errorText(e)}`, 'error');
+    }
+  };
 
   const lang = locale.slice(0, 2).toLowerCase();
   useEffect(() => {
@@ -60,6 +96,9 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
     try {
       const r = await window.cutaway.native.speak(projectPath, script.trim(), voiceId, rate);
       const m = { key, path: r.path, duration: r.duration };
+      // a new take replaces the one that was only auditioned
+      dropPending();
+      pending.current = m.path;
       setMade(m);
       return m;
     } catch (e) {
@@ -93,6 +132,7 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
         license: 'macOS system voice',
       };
       const app = useApp.getState();
+      pending.current = null; // the project owns this file now
       app.patch((p) => withSources(p, [...p.sources, source]));
       if (hasVoice && !hasMusic) {
         // Plays straight through the finished video, on top of the recorded voice.
@@ -167,6 +207,27 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
             </div>
           )}
           <Slider label="Speaking rate" min={0.3} max={0.65} step={0.01} value={rate} format={(v) => (v < 0.45 ? 'Slower' : v > 0.55 ? 'Faster' : 'Normal')} onChange={setRate} />
+          {takes.length ? (
+            <div className="vo-takes">
+              <span className="vo-label">In this project</span>
+              <ul>
+                {takes.map((s) => (
+                  <li key={s.id} data-testid="vo-take">
+                    <Icon name="mic" size={13} />
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="vo-take-name">{s.name}</div>
+                      <div className="tiny dim">
+                        {fmtTime(s.duration)} · {useOf(s)}
+                      </div>
+                    </div>
+                    <Button size="sm" variant={confirming === s.id ? 'danger' : 'ghost'} icon="trash" disabled={busy} onClick={() => void deleteTake(s)} onBlur={() => setConfirming((c) => (c === s.id ? null : c))} title="Remove this take from the project and delete its audio file">
+                      {confirming === s.id ? 'Delete the file?' : 'Delete'}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
         <div className="vo-col">
           <div className="row between">

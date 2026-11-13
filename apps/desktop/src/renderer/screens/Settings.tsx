@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { disclosure } from '@cutaway/ai';
-import { uid } from '@cutaway/core';
+import { portableAppearance, uid } from '@cutaway/core';
 import type { AppSettings, CacheInfo, ClaudeStatus, StylePreset } from '@shared/api';
 import { useApp } from '../state/store';
 import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Field, Segmented, Slider, Toggle, fmtAgo, fmtBytes } from '../ui/kit';
+import { ImagesSection } from './settings/ImagesSection';
+import { ShortcutsSection } from './settings/ShortcutsSection';
 import './settings.css';
 
 type Tab = 'storage' | 'processing' | 'recording' | 'access' | 'shortcuts' | 'presets' | 'about';
@@ -17,48 +19,6 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'shortcuts', label: 'Shortcuts', icon: 'command' },
   { id: 'presets', label: 'Presets', icon: 'palette' },
   { id: 'about', label: 'About', icon: 'info' },
-];
-
-const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
-  {
-    group: 'Everywhere',
-    rows: [
-      ['⌘N', 'New recording'],
-      ['⌘I', 'Import media'],
-      ['⇧⌘L', 'Project library'],
-      ['⌘S', 'Save now (projects also save on their own)'],
-      ['⌘,', 'Settings'],
-      ['⌃⌥⌘R', 'Start a recording, or stop the one in progress, from any app'],
-    ],
-  },
-  {
-    group: 'Editing',
-    rows: [
-      ['Space', 'Play or pause'],
-      ['⌘Z', 'Undo'],
-      ['⇧⌘Z', 'Redo'],
-      ['⌘B', 'Split at the playhead'],
-      ['⌘L', 'Lock the selection against AI changes'],
-      ['⌘T', 'Show or hide the expanded timeline'],
-    ],
-  },
-  {
-    group: 'Moving around a project',
-    rows: [
-      ['⌘1', 'Edit'],
-      ['⌘2', 'Package'],
-      ['⌘3 or ⌘E', 'Export'],
-    ],
-  },
-  {
-    group: 'Thumbnail canvas',
-    rows: [
-      ['← ↑ ↓ →', 'Nudge the selected layer (hold ⇧ for bigger steps)'],
-      ['⌫', 'Delete the selected layer'],
-      ['⌥ drag', 'Move without snapping to the centre'],
-      ['Esc', 'Deselect'],
-    ],
-  },
 ];
 
 const LOCALES: [string, string][] = [
@@ -170,7 +130,7 @@ export function Settings() {
   const savePreset = async () => {
     if (!project) return;
     const name = presetName.trim() || `${project.name} style`;
-    const preset: StylePreset = { id: uid('preset'), name, createdAt: new Date().toISOString(), appearance: project.edit.appearance, brief: { pacing: project.brief.pacing, visualIntensity: project.brief.visualIntensity } };
+    const preset: StylePreset = { id: uid('preset'), name, createdAt: new Date().toISOString(), appearance: portableAppearance(project.edit.appearance), brief: { pacing: project.brief.pacing, visualIntensity: project.brief.visualIntensity } };
     await update({ presets: [...settings.presets, preset] });
     setPresetName('');
     useApp.getState().toast(`Saved “${name}”`);
@@ -225,6 +185,7 @@ export function Settings() {
                     : 'No extra disk space is used, but the project breaks if the file is moved, renamed or its drive is offline. You can relink it in Sources; Cutaway checks the replacement is the same media. The file is never modified and never deleted with the project.'}
                 </div>
               </Section>
+              <ImagesSection settings={settings} update={update} />
               <Section title="Derived caches" hint="Stills, previews and analysis that Cutaway can always recompute.">
                 {project && projectPath ? (
                   <>
@@ -268,8 +229,27 @@ export function Settings() {
                   </Button>
                 </div>
                 {claude && claude.found && claude.signedIn === false ? (
-                  <Banner tone="warn" title="Sign in once, in Terminal">
-                    Run <span className="mono code">claude</span>, then type <span className="mono code">/login</span> and follow the prompts. Come back and choose Check again. Until then Cutaway edits with its built-in rules and says so.
+                  <Banner tone="warn" title="Claude Code is not signed in">
+                    <div>
+                      Cutaway runs the same <span className="mono code">claude</span> command as your terminal, and right now that command answers “Not logged in”. Sign in once and Cutaway picks it up. Until then it edits with its built-in rules and says so.
+                    </div>
+                    <div className="row" style={{ gap: 8, marginTop: 10 }}>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon="external"
+                        data-testid="claude-sign-in"
+                        onClick={() =>
+                          void window.cutaway.ai
+                            .signIn()
+                            .then((r) => useApp.getState().toast(r.message))
+                            .catch((e: Error) => useApp.getState().toast(e.message))
+                        }
+                      >
+                        Sign in to Claude Code…
+                      </Button>
+                      <span className="tiny dim">Opens Terminal and runs claude auth login. Then choose Check again.</span>
+                    </div>
                   </Banner>
                 ) : null}
                 {claude && !claude.found ? (
@@ -452,29 +432,7 @@ export function Settings() {
             </>
           ) : null}
 
-          {tab === 'shortcuts' ? (
-            <Section title="Keyboard shortcuts">
-              {SHORTCUTS.map((g) => (
-                <div key={g.group} className="col" style={{ gap: 0 }}>
-                  <div className="set-title" style={{ margin: '6px 0 6px' }}>
-                    {g.group}
-                  </div>
-                  <table className="keys">
-                    <tbody>
-                      {g.rows.map(([k, what]) => (
-                        <tr key={k}>
-                          <th scope="row">
-                            <span className="kbd big">{k}</span>
-                          </th>
-                          <td>{what}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
-            </Section>
-          ) : null}
+          {tab === 'shortcuts' ? <ShortcutsSection update={update} /> : null}
 
           {tab === 'presets' ? (
             <>
@@ -551,16 +509,14 @@ export function Settings() {
                 </div>
                 {info && !info.nativeHelper ? <Banner tone="warn" title="The capture helper is not built">Run <span className="mono code">pnpm native:build</span> in the repository, then reopen Cutaway.</Banner> : null}
               </Section>
-              <Section title="What is not here yet" hint="Cutaway is independently built. These parts of the wider recording-tool baseline are planned, not shipped.">
+              <Section title="What is not here yet" hint="Cutaway is independently built. These parts of the wider recording-tool baseline are not shipped.">
                 <ul className="plain tiny muted">
-                  <li>Loupe-style magnification, motion blur, advanced pointer options and click sounds</li>
-                  <li>Camera cut-out, face tracking, colour looks and LUTs</li>
-                  <li>iPhone and iPad capture with device frames</li>
-                  <li>GIF export, copy to clipboard, vertical and square formats</li>
-                  <li>Shareable links, shared projects and a stock background catalogue</li>
-                  <li>Sound from selected apps only, speaker notes and window-resize helpers</li>
+                  <li>Hosted share links and view counts (Cutaway has no server; share a project file or an export instead)</li>
+                  <li>A built-in stock photo catalogue (online image search needs your own Unsplash key, under Storage)</li>
+                  <li>HDR and 10-bit capture; ProRes exports are made from an 8-bit render</li>
+                  <li>Masks that follow content as it scrolls (masks are fixed rectangles over a time range)</li>
                 </ul>
-                <div className="tiny dim">Exports are qualified for 16:9 SDR at 1080p and 4K, 30 or 60 fps. YouTube upload, scheduling and analytics are deliberately out of scope.</div>
+                <div className="tiny dim">Exports are qualified for SDR at 1080p, 30 fps. 4K and 60 fps are available and not yet measured. YouTube upload, scheduling and analytics are deliberately out of scope.</div>
               </Section>
             </>
           ) : null}

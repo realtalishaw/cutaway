@@ -48,6 +48,8 @@ final class Recorder: CaptureSink {
     private var systemSource: ScreenSource?
     private var deviceScreen: DeviceScreenSource?
     private var keys: KeyTracker?
+    /// Moments the creator flagged during the take, in session seconds.
+    private var flags: [Double] = []
     private var syntheticVideo: [SyntheticVideoSource] = []
     private var syntheticAudio: [SyntheticAudioSource] = []
     private var silentMicTicks = 0
@@ -494,6 +496,20 @@ final class Recorder: CaptureSink {
         }
     }
 
+    /// Marks the current moment ("look here"). Written to the manifest at once so a crash keeps it.
+    func flag() {
+        control.async { [self] in
+            guard phase == .recording || phase == .paused else { return }
+            let now = hostNow()
+            let t = clock.elapsed(host: now)
+            // Two presses within a quarter of a second are one flag.
+            if let last = flags.last, t - last < 0.25 { return }
+            flags.append(r3(t))
+            writeManifest(complete: false, duration: t, nowHost: now)
+            Out.emit(["type": "flag", "elapsed": r3(t), "count": flags.count])
+        }
+    }
+
     /// Stops and finalises (`stop`), or discards the take (`cancel`). Safe to call from any thread, any number of times.
     func requestStop(reason: String) {
         let go: Bool = control.sync {
@@ -686,6 +702,7 @@ final class Recorder: CaptureSink {
             "sources": writers.map { $0.manifestEntry(takeDuration: duration) },
             "cursor": cursor.map { ["file": "cursor.jsonl", "samples": $0.samples] as [String: Any] } as Any? ?? NSNull(),
             "keys": keys.map { ["file": "keys.jsonl", "events": $0.events] as [String: Any] } as Any? ?? NSNull(),
+            "flags": flags.filter { $0 <= duration + 0.001 },
         ]
         if let stopReason, stopReason != "stop" { m["stopReason"] = stopReason }
         if let data = try? JSONSerialization.data(withJSONObject: Out.tidy(m), options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) {
@@ -751,6 +768,7 @@ enum RecordCommand {
                 case "start": recorder.start()
                 case "pause": recorder.pause()
                 case "resume": recorder.resume()
+                case "flag": recorder.flag()
                 case "stop": recorder.requestStop(reason: "stop")
                 case "cancel": recorder.requestStop(reason: "cancel")
                 case "": break
@@ -1045,6 +1063,9 @@ enum RecoverCommand {
             manifest["keys"] = NSNull()
         }
 
+        if let flags = manifest["flags"] as? [Double] {
+            manifest["flags"] = flags.filter { $0 <= takeDuration + 0.001 }
+        }
         manifest["sources"] = sources
         manifest["duration"] = r3(takeDuration)
         manifest["complete"] = false

@@ -25,6 +25,7 @@ export function defaultSettings(): AppSettings {
     importMode: 'copy',
     presets: [],
     defaultPresetId: null,
+    unsplashKey: null,
     analytics: false,
   };
 }

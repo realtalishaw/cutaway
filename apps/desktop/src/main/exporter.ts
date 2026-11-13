@@ -9,6 +9,8 @@ interface Live extends ExportSession {
   destDir: string;
   folderName: string;
   handles: Map<string, fsp.FileHandle>;
+  /** Single-file sessions end in one file at this path instead of a folder. */
+  filePath?: string;
 }
 
 const sessions = new Map<string, Live>();
@@ -49,6 +51,38 @@ export async function begin(destDir: string, folderName: string): Promise<Export
   return { id, folder, workDir };
 }
 
+/** A path in `dir` for `fileName` that does not exist yet: name.mp4, name-2.mp4, … */
+export async function freeFilePath(dir: string, fileName: string): Promise<string> {
+  const ext = path.extname(fileName);
+  const stem = path.basename(fileName, ext);
+  let taken: Set<string>;
+  try {
+    taken = new Set(await fsp.readdir(dir));
+  } catch {
+    taken = new Set();
+  }
+  if (!taken.has(fileName)) return path.join(dir, fileName);
+  for (let i = 2; i < 10000; i++) if (!taken.has(`${stem}-${i}${ext}`)) return path.join(dir, `${stem}-${i}${ext}`);
+  return path.join(dir, `${stem}-${Date.now()}${ext}`);
+}
+
+/**
+ * Start an export that ends in one file at `filePath`. The file is assembled
+ * in a hidden working folder beside its destination and moved into place by
+ * commitFile, so a file with the final name is always complete.
+ */
+export async function beginFile(filePath: string): Promise<ExportSession> {
+  if (!path.isAbsolute(filePath)) throw new Error('The export path must be absolute.');
+  const destDir = path.dirname(filePath);
+  await fsp.mkdir(destDir, { recursive: true });
+  const id = crypto.randomUUID();
+  const name = path.basename(filePath);
+  const workDir = path.join(destDir, `.${name}.working-${id.slice(0, 8)}`);
+  await fsp.mkdir(workDir, { recursive: true });
+  sessions.set(id, { id, folder: destDir, workDir, destDir, folderName: name, handles: new Map(), filePath });
+  return { id, folder: destDir, workDir };
+}
+
 function diskError(e: unknown): Error {
   const code = (e as NodeJS.ErrnoException).code;
   if (code === 'ENOSPC' || code === 'EDQUOT') return Object.assign(new Error('The destination ran out of space.'), { code: 'disk-full' });
@@ -84,11 +118,11 @@ async function closeHandles(s: Live) {
   s.handles.clear();
 }
 
-export async function mux(id: string, video: string, audio: string | null, out: string): Promise<{ bytes: number; duration: number }> {
+export async function mux(id: string, video: string, audio: string | null, out: string, codec: 'h264' | 'prores422' = 'h264'): Promise<{ bytes: number; duration: number }> {
   const s = get(id);
   await closeHandles(s);
   try {
-    const r = await native.mux(inside(s, video), audio ? inside(s, audio) : null, inside(s, out));
+    const r = await native.mux(inside(s, video), audio ? inside(s, audio) : null, inside(s, out), codec === 'prores422' ? 'prores422' : 'h264');
     return { bytes: r.sizeBytes, duration: r.duration };
   } catch (e) {
     throw diskError(e);
@@ -130,12 +164,36 @@ export async function commit(id: string, keep: string[]): Promise<{ folder: stri
   return { folder: s.folder, files };
 }
 
+/**
+ * Finish a single-file export: move `name` out of the working folder to the
+ * session's file path and remove the working folder. An existing file is only
+ * replaced when the creator already agreed to that in the save dialog.
+ */
+export async function commitFile(id: string, name: string, replace = false): Promise<{ path: string; bytes: number }> {
+  const s = get(id);
+  if (!s.filePath) throw new Error('This export session is not a single-file export.');
+  await closeHandles(s);
+  const from = inside(s, name);
+  const bytes = (await fsp.stat(from)).size;
+  if (bytes <= 0) throw Object.assign(new Error(`${name} is empty.`), { code: 'validation-failed' });
+  if (!replace && fs.existsSync(s.filePath)) throw Object.assign(new Error(`"${path.basename(s.filePath)}" appeared while exporting; nothing was overwritten.`), { code: 'exists' });
+  try {
+    // Same folder, so this is an atomic rename: the final name never points at a half-written file.
+    await fsp.rename(from, s.filePath);
+  } catch (e) {
+    throw diskError(e);
+  }
+  sessions.delete(id);
+  await fsp.rm(s.workDir, { recursive: true, force: true }).catch(() => {});
+  return { path: s.filePath, bytes };
+}
+
 export async function abort(id: string, keepPartial: boolean): Promise<{ folder: string | null }> {
   const s = sessions.get(id);
   if (!s) return { folder: null };
   await closeHandles(s);
   sessions.delete(id);
-  if (!keepPartial) {
+  if (!keepPartial || s.filePath) {
     await fsp.rm(s.workDir, { recursive: true, force: true });
     return { folder: null };
   }

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { portableAppearance } from '@cutaway/core';
 import { saveNow, startAutosave, useApp, usePlayback, type InspectorTab, type ProjectView } from './state/store';
+import { commandForEvent } from './state/keymap';
 import { backToLibrary, newRecording, pickAndImport } from './state/actions';
 import { Icon, Logo } from './ui/icons';
 import { Button, Modal, fmtAgo } from './ui/kit';
@@ -99,7 +101,7 @@ function PresetsMenu() {
   const save = async () => {
     const app = useApp.getState();
     if (!app.project || !settings || !naming?.trim()) return;
-    const preset = { id: `preset_${Date.now().toString(36)}`, name: naming.trim(), createdAt: new Date().toISOString(), appearance: app.project.edit.appearance, brief: { pacing: app.project.brief.pacing, visualIntensity: app.project.brief.visualIntensity } };
+    const preset = { id: `preset_${Date.now().toString(36)}`, name: naming.trim(), createdAt: new Date().toISOString(), appearance: portableAppearance(app.project.edit.appearance), brief: { pacing: app.project.brief.pacing, visualIntensity: app.project.brief.visualIntensity } };
     app.setSettings(await window.cutaway.app.setSettings({ presets: [...settings.presets, preset] }));
     app.toast(`Saved preset “${preset.name}”.`);
     setNaming(null);
@@ -286,6 +288,23 @@ export function App() {
     void api.app.getSettings().then((s) => useApp.getState().setSettings(s));
     void api.app.info().then((info) => useApp.setState({ info }));
     void api.ai.status().then((claude) => useApp.setState({ claude })).catch(() => {});
+    // Back from Terminal after signing in: pick the new state up without a trip to Settings.
+    let checking = false;
+    const onFocus = () => {
+      const c = useApp.getState().claude;
+      if (checking || (c?.found && c.signedIn === true)) return;
+      checking = true;
+      void api.ai
+        .status(true)
+        .then((claude) => {
+          const was = useApp.getState().claude;
+          useApp.setState({ claude });
+          if (claude.signedIn === true && was?.signedIn !== true) useApp.getState().toast('Claude Code is signed in. Cutaway will use it for AI edits.');
+        })
+        .catch(() => {})
+        .finally(() => (checking = false));
+    };
+    window.addEventListener('focus', onFocus);
     startAutosave();
     const onPalette = () => setPalette(true);
     window.addEventListener('cutaway-palette', onPalette);
@@ -332,9 +351,9 @@ export function App() {
       }
     });
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping() || e.metaKey || e.ctrlKey) return;
+      if (isTyping()) return;
       const app = useApp.getState();
-      if (e.code === 'Space' && app.route === 'project' && app.project && (app.project.ui.view === 'edit' || app.project.ui.view === 'package')) {
+      if (commandForEvent(e) === 'play' && app.route === 'project' && app.project && (app.project.ui.view === 'edit' || app.project.ui.view === 'package')) {
         e.preventDefault();
         usePlayback.getState().toggle();
       }
@@ -345,6 +364,7 @@ export function App() {
     window.addEventListener('dragover', stop);
     window.addEventListener('drop', stop);
     return () => {
+      window.removeEventListener('focus', onFocus);
       window.removeEventListener('cutaway-palette', onPalette);
       offMenu();
       window.removeEventListener('keydown', onKey);

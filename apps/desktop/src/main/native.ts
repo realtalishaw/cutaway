@@ -6,8 +6,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CorrelationResult, CursorSample } from '@cutaway/core';
-import type { FaceTrack, KeyEvent, VoiceInfo, AppSettings, DeviceList, PreflightResult, ProbeResult, RecordConfig, RecordEvent, TakeManifest, TranscribeResult, VoiceAnalysis } from '../shared/api';
+import { findSensitive, type CorrelationResult, type CursorSample, type TextLine } from '@cutaway/core';
+import type { SensitiveScan, FaceTrack, KeyEvent, VoiceInfo, AppSettings, DeviceList, PreflightResult, ProbeResult, RecordConfig, RecordEvent, TakeManifest, TranscribeResult, VoiceAnalysis } from '../shared/api';
 
 export class NativeError extends Error {
   constructor(public code: string, message: string) {
@@ -59,6 +59,9 @@ export function runJson<T>(args: string[], opts: { timeoutMs?: number } = {}): P
     });
   });
 }
+
+/** Screen Recording state as a fresh process sees it (Electron's own answer is cached until relaunch). */
+export const screenAccess = (request: boolean) => runJson<{ screen: 'granted' | 'undetermined'; asked: boolean }>(['request-screen', ...(request ? [] : ['--check'])], { timeoutMs: 12000 });
 
 export const devices = () => runJson<DeviceList>(['devices'], { timeoutMs: 15000 });
 
@@ -314,6 +317,7 @@ export async function startRecording(projectPath: string, config: RecordConfig):
   child.stderr.on('data', (d: Buffer) => (lastError = d.toString().trim().split('\n').pop() || lastError));
   child.on('close', () => {
     current.done = true;
+    sessionEnded?.();
     if (!sawStopped) {
       const message = lastError || 'The recorder stopped unexpectedly.';
       rejectStarted(new NativeError('record-failed', message));
@@ -342,6 +346,13 @@ function send(cmd: string) {
 }
 
 export const pauseRecording = async () => send('pause');
+export const flagRecording = async () => send('flag');
+
+/** Called once whenever a recording session ends, however it ends. */
+let sessionEnded: (() => void) | null = null;
+export function onSessionEnded(cb: () => void) {
+  sessionEnded = cb;
+}
 export const resumeRecording = async () => send('resume');
 
 export async function stopRecording(): Promise<TakeManifest> {
@@ -379,8 +390,8 @@ export async function shutdownRecording(): Promise<void> {
 
 export const recover = (takeDir: string) => runJson<TakeManifest>(['recover', takeDir], { timeoutMs: 120000 });
 
-export const mux = (video: string, audio: string | null, out: string) =>
-  runJson<{ path: string; duration: number; sizeBytes: number }>(['mux', '--video', video, ...(audio ? ['--audio', audio] : []), '--out', out], { timeoutMs: 30 * 60000 });
+export const mux = (video: string, audio: string | null, out: string, codec: 'h264' | 'prores422' = 'h264') =>
+  runJson<{ path: string; duration: number; sizeBytes: number }>(['mux', '--video', video, ...(audio ? ['--audio', audio] : []), '--out', out, ...(codec === 'h264' ? [] : ['--codec', codec])], { timeoutMs: (codec === 'h264' ? 30 : 180) * 60000 });
 
 // ───────────────────────────── parity additions ─────────────────────────────
 
@@ -451,5 +462,26 @@ export async function speak(projectPath: string, text: string, voiceId: string, 
   }
 }
 
+/** Deletes one synthesised narration file. Only files inside the project's own voiceover folder can be removed. */
+export async function removeVoiceover(projectPath: string, relPath: string): Promise<void> {
+  const dir = path.join(projectPath, 'media', 'voiceover');
+  const file = path.resolve(projectPath, relPath);
+  if (path.dirname(file) !== path.resolve(dir) || !/^voiceover-[a-z0-9]+\.wav$/.test(path.basename(file))) throw new Error('Only voiceover takes made in this project can be deleted.');
+  await fsp.rm(file, { force: true });
+}
+
 export const gif = (video: string, out: string, opts: { fps: number; width: number }) =>
   runJson<{ path: string; frames: number; sizeBytes: number }>(['gif', '--video', video, '--out', out, '--fps', String(opts.fps), '--width', String(opts.width)], { timeoutMs: 60 * 60000 });
+
+/**
+ * Sensitive content on a stretch of a screen recording. The helper recognises
+ * text on sampled frames; it is classified here, in memory, and dropped: only a
+ * category and a box per finding leave this function. Nothing is written or logged.
+ */
+export async function sensitive(file: string, start: number, end: number, interval: number): Promise<SensitiveScan> {
+  const r = await runJson<{ interval: number; start: number; end: number; duration: number; frames: { t: number; lines: TextLine[] }[] }>(
+    ['screen-text', file, '--interval', String(interval), '--start', start.toFixed(3), '--end', end.toFixed(3)],
+    { timeoutMs: 20 * 60000 },
+  );
+  return { interval: r.interval, start: r.start, end: r.end, duration: r.duration, frames: r.frames.map((f) => ({ t: f.t, hits: f.lines.flatMap((l) => findSensitive(l)) })) };
+}

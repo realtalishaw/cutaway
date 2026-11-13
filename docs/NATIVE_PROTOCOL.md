@@ -46,6 +46,16 @@ is `granted` or `undetermined`. Display and window coordinates are global
 display points with a top-left origin (Core Graphics space). Continuity Camera
 devices (an iPhone) appear in `cameras`.
 
+### `request-screen [--check]`
+
+Screen Recording access as this process sees it: `{"screen": "granted"|"undetermined", "asked": bool}`.
+Without `--check` it calls `CGRequestScreenCaptureAccess()`, which shows the macOS prompt the first
+time and adds the responsible app (Cutaway, or the terminal that started a development build) to
+System Settings → Privacy & Security → Screen & System Audio Recording. macOS cannot tell "never
+asked" from "switched off", so the app remembers that it asked (`screenAccessAsked` in settings).
+The app always checks through the helper rather than Electron, because a new process sees a grant
+at once while the running app keeps the answer it got at launch.
+
 ### `preflight --config <file>`
 Same config as `record`. Validates without recording or prompting:
 `{ "ok": true|false, "issues": [{ "code": "duplicate-camera|unsupported-format|missing-device|permission-denied|low-disk|multicam-unsupported|no-sources|keys-unavailable|app-audio-unavailable", "source": "cameraB"|null, "message": "…", "alternatives": ["1280x720@30"], "blocking": true|false }], "estimatedBytesPerMinute": 123456789, "freeBytes": 1234567890 }`
@@ -109,11 +119,19 @@ A file with audio but no speech returns `hasSpeech:false, words:[]` (not an erro
 No prompt, no download:
 `{ "locale", "speechAnalyzer": { "available", "transcriber": "installed|not-installed|downloading|unsupported", "dictation": "…", "installedTranscriberLocales": [], "installedDictationLocales": [] }, "sfSpeech": { "permission": "granted|denied|undetermined", "supportsLocale", "onDevice", "available" } }`
 
-### `mux --video <mp4> [--audio <wav|m4a>] --out <mp4>`
-Copies the H.264 video samples untouched, encodes audio to AAC-LC 48 kHz
-stereo if given, tags BT.709 (a `colr`/`nclx` box), moves `moov` to the front.
-Prints `{ "path", "duration", "sizeBytes", "bt709Tagged": true }`. Never
-overwrites: an existing `--out` returns error code `exists`.
+### `mux --video <mp4> [--audio <wav|m4a>] --out <mp4|mov> [--codec h264|prores422]`
+`h264` (default): copies the H.264 video samples untouched, encodes audio to
+AAC-LC 48 kHz stereo if given, moves `moov` to the front, and makes the colour
+description BT.709 in both places players look: the stream (the SPS VUI inside
+`avcC` is rewritten to primaries/transfer/matrix 1/1/1, every other bit kept)
+and the container (a `colr`/`nclx` box). Pixel values are not changed.
+`prores422`: decodes the video and writes Apple ProRes 422 in a QuickTime
+movie (`--out` should end in `.mov`) with 16-bit PCM 48 kHz stereo sound,
+tagged BT.709. Frames are labelled BT.709 before encoding, so no transfer
+conversion is applied.
+Prints `{ "path", "duration", "sizeBytes", "bt709Tagged": true, "codec" }`
+(`"frames"` too for ProRes). Never overwrites: an existing `--out` returns
+error code `exists`.
 
 ### `recover <takeDir>`
 Validates a take left behind by a crash. Fragmented movies are readable up to
@@ -330,3 +348,40 @@ construction: file time `t` of a source sits at session time `start + t`.
 * A source that never produced data has `"empty": true` and no file.
 * `manifest.json` is rewritten at every checkpoint with `"complete": false`, so
   `recover` knows each source's `start` after a crash.
+
+## Recording flags (added)
+
+`record` accepts one more stdin command while a take is running or paused:
+
+| Command | Effect |
+| --- | --- |
+| `flag` | Marks the current moment. Emits `{"type":"flag","elapsed":<take seconds>,"count":<n>}`. Two presses within 0.25 s are one flag. |
+
+Flags are written to `manifest.json` as `"flags": [<take seconds>, …]`, in order. The manifest is rewritten
+immediately on every flag, so a crash keeps them; `recover` drops any flag past the recovered duration.
+The app registers the global shortcut (⌃⌥F by default, editable) only while a take is running, and copies
+the flags onto the project (`Project.flags`, session time) when the take is added.
+
+## `screen-text` (added)
+
+```
+cutaway-native screen-text <video> [--interval 1] [--start S] [--end S] [--width 2560]
+```
+
+Recognises text on sampled frames of a screen recording with Vision, on this Mac, for the editor's
+"Find sensitive data". Output:
+
+```json
+{ "interval": 1, "start": 0, "end": 8, "duration": 8, "width": 1920, "height": 1080, "recognised": 4,
+  "frames": [ { "t": 2.0, "lines": [ { "text": "…", "box": {"x":0.06,"y":0.29,"w":0.42,"h":0.04},
+                                         "tokens": [ {"start":0,"end":8,"box":{…}} ] } ] } ] }
+```
+
+- Boxes are normalised to the frame with the origin at the top-left. `tokens` are the whitespace-separated
+  pieces of the line; `start`/`end` are UTF-16 offsets into `text`.
+- A frame whose picture has not changed reuses the previous result (`recognised` counts real passes); it is
+  still re-read every fifth sample.
+- Language correction is off, so keys, addresses and numbers come back as written.
+- Privacy: the command writes nothing to disk and logs no text. The app's main process classifies each line
+  in memory (`findSensitive` in `packages/core/src/sensitive.ts`) and passes on only a category and a box;
+  the recognised text never reaches the renderer, the project file or a log.

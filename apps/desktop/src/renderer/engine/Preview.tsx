@@ -3,7 +3,10 @@ import { buildCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, 
 import { timeMapOf, useApp, usePlayback, useShownProject } from '../state/store';
 import { drawFrame, drawableFromElement, type FrameResources } from './compositor';
 import { loadCursor, sourceUrl, voiceGain } from './media';
+import voiceWorkletUrl from './voiceWorklet.ts?worker&url';
 import { ensureFaces, ensureKeys, ensureMatte, peekFaces, peekKeys, peekMatte } from './parityData';
+import { gradeLuts } from './lut';
+import { resolveSourcePath } from '@shared/api';
 
 export interface PreviewPoint {
   /** 0…1 across the output frame. */
@@ -24,7 +27,7 @@ interface El {
   el: HTMLVideoElement;
   source: MediaSource;
   url: string;
-  node?: { src: MediaElementAudioSourceNode; hp: BiquadFilterNode; gain: GainNode };
+  node?: { src: MediaElementAudioSourceNode; hp: BiquadFilterNode; gain: GainNode; worklet?: AudioWorkletNode; sent?: string };
 }
 
 /**
@@ -44,6 +47,7 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
     const els = new Map<string, El>();
     const images = new Map<string, HTMLImageElement>();
     let audioCtx: AudioContext | null = null;
+    let voiceWorklet: Promise<void> | null = null;
     let cursorKey = '';
     let cursorTrack: CursorTrack | null = null;
     let followTrack: CursorTrack | null = null;
@@ -71,6 +75,8 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       }
       if (!e) {
         const el = document.createElement('video');
+        // sped-up and slowed-down sections keep the voice's pitch, as the export does
+        el.preservesPitch = true;
         el.crossOrigin = 'anonymous';
         el.preload = 'auto';
         el.playsInline = true;
@@ -80,6 +86,19 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       }
       e.source = s;
       return e;
+    };
+
+    /** The background picture, when the background is an image (absolute, or relative to the project folder). */
+    let bgImage: { url: string; img: HTMLImageElement } | null = null;
+    const backgroundImage = (path: string): HTMLImageElement | null => {
+      const url = window.cutaway.media.url(resolveSourcePath(live.current.projectPath, path));
+      if (bgImage?.url !== url) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = url;
+        bgImage = { url, img };
+      }
+      return bgImage.img.complete && bgImage.img.naturalWidth > 0 ? bgImage.img : null;
     };
 
     const image = (s: MediaSource): HTMLImageElement | null => {
@@ -106,9 +125,32 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
           hp.frequency.value = 85;
           const gain = audioCtx.createGain();
           src.connect(hp).connect(gain).connect(audioCtx.destination);
-          e.node = { src, hp, gain };
+          const node: NonNullable<El['node']> = { src, hp, gain };
+          e.node = node;
+          // The full chain (expander and limiter too) runs in a worklet with the exporter's own code.
+          // Until it has loaded, or if it cannot load, the filter and gain above stand in.
+          const ctx = audioCtx;
+          voiceWorklet ??= ctx.audioWorklet.addModule(voiceWorkletUrl);
+          voiceWorklet
+            .then(() => {
+              if (ctx.state === 'closed') return;
+              const worklet = new AudioWorkletNode(ctx, 'cutaway-voice-cleaner', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' });
+              src.disconnect();
+              src.connect(worklet).connect(ctx.destination);
+              node.worklet = worklet;
+              node.sent = undefined;
+            })
+            .catch((err) => console.warn('voice cleanup worklet unavailable; using the basic chain', err));
         } catch {
           return;
+        }
+      }
+      if (e.node.worklet) {
+        const params = { on, makeup: voiceGain(p), expander: p.analysis?.voiceLevelDb != null };
+        const key = JSON.stringify(params);
+        if (e.node.sent !== key) {
+          e.node.worklet.port.postMessage(params);
+          e.node.sent = key;
         }
       }
       e.node.hp.frequency.value = on ? 85 : 1;
@@ -307,6 +349,10 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       const wrap = wrapRef.current;
       if (!canvas || !wrap) return;
       const ap = p.edit.appearance;
+      if (ap.background.type === 'image') {
+        const bg = backgroundImage(ap.background.path);
+        res.backgroundImage = bg ? drawableFromElement(bg) : null;
+      }
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const box = wrap.getBoundingClientRect();
       const aspect = ap.output.width / ap.output.height;
@@ -336,6 +382,7 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
         cue: ap.captions.burnIn ? cueAt(cues, out) : null,
         device: deviceOf(ap).frame ? deviceKindFor(screen) : null,
         editor: { selectedMaskId: live.current.selectedMaskId },
+        luts: gradeLuts(pp, ap),
       });
     };
     raf = requestAnimationFrame(tick);

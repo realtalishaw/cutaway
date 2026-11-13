@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { fmtTime, restoreRevision, type DecisionMeta, type Project, type Range } from '@cutaway/core';
+import { flagsOf, fmtTime, restoreRevision, type DecisionMeta, type Project, type Range } from '@cutaway/core';
 import { timeMapOf, useApp, useShownProject, type Selection } from '../../state/store';
 import { Icon, type IconName } from '../../ui/icons';
 import { Button, Empty, Origin } from '../../ui/kit';
@@ -23,6 +23,38 @@ function Times({ project, range, removed }: { project: Project; range: Range; re
     <span className="times mono" title="Where this is in the recording → where it lands in the finished video">
       {fmtTime(range.start, true)} <Icon name="chevron" size={9} /> {removed ? 'removed' : fmtTime(map.toOutput(range.start), true)}
     </span>
+  );
+}
+
+/** Moments flagged while recording. Each one jumps the playhead there; flags never change the edit by themselves. */
+function Flags({ project }: { project: Project }) {
+  const flags = flagsOf(project);
+  if (!flags.length) return null;
+  const map = timeMapOf(project);
+  const inCut = (t: number) => project.edit.cuts.some((c) => t >= c.start && t < c.end);
+  return (
+    <section data-testid="review-flags">
+      <div className="eyebrow review-head">Flagged while recording · {flags.length}</div>
+      {flags.map((f) => (
+        <div key={f.id} className="review-row" role="button" tabIndex={0} onClick={() => seekSource(project, f.t)} onKeyDown={(ev) => ev.key === 'Enter' && seekSource(project, f.t)}>
+          <span className="review-icon flag">
+            <Icon name="flag" size={13} />
+          </span>
+          <div className="grow">
+            <div className="row between">
+              <span className="review-title">Flagged moment</span>
+              <span className="times mono" title="Where this is in the recording → where it lands in the finished video">
+                {fmtTime(f.t, true)} <Icon name="chevron" size={9} /> {inCut(f.t) ? 'removed' : fmtTime(map.toOutput(f.t), true)}
+              </span>
+            </div>
+            <div className="tiny dim">{inCut(f.t) ? 'This moment is currently cut from the video.' : 'You marked this while recording. The first cut keeps it.'}</div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={(ev) => (ev.stopPropagation(), useApp.getState().patch((p) => ({ ...p, flags: (p.flags ?? []).filter((x) => x.id !== f.id) })))} title="Remove this flag. The video is not changed.">
+            Remove
+          </Button>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -76,6 +108,7 @@ export function Review() {
   if (!project.firstCut && rows.length === 0 && open.length === 0) {
     return (
       <div className="review">
+        <Flags project={project} />
         <Empty icon="sparkle" title="No first cut yet" action={<Button variant="ai" icon="sparkle" onClick={() => useApp.getState().setView('brief')}>Create first cut</Button>}>
           This is the raw recording. You can edit by hand right away, or let Cutaway assemble a first cut for you to review.
         </Empty>
@@ -96,6 +129,8 @@ export function Review() {
           <p className="muted small" style={{ margin: '8px 0 0' }}>{project.firstCut.summary}</p>
         </div>
       ) : null}
+
+      <Flags project={project} />
 
       {open.length ? (
         <section>

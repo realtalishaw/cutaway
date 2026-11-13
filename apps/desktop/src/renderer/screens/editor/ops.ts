@@ -14,6 +14,7 @@ import {
   uid,
   updateById,
   writeLane,
+  zoomLevelOf,
   type CameraSlot,
   type EditState,
   type LayoutMode,
@@ -93,7 +94,7 @@ export function addZoom(range: Range, x = 0.5, y = 0.5, follow?: boolean) {
   let id = '';
   app().edit((e, p) => {
     const hasCursor = p.sources.some((s) => s.role === 'screen' && !s.cursorBaked && s.cursorFile);
-    const next = applyOps(e, [{ op: 'zoom', start: range.start, end: range.end, scale: 1.8, x, y, follow: follow ?? hasCursor }], 'creator', p.revision + 1);
+    const next = applyOps(e, [{ op: 'zoom', start: range.start, end: range.end, scale: zoomLevelOf(e.appearance), x, y, follow: follow ?? hasCursor }], 'creator', p.revision + 1);
     id = next.zooms.find((z) => !e.zooms.includes(z) && z.start >= range.start - 1e-3)?.id ?? '';
     return next;
   }, 'Add zoom');

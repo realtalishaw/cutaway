@@ -4,9 +4,22 @@
  * All geometry is in output pixels (appearance.output); the caller scales the
  * context for smaller preview canvases.
  */
-import { DEVICE_BEZEL, DEVICE_COLORS, WALLPAPERS, cameraLookOf, cutoutOf, deviceOf, easeOutBack, lookFilter, lookWarmth, shortcutsOf, type Appearance, type CameraCrop, type CameraSlot, type Cue, type CursorKind, type FrameState, type LensState, type Mask, type Overlay, type Placement, type Rect, type ShownShortcut, type ZoomPose } from '@cutaway/core';
+import { DEVICE_BEZEL, DEVICE_COLORS, WALLPAPERS, cameraLookOf, cutoutOf, deviceOf, easeOutBack, gradeActive, gradeOf, lookFilter, lookWarmth, shortcutsOf, type Appearance, type Lut, type CameraCrop, type CameraSlot, type Cue, type CursorKind, type FrameState, type LensState, type Mask, type Overlay, type Placement, type Rect, type ShownShortcut, type ZoomPose } from '@cutaway/core';
+
+import { gradeDrawable } from './glGrade';
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+/**
+ * Canvas filter lengths are device pixels: they ignore the current transform.
+ * The preview draws through a scale, so a blur radius given in output pixels
+ * has to be scaled the same way or it comes out too wide (and, for masks,
+ * see-through at the edges of its padding).
+ */
+function blurPx(ctx: Ctx, outputPx: number): string {
+  const t = ctx.getTransform();
+  return `blur(${Math.max(0.5, outputPx * Math.hypot(t.a, t.b))}px)`;
+}
 
 /** Anything that can paint a region of itself: a <video>, an ImageBitmap or a decoded VideoSample. */
 export interface Drawable {
@@ -44,6 +57,8 @@ export interface DrawEnv {
   device?: 'phone' | 'tablet' | null;
   /** Editor-only decorations (mask outlines). Never set during export. */
   editor?: { selectedMaskId: string | null };
+  /** Parsed colour LUTs for appearance.grade (null while a file is loading or when none is set). */
+  luts?: { screen: Lut | null; camera: Lut | null };
 }
 
 const FONT_SERIF = "'Inter Variable', 'Inter', -apple-system, sans-serif";
@@ -95,7 +110,7 @@ function drawBackground(ctx: Ctx, ap: Appearance, res: FrameResources) {
   if (bg.type === 'image' && res.backgroundImage) {
     const c = cover(res.backgroundImage, { x: 0, y: 0, w: W, h: H });
     ctx.save();
-    if (bg.blur > 0) ctx.filter = `blur(${bg.blur * H * 0.04}px)`;
+    if (bg.blur > 0) ctx.filter = blurPx(ctx, bg.blur * H * 0.04);
     res.backgroundImage.draw(ctx, c.sx, c.sy, c.sw, c.sh, -W * 0.03, -H * 0.03, W * 1.06, H * 1.06);
     ctx.restore();
     return;
@@ -171,7 +186,7 @@ function drawMasks(ctx: Ctx, masks: Mask[], src: Drawable, view: Rect, dst: Rect
       ctx.clip();
       // Heavy blur of the same pixels, over-drawn so the edges stay opaque.
       const blur = Math.max(10, Math.min(p.w, p.h) * 0.28, H * 0.022);
-      ctx.filter = `blur(${blur}px)`;
+      ctx.filter = blurPx(ctx, blur);
       const pad = blur * 2;
       const sx = (m.rect.x - (pad / dst.w) * view.w) * src.width;
       const sy = (m.rect.y - (pad / dst.h) * view.h) * src.height;
@@ -729,12 +744,46 @@ function drawCamera(ctx: Ctx, cam: Placement & { slot: CameraSlot; crop?: Camera
   }
 }
 
+// ───────────────────────────── grade ─────────────────────────────
+
+/**
+ * Sharpening and the colour LUT are applied to the source pictures before
+ * anything is composed, so zooms, masks, the lens and the cutout all see the
+ * graded pixels. The unsharp radius is one output pixel, expressed in source
+ * pixels, which keeps the result the same at any preview size.
+ */
+function gradeResources(state: FrameState, res: FrameResources, env: DrawEnv): FrameResources {
+  const ap = env.appearance;
+  if (!ap.grade) return res;
+  const g = gradeOf(ap);
+  let out = res;
+  const screenLut = g.screen.lut ? (env.luts?.screen ?? null) : null;
+  if (res.screen && state.screen && state.screen.opacity > 0.01 && gradeActive(g.screen, !!screenLut)) {
+    const view = viewport(ap, state.screen.zoom);
+    const radius = Math.max(1, (view.w * res.screen.width) / Math.max(1, state.screen.rect.w));
+    out = { ...out, screen: gradeDrawable('screen', res.screen, { lut: screenLut, strength: g.screen.strength, sharpen: g.screen.sharpen, radius }) };
+  }
+  const camLut = g.camera.lut ? (env.luts?.camera ?? null) : null;
+  if (gradeActive(g.camera, !!camLut)) {
+    for (const cam of state.cameras) {
+      const key = cam.slot === 'A' ? 'cameraA' : 'cameraB';
+      const src = res[key];
+      if (!src || cam.opacity <= 0.01 || out[key] !== res[key]) continue;
+      const win = cameraWindow(src, cam.rect, cam.crop);
+      const radius = Math.max(1, win.sw / Math.max(1, cam.rect.w));
+      out = { ...out, [key]: gradeDrawable(key, src, { lut: camLut, strength: g.camera.strength, sharpen: g.camera.sharpen, radius }) };
+    }
+  }
+  return out;
+}
+
 // ───────────────────────────── frame ─────────────────────────────
 
-export function drawFrame(ctx: Ctx, state: FrameState, res: FrameResources, env: DrawEnv): void {
+export function drawFrame(ctx: Ctx, state: FrameState, sources: FrameResources, env: DrawEnv): void {
   const ap = env.appearance;
   const { width: W, height: H } = ap.output;
   const U = Math.min(W, H);
+  const res = gradeResources(state, sources, env);
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.filter = 'none';

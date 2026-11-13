@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BACKGROUNDS, WALLPAPERS, defaultAppearance, type Appearance } from '@cutaway/core';
-import { useProject } from '../../../state/store';
+import { useApp, useProject } from '../../../state/store';
 import { Icon } from '../../../ui/icons';
 import { Segmented, Slider } from '../../../ui/kit';
+import { GradeSection } from './GradeSection';
+import { ImageCreditLine, ImageSearch } from './ImageSearch';
 import { Reset, Section, pct, setAppearance } from './shared';
 
 type BgKind = Appearance['background']['type'];
@@ -19,14 +21,18 @@ export function BackgroundTab() {
   const ap = project.edit.appearance;
   const bg = ap.background;
   const [group, setGroup] = useState<(typeof GROUPS)[number]>(bg.type === 'wallpaper' ? (WALLPAPERS.find((w) => w.id === bg.id)?.group ?? 'Dusk') : 'Dusk');
+  const projectPath = useApp((s) => s.projectPath)!;
+  // The Image page can be open before an image is chosen: the background only changes once one is picked.
+  const [kind, setKind] = useState<BgKind>(bg.type);
+  useEffect(() => setKind(bg.type), [bg.type]);
   const hasScreen = project.sources.some((s) => s.role === 'screen');
   const setBg = (background: Appearance['background']) => setAppearance((a) => ({ ...a, background }), 'Background', 'bg');
   const switchKind = (k: BgKind) => {
-    if (k === bg.type) return;
+    setKind(k);
+    if (k === bg.type || k === 'image') return;
     if (k === 'wallpaper') setBg({ type: 'wallpaper', id: 'dusk-1', blur: 0 });
     else if (k === 'gradient') setBg({ type: 'gradient', colors: BACKGROUNDS[0]!.colors, angle: BACKGROUNDS[0]!.angle });
     else if (k === 'solid') setBg({ type: 'solid', color: '#1c1d21' });
-    else void pickImage();
   };
   const pickImage = async () => {
     const [file] = await window.cutaway.app.pickFiles({ title: 'Background image', kinds: ['image'], multiple: false });
@@ -37,10 +43,10 @@ export function BackgroundTab() {
   return (
     <>
       <Section title="Background" icon="image">
-        <Segmented full label="Background type" value={bg.type} onChange={switchKind} options={[{ value: 'wallpaper', label: 'Wallpaper' }, { value: 'gradient', label: 'Gradient' }, { value: 'solid', label: 'Color' }, { value: 'image', label: 'Image' }]} />
+        <Segmented full label="Background type" value={kind} onChange={switchKind} options={[{ value: 'wallpaper', label: 'Wallpaper' }, { value: 'gradient', label: 'Gradient' }, { value: 'solid', label: 'Color' }, { value: 'image', label: 'Image' }]} />
       </Section>
 
-      {bg.type === 'wallpaper' ? (
+      {kind === 'wallpaper' && bg.type === 'wallpaper' ? (
         <Section title="Wallpaper" icon="image">
           <div className="chips" role="tablist">
             {GROUPS.map((g) => (
@@ -60,7 +66,7 @@ export function BackgroundTab() {
         </Section>
       ) : null}
 
-      {bg.type === 'gradient' ? (
+      {kind === 'gradient' && bg.type === 'gradient' ? (
         <Section title="Gradient" icon="palette">
           <div className="wall-grid">
             {BACKGROUNDS.map((b) => (
@@ -71,7 +77,7 @@ export function BackgroundTab() {
         </Section>
       ) : null}
 
-      {bg.type === 'solid' ? (
+      {kind === 'solid' && bg.type === 'solid' ? (
         <Section title="Color" icon="palette">
           <div className="wall-grid">
             {['#0b0b0d', '#1c1d21', '#ffffff', '#f3ece3', '#4f46f5', '#7c3aed', '#ec4899', '#f97316', '#facc15', '#10b981', '#22d3ee', '#2563eb'].map((c) => (
@@ -85,16 +91,28 @@ export function BackgroundTab() {
         </Section>
       ) : null}
 
-      {bg.type === 'image' ? (
-        <Section title="Image" icon="image">
-          <div className="tiny dim" style={{ wordBreak: 'break-all' }}>{bg.path.split('/').pop()}</div>
-          <button className="btn" onClick={() => void pickImage()}>
-            <Icon name="folder" size={14} /> Choose another image
-          </button>
-        </Section>
+      {kind === 'image' ? (
+        <>
+          <Section title="Image" icon="image">
+            {bg.type === 'image' ? (
+              <>
+                <div className="tiny dim" style={{ wordBreak: 'break-all' }}>{bg.credit ? 'Unsplash photo' : bg.path.split('/').pop()}</div>
+                <ImageCreditLine bg={bg} />
+              </>
+            ) : (
+              <div className="tiny dim">Pick a picture from this Mac, or search for a photo below. The background changes once you choose one.</div>
+            )}
+            <button className="btn" onClick={() => void pickImage()}>
+              <Icon name="folder" size={14} /> {bg.type === 'image' ? 'Choose another image' : 'Choose an image…'}
+            </button>
+          </Section>
+          <Section title="Search photos" icon="image">
+            <ImageSearch projectPath={projectPath} onUse={(next) => setBg({ ...next, blur: bg.type === 'image' ? bg.blur : 0 })} />
+          </Section>
+        </>
       ) : null}
 
-      {bg.type === 'wallpaper' || bg.type === 'image' ? (
+      {(bg.type === 'wallpaper' || bg.type === 'image') && kind === bg.type ? (
         <Section title="Background blur" icon="image" action={<Reset show={blur !== 0} onClick={() => setAppearance((a) => (a.background.type === 'wallpaper' || a.background.type === 'image' ? { ...a, background: { ...a.background, blur: 0 } } : a), 'Background blur', 'bgblur')} />}>
           <Slider min={0} max={1} value={blur} onChange={(v) => setAppearance((a) => (a.background.type === 'wallpaper' || a.background.type === 'image' ? { ...a, background: { ...a.background, blur: v } } : a), 'Background blur', 'bgblur')} />
         </Section>
@@ -114,6 +132,7 @@ export function BackgroundTab() {
           <Section title="Inset" icon="frame" action={<Reset show={ap.frame.inset !== DEF.frame.inset} onClick={() => frame({ inset: DEF.frame.inset }, 'Inset', 'inset')} />}>
             <Slider min={0} max={1} value={ap.frame.inset} format={pct} onChange={(v) => frame({ inset: v }, 'Inset', 'inset')} />
           </Section>
+          <GradeSection layer="screen" group="Screen look" />
         </>
       ) : null}
     </>

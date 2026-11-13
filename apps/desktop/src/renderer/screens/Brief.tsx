@@ -93,7 +93,36 @@ export function Brief() {
               </div>
               {consent === 'unavailable' ? (
                 <Banner icon="info" title={claude?.found ? 'Claude Code is not signed in' : 'Claude Code was not found'}>
-                  The cut will be assembled with Cutaway’s built-in rules. To add Claude’s editorial pass, {claude?.found ? <>run <span className="mono">claude</span> in Terminal and type <span className="mono">/login</span></> : <>install Claude Code and sign in</>}, then check again in Settings.
+                  <div>The cut will be assembled with Cutaway’s built-in rules. To add Claude’s editorial pass, {claude?.found ? 'sign in to Claude Code once' : 'install Claude Code and sign in'}.</div>
+                  <div className="row" style={{ gap: 8, marginTop: 10 }}>
+                    {claude?.found ? (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon="external"
+                        onClick={() =>
+                          void window.cutaway.ai
+                            .signIn()
+                            .then((r) => useApp.getState().toast(r.message))
+                            .catch((e: Error) => useApp.getState().toast(e.message))
+                        }
+                      >
+                        Sign in to Claude Code…
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      icon="sync"
+                      onClick={() =>
+                        void window.cutaway.ai
+                          .status(true)
+                          .then((c) => (useApp.setState({ claude: c }), useApp.getState().toast(c.message)))
+                          .catch(() => {})
+                      }
+                    >
+                      Check again
+                    </Button>
+                  </div>
                 </Banner>
               ) : consent === 'granted' ? (
                 <div className="row small" style={{ alignItems: 'flex-start' }}>

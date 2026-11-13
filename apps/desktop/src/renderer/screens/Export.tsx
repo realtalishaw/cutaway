@@ -4,8 +4,10 @@ import { saveNow, timeMapOf, useApp, useProject } from '../state/store';
 import {
   BITRATE_SUPPORTED,
   COMPRESSION,
+  PRORES_SUPPORTED,
   bitrateFor,
   estimateExportBytes,
+  estimateProresBytes,
   estimateSeconds,
   estimateVideoBytes,
   sizeForShort,
@@ -39,7 +41,7 @@ const FILE_HINT: Record<string, string> = {
 };
 
 const baseName = (p: string) => p.split('/').pop() ?? p;
-const isMedia = (name: string) => /\.(mp4|gif)$/i.test(name);
+const isMedia = (name: string) => /\.(mp4|mov|gif)$/i.test(name);
 const PREFS_KEY = 'cutaway.export.prefs';
 
 interface Prefs {
@@ -53,7 +55,8 @@ interface Prefs {
 function loadPrefs(): Prefs {
   const d: Prefs = { format: 'mp4', target: 'file', compression: 'social', gifFps: 15, gifShort: 480 };
   try {
-    return { ...d, ...(JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<Prefs>) };
+    const p = { ...d, ...(JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<Prefs>) };
+    return p.format === 'mov' && !PRORES_SUPPORTED ? { ...p, format: 'mp4' } : p;
   } catch {
     return d;
   }
@@ -135,7 +138,7 @@ function Running({ job }: { job: ExportJob }) {
   // Percentage and time left come only from real frame counts and the measured encoder speed.
   const pct = encoding ? Math.min(100, Math.round((r!.frames / r!.totalFrames) * 100)) : null;
   const left = encoding && r!.fps > 0 ? Math.max(0, (r!.totalFrames - r!.frames) / r!.fps) : null;
-  const what = job.kind === 'package' ? 'YouTube package' : job.format === 'gif' ? 'GIF' : 'video';
+  const what = job.kind === 'package' ? 'YouTube package' : job.format === 'gif' ? 'GIF' : job.format === 'mov' ? 'ProRes video' : 'video';
   return (
     <div className="ex-progress">
       <div className="row between">
@@ -217,7 +220,7 @@ function Finished({ job, result, onDismiss, onRetry, onChooseFolder }: { job: Ex
           {pkg ? 'Package complete' : clipFailed ? 'Exported, but not copied' : clip ? 'Copied to the clipboard' : job.format === 'gif' ? 'GIF exported' : 'Video exported'}
         </div>
         <button className="folder-path" onClick={() => void window.cutaway.app.reveal(mediaPath ?? result.folder!)} title="Show in Finder">
-          <Icon name="folder" size={13} /> {result.folder}
+          <Icon name="folder" size={13} /> {pkg || !media ? result.folder : mediaPath}
         </button>
         <FileList files={result.files} folder={result.folder} />
         {result.notes.length ? (
@@ -295,7 +298,7 @@ function Finished({ job, result, onDismiss, onRetry, onChooseFolder }: { job: Ex
           {disk ? 'Retry after freeing space' : 'Export again'}
         </Button>
       </div>
-      <div className="tiny dim">Retrying starts a fresh folder, so it is always safe.</div>
+      <div className="tiny dim">{job.kind === 'package' ? 'Retrying starts a fresh folder, so it is always safe.' : 'Retrying never overwrites a file you did not choose to replace.'}</div>
     </div>
   );
 }
@@ -330,7 +333,7 @@ function History({ exports }: { exports: ExportRecord[] }) {
               <div className="file-name">{baseName(e.folder)}</div>
               <div className="tiny dim">
                 Revision {e.revision} · {size(e)} {e.settings.fps} fps{e.draft ? ' · draft' : ''} · {fmtAgo(e.createdAt)}
-                {e.status === 'failed' ? ' · nothing kept' : present[e.id] === false ? ' · folder no longer there' : ''}
+                {e.status === 'failed' ? ' · nothing kept' : present[e.id] === false ? (isMedia(e.folder) ? ' · file no longer there' : ' · folder no longer there') : ''}
               </div>
             </div>
             {present[e.id] ? <Button size="sm" variant="ghost" icon="folder" onClick={() => void window.cutaway.app.reveal(e.folder)} aria-label="Reveal in Finder" title="Reveal in Finder" /> : null}
@@ -383,7 +386,7 @@ export function ExportScreen() {
   const bitrate = bitrateFor(out.width, out.height, out.fps, prefs.compression);
   const frames = Math.max(1, Math.round(map.outDuration * (format === 'gif' ? Math.min(30, out.fps) : out.fps)));
 
-  const estimatedBytes = useMemo(() => (target === 'package' ? estimateExportBytes(project, bitrate) : estimateVideoBytes(project, bitrate)), [project, bitrate, target]);
+  const estimatedBytes = useMemo(() => (target === 'package' ? estimateExportBytes(project, bitrate) : format === 'mov' ? estimateProresBytes(project) : estimateVideoBytes(project, bitrate)), [project, bitrate, target, format]);
   const seconds = format === 'gif' ? estimateSeconds(frames, gifSize.width, gifSize.height) : estimateSeconds(frames, out.width, out.height);
 
   const refreshDisk = useCallback(() => {
@@ -399,7 +402,7 @@ export function ExportScreen() {
   const blocked = counts.block > 0;
   const needsDraft = target === 'package' && !pre.canExport && pre.canExportDraft;
   const asDraft = needsDraft && draft;
-  const folderName = target === 'package' ? packageFolderName(project.name, project.revision, existing, needsDraft) : `${slugify(project.name)}-${format === 'gif' ? 'gif' : 'video'}`;
+  const folderName = target === 'package' ? packageFolderName(project.name, project.revision, existing, needsDraft) : `${slugify(project.name)}.${format}`;
   const mine = job && job.projectId === project.id ? job : null;
   const otherRunning = !!job && job.status === 'running' && job.projectId !== project.id;
   const busy = mine?.status === 'running';
@@ -428,8 +431,14 @@ export function ExportScreen() {
     if (!dest) return;
     await saveNow();
     const current = useApp.getState().project!;
-    if (target === 'package') startPackageExport({ project: current, projectPath, destDir: dest, draft: needsDraft, bitrate }, finished(current));
-    else startFileExport({ project: current, projectPath, destDir: dest, format, target, gif: { fps: prefs.gifFps, short: prefs.gifShort }, bitrate }, finished(current));
+    if (target === 'package') return startPackageExport({ project: current, projectPath, destDir: dest, draft: needsDraft, bitrate }, finished(current));
+    // A file goes exactly where the creator says; the clipboard copy gets a free name in the export folder.
+    let picked: { path: string; replace: boolean } | null = null;
+    if (target === 'file') {
+      picked = await window.cutaway.export.pickFile(dest, `${slugify(current.name)}.${format}`);
+      if (!picked) return;
+    }
+    startFileExport({ project: current, projectPath, destDir: dest, format, target, filePath: picked?.path ?? null, replace: picked?.replace ?? false, gif: { fps: prefs.gifFps, short: prefs.gifShort }, bitrate }, finished(current));
   };
 
   // Return starts the export, as in the sheet's primary button label.
@@ -512,12 +521,13 @@ export function ExportScreen() {
                   onChange={(v) => setPrefs({ format: v })}
                   options={[
                     { value: 'mp4', label: 'MP4' },
+                    ...(PRORES_SUPPORTED ? [{ value: 'mov' as const, label: 'MOV (ProRes 422)' }] : []),
                     { value: 'gif', label: 'GIF' },
                   ]}
                 />
               </Row>
 
-              {format === 'mp4' ? (
+              {format !== 'gif' ? (
                 <>
                   <Row label="Frame rate">
                     <Segmented
@@ -542,7 +552,11 @@ export function ExportScreen() {
                       ]}
                     />
                   </Row>
-                  {BITRATE_SUPPORTED ? (
+                  {format === 'mov' ? (
+                    <Row label="Compression" hint="For editing again in Final Cut Pro, Premiere Pro or DaVinci Resolve. The file is large: about ten times an MP4. YouTube and most sites want the MP4.">
+                      <div className="ex-fixed">ProRes 422 · uncompressed sound · SDR BT.709</div>
+                    </Row>
+                  ) : BITRATE_SUPPORTED ? (
                     <Row label="Compression" hint={<>{compression.note} Quality setting does not impact export speed.</>}>
                       <Segmented label="Compression" value={prefs.compression} onChange={(v) => setPrefs({ compression: v })} options={COMPRESSION.map((c) => ({ value: c.id, label: c.label }))} />
                     </Row>
@@ -587,12 +601,12 @@ export function ExportScreen() {
                   target === 'package'
                     ? 'One folder with the video, thumbnail, title, captions and chapters. Nothing is uploaded.'
                     : target === 'clipboard'
-                      ? 'Exports the file, then puts it on the clipboard so you can paste it into another app.'
+                      ? 'Exports the file into the export folder, then puts it on the clipboard so you can paste it into another app.'
                       : !packageOk
-                        ? format === 'gif'
-                          ? 'A YouTube package needs an MP4.'
-                          : `A YouTube package needs the Wide 16:9 shape; this project is ${shape}. Change the shape under the preview in Edit.`
-                        : undefined
+                        ? format !== 'mp4'
+                          ? 'One file, saved where you choose. A YouTube package needs an MP4.'
+                          : `One file, saved where you choose. A YouTube package needs the Wide 16:9 shape; this project is ${shape}. Change the shape under the preview in Edit.`
+                        : 'One file. You choose its name and where it goes when you start.'
                 }
               >
                 <div className="row" style={{ gap: 8 }}>

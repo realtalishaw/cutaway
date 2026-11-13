@@ -72,6 +72,7 @@ const PATHS = {
   transcript: '<path d="M5 6h14M5 10h14M5 14h9M5 18h6"/>',
   arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   zoomOut: '<circle cx="10.500" cy="10.500" r="6"/><path d="M15 15l5 5M8 10.500h5"/>',
+  flag: '<path d="M6 21V4M6 5h11l-2.500 4 2.500 4H6"/>',
   film: '<path d="M5 4h14v16H5zM9 4v16M15 4v16M5 8h4M5 12h4M5 16h4M15 8h4M15 12h4M15 16h4"/>',
 } as const;
 

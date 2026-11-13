@@ -6,15 +6,19 @@
  *  - the model gets no tools, or only `Read` when still frames are supplied,
  *    with the frame directory as its working directory. It can never run
  *    Bash, Write or Edit, and permission prompts are never bypassed;
- *  - the child environment is scrubbed of every CLAUDE* and ANTHROPIC*
- *    variable so a host session's identity never leaks into the call;
+ *  - the CLI is found and run the way the creator's own terminal runs it:
+ *    through their login shell's PATH and environment, so "signed in in my
+ *    terminal" and "signed in for Cutaway" are the same thing;
+ *  - CLAUDE* and ANTHROPIC* variables inherited from whatever launched
+ *    Cutaway are dropped first, so a host session's identity never leaks
+ *    into the call (ones the creator's own shell profile sets are kept);
  *  - the reply is constrained by a JSON Schema and returned as plain data.
  */
 import { spawn } from 'node:child_process';
 import { constants as FS } from 'node:fs';
 import { access } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
-import { delimiter, isAbsolute, join, resolve, sep } from 'node:path';
+import { homedir, tmpdir, userInfo } from 'node:os';
+import { basename, delimiter, isAbsolute, join, resolve, sep } from 'node:path';
 
 export interface ClaudeStatus {
   found: boolean;
@@ -61,10 +65,73 @@ async function isExecutable(p: string): Promise<boolean> {
   }
 }
 
-/** Locate the Claude Code CLI: explicit path, then PATH, then the usual install locations. */
-export async function findClaude(preferredPath?: string | null, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+// ───────────────────────── the creator's terminal ─────────────────────────
+
+export interface ShellContext {
+  /** Absolute paths the login shell resolves `claude` to, best first. */
+  claudePaths: string[];
+  /** The login shell's exported environment, or null if it could not be read. */
+  env: Record<string, string> | null;
+}
+
+const MARK = { a: '__CUTAWAY_PATHS__', b: '__CUTAWAY_ENV__', c: '__CUTAWAY_END__' };
+const SHELLS = new Set(['zsh', 'bash', 'sh', 'ksh', 'fish']);
+
+/** Parse the probe's output. Anything a shell profile prints before the first marker is ignored. Pure. */
+export function parseShellProbe(stdout: string): ShellContext {
+  const a = stdout.indexOf(MARK.a);
+  const b = stdout.indexOf(MARK.b, a + 1);
+  const c = stdout.lastIndexOf(MARK.c);
+  if (a < 0 || b < 0 || c < b) return { claudePaths: [], env: null };
+  const claudePaths = [...new Set(stdout.slice(a + MARK.a.length, b).split('\n').map((l) => l.trim()).filter((l) => isAbsolute(l) && basename(l) === 'claude'))];
+  const env: Record<string, string> = {};
+  for (const entry of stdout.slice(b + MARK.b.length, c).split('\0')) {
+    const e = entry.replace(/^\n/, '');
+    const i = e.indexOf('=');
+    if (i <= 0) continue;
+    const k = e.slice(0, i);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || k === '_' || k === 'SHLVL' || k === 'PWD' || k === 'OLDPWD') continue;
+    env[k] = e.slice(i + 1);
+  }
+  return { claudePaths, env: Object.keys(env).length ? env : null };
+}
+
+let shellContext: Promise<ShellContext> | null = null;
+
+/** Forget what the login shell said (after the creator changes their setup). */
+export function resetShellContext(): void {
+  shellContext = null;
+}
+
+/**
+ * Ask the creator's login shell where `claude` is and what it exports, once
+ * per run. A GUI app starts with a bare PATH and none of the shell profile,
+ * which is why the CLI can work in Terminal and not from a double-clicked app.
+ */
+export function loginShellContext(): Promise<ShellContext> {
+  if (process.env.VITEST || process.env.CUTAWAY_SHELL_ENV === '0' || process.platform === 'win32') return Promise.resolve({ claudePaths: [], env: null });
+  shellContext ??= (async () => {
+    let shell = process.env.SHELL || '';
+    try {
+      shell ||= userInfo().shell ?? '';
+    } catch {
+      /* no passwd entry */
+    }
+    if (!isAbsolute(shell) || !SHELLS.has(basename(shell)) || !(await isExecutable(shell))) shell = '/bin/zsh';
+    const script = `printf '\\n${MARK.a}\\n'; command -v claude; whence -p claude 2>/dev/null; type -P claude 2>/dev/null; printf '\\n${MARK.b}\\n'; env -0; printf '\\n${MARK.c}\\n'`;
+    const out = await spawnClaude(shell, ['-ilc', script], null, { cwd: homedir(), env: scrubbedEnv(process.env), timeoutMs: 12_000 });
+    return parseShellProbe(out.stdout);
+  })().catch(() => ({ claudePaths: [], env: null }));
+  return shellContext;
+}
+
+/** Locate the Claude Code CLI: explicit path, then the login shell's answer, then PATH, then the usual install locations. */
+export async function findClaude(preferredPath?: string | null, env?: NodeJS.ProcessEnv): Promise<string | null> {
   if (preferredPath && isAbsolute(preferredPath) && (await isExecutable(preferredPath))) return preferredPath;
-  const dirs = [...(env.PATH ?? '').split(delimiter).filter(Boolean), ...EXTRA_DIRS()];
+  if (!env) {
+    for (const p of (await loginShellContext()).claudePaths) if (await isExecutable(p)) return p;
+  }
+  const dirs = [...((env ?? process.env).PATH ?? '').split(delimiter).filter(Boolean), ...EXTRA_DIRS()];
   const seen = new Set<string>();
   for (const d of dirs) {
     if (seen.has(d)) continue;
@@ -73,6 +140,18 @@ export async function findClaude(preferredPath?: string | null, env: NodeJS.Proc
     if (await isExecutable(candidate)) return candidate;
   }
   return null;
+}
+
+/** Environment for a CLI call: the login shell's when it could be read, otherwise this process's, scrubbed. */
+export async function claudeEnv(claudePath: string): Promise<NodeJS.ProcessEnv> {
+  const shell = (await loginShellContext()).env;
+  if (!shell) return scrubbedEnv(process.env, claudePath);
+  // The shell was started from a scrubbed environment, so any CLAUDE*/ANTHROPIC* variable here is the creator's own.
+  const out: NodeJS.ProcessEnv = { ...shell };
+  delete out.ELECTRON_RUN_AS_NODE;
+  out.PATH = [...new Set([resolve(claudePath, '..'), ...(out.PATH ?? '').split(delimiter).filter(Boolean), ...EXTRA_DIRS(), '/usr/bin', '/bin'])].join(delimiter);
+  out.HOME = out.HOME ?? homedir();
+  return out;
 }
 
 /**
@@ -169,7 +248,7 @@ export function spawnClaude(path: string, args: string[], input: string | null, 
 const NOT_SIGNED_IN = /not logged in|please run \/login|oauth (session|token).*(expired|revoked)|failed to authenticate|invalid api key|authentication_error|unauthorized/i;
 
 function signInMessage(): string {
-  return 'Claude Code on this Mac is not signed in. Open Terminal, run "claude", type /login, then try again.';
+  return 'Claude Code on this Mac is not signed in. Choose Sign in to Claude Code in Settings (or run "claude" in Terminal and type /login), then try again.';
 }
 
 /** Arguments for one structured, non-interactive call. Exported for tests. */
@@ -254,7 +333,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
   if (!path) return { ok: false, error: { code: 'not-found', message: 'Claude Code is not installed on this Mac (no "claude" command was found).' }, durationMs: elapsed() };
   const out = await spawnClaude(path, buildArgs(opts), opts.prompt, {
     cwd: opts.imageDir && (opts.imagePaths?.length ?? 0) > 0 ? opts.imageDir : tmpdir(),
-    env: scrubbedEnv(process.env, path),
+    env: await claudeEnv(path),
     signal: opts.signal,
     timeoutMs: opts.timeoutMs ?? 12 * 60_000,
   });
@@ -271,7 +350,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
 export async function claudeStatus(preferredPath?: string | null, signal?: AbortSignal): Promise<ClaudeStatus> {
   const path = await findClaude(preferredPath);
   if (!path) return { found: false, path: null, version: null, signedIn: null, message: 'Claude Code is not installed on this Mac. Install it, sign in, and Cutaway will use it. Until then the built-in rules assemble the cut.' };
-  const env = scrubbedEnv(process.env, path);
+  const env = await claudeEnv(path);
   const cwd = tmpdir();
   const v = await spawnClaude(path, ['--version'], null, { cwd, env, signal, timeoutMs: 15_000 });
   const version = v.code === 0 ? (v.stdout.trim().match(/\d+\.\d+\.\d+/)?.[0] ?? null) : null;
@@ -285,4 +364,13 @@ export async function claudeStatus(preferredPath?: string | null, signal?: Abort
   }
   const message = signedIn === true ? `Claude Code ${version ?? ''} is signed in.`.replace('  ', ' ') : signedIn === false ? signInMessage() : `Claude Code ${version ?? ''} was found, but its sign-in state could not be read. Cutaway will try it and fall back to built-in rules if it fails.`.replace('  ', ' ');
   return { found: true, path, version, signedIn, message };
+}
+
+/**
+ * A script that signs the CLI in from the creator's own Terminal. Signing in
+ * is theirs to do: this only starts `claude auth login` where they can see it.
+ */
+export function signInScript(claudePath: string): string {
+  const q = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+  return ['#!/bin/zsh -il', 'clear', 'echo "Signing Claude Code in for Cutaway. Follow the prompts; you can close this window when it says you are signed in."', 'echo', `${q(claudePath)} auth login`, 'echo', `${q(claudePath)} auth status >/dev/null 2>&1 && echo "Signed in. Go back to Cutaway and choose Check again." || echo "Not signed in yet. Run this again from Cutaway when you are ready."`, ''].join('\n');
 }

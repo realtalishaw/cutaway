@@ -5,7 +5,7 @@
  * 'cutaway-recovered-take' event the Library dispatches after recovering an
  * interrupted recording, so no wiring is needed elsewhere.
  */
-import { uid, withSources, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
+import { uid, withSources, withTakeFlags, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
 import type { ProbeResult, TakeManifest, TakeSource } from '@shared/api';
 import { useApp } from './store';
 
@@ -111,7 +111,8 @@ export async function addTakeToProject(manifest: TakeManifest, takeDir: string):
   });
   useApp.getState().patch((p: Project) => {
     if (p.sources.some((s) => s.takeId === manifest.takeId && s.origin === 'recording')) return p;
-    return withSources(p, [...p.sources, ...added]);
+    // Flags are take seconds; a take's clock is the session clock.
+    return withTakeFlags(withSources(p, [...p.sources, ...added]), manifest.takeId, (manifest.flags ?? []).filter((t) => t <= manifest.duration + 0.001));
   });
   return { added, demoted, alreadyPresent: false };
 }

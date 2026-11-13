@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { fmtTime, type Range } from '@cutaway/core';
+import { flagsOf, fmtTime, type Range } from '@cutaway/core';
 import { timeMapOf, useApp, usePlayback, useShownProject } from '../state/store';
 import { acceptComparison, discardComparison, reviseSection } from '../state/jobs';
 import { Preview, type PreviewPoint } from '../engine/Preview';
 import { Icon } from '../ui/icons';
-import { Button, Segmented, Slider } from '../ui/kit';
+import { Button, Segmented } from '../ui/kit';
 import { Timeline } from './editor/Timeline';
 import { Inspector } from './editor/Inspector';
+import { CropSheet } from './editor/CropSheet';
+import { SensitiveSheet } from './editor/SensitiveSheet';
+import { commandForEvent } from '../state/keymap';
 import { addMask, addOverlay, addZoom, cutRange, lockRange, patchItem, playheadSource, removeSelected, seekSource, selectedRange, setLayout, splitSelected } from './editor/ops';
 import './editor/editor.css';
 
@@ -88,48 +91,26 @@ function AspectMenu() {
   );
 }
 
-function CropPopover() {
+function CropButton({ onOpen }: { onOpen(): void }) {
   const project = useShownProject();
-  const [open, setOpen] = useState(false);
   const crop = project.edit.appearance.crop;
   const hasScreen = project.sources.some((s) => s.role === 'screen');
-  const set = (patch: Partial<typeof crop>) => useApp.getState().edit((e) => ({ ...e, appearance: { ...e.appearance, crop: { ...e.appearance.crop, ...patch } } }), 'Crop', 'look:crop');
   const cropped = crop.x > 0 || crop.y > 0 || crop.w < 1 || crop.h < 1;
-  const pc = (v: number) => `${Math.round(v * 100)}%`;
   return (
-    <div style={{ position: 'relative' }}>
-      <button className={`btn${cropped ? ' on' : ''}`} disabled={!hasScreen} onClick={() => setOpen(!open)} aria-expanded={open} title="Crop the recording">
-        <Icon name="crop" size={16} /> Crop
-      </button>
-      {open ? (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 290 }} onMouseDown={() => setOpen(false)} />
-          <div className="menu crop-pop" style={{ position: 'absolute', left: 0, bottom: 40 }}>
-            <div className="row between" style={{ marginBottom: 8 }}>
-              <span className="insp-heading">Crop the recording</span>
-              <button className="reset-link" disabled={!cropped} onClick={() => set({ x: 0, y: 0, w: 1, h: 1 })}>Reset</button>
-            </div>
-            <div className="grid-2">
-              <Slider label="Left" min={0} max={0.45} value={crop.x} format={pc} onChange={(v) => set({ x: v, w: Math.min(crop.w, 1 - v) })} />
-              <Slider label="Top" min={0} max={0.45} value={crop.y} format={pc} onChange={(v) => set({ y: v, h: Math.min(crop.h, 1 - v) })} />
-              <Slider label="Width" min={0.2} max={1 - crop.x} value={crop.w} format={pc} onChange={(v) => set({ w: v })} />
-              <Slider label="Height" min={0.2} max={1 - crop.y} value={crop.h} format={pc} onChange={(v) => set({ h: v })} />
-            </div>
-          </div>
-        </>
-      ) : null}
-    </div>
+    <button className={`btn${cropped ? ' on' : ''}`} disabled={!hasScreen} onClick={onOpen} aria-haspopup="dialog" title="Crop the recording" data-testid="crop-open">
+      <Icon name="crop" size={16} /> Crop
+    </button>
   );
 }
 
-function TopControls() {
+function TopControls({ onCrop }: { onCrop(): void }) {
   const project = useShownProject();
   const expanded = project.ui.expandedTimeline;
   return (
     <div className="ed-top">
       <div className="row" style={{ gap: 8 }}>
         <AspectMenu />
-        <CropPopover />
+        <CropButton onOpen={onCrop} />
       </div>
       <div className="row" style={{ gap: 8 }}>
         <button className={`btn${expanded ? ' on' : ''}`} onClick={() => useApp.getState().patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: !p.ui.expandedTimeline } }))} title="Show or hide the layout, graphics and mask timelines (⌘T)" aria-pressed={expanded}>
@@ -141,7 +122,7 @@ function TopControls() {
 }
 
 /** Floating tool pill on the left edge of the stage: add a zoom, a camera layout or a mask at the playhead. */
-function PreviewToolbar({ pickMask }: { pickMask(): void }) {
+function PreviewToolbar({ pickMask, findSensitive }: { pickMask(): void; findSensitive(): void }) {
   const project = useShownProject();
   const hasScreen = project.sources.some((s) => s.role === 'screen');
   const hasCam = project.sources.some((s) => s.role === 'cameraA' || s.role === 'cameraB');
@@ -165,6 +146,7 @@ function PreviewToolbar({ pickMask }: { pickMask(): void }) {
     hasScreen
       ? [
           tool('mask', 'Hide sensitive content: drag over it on the preview', () => (addMask(range(5), 'screen'), pickMask())),
+          tool('shield', 'Find sensitive data: emails, keys, card numbers, passwords', findSensitive),
           tool('text', 'Add a callout at the playhead', () => addOverlay(range(4), 'callout', 'Callout')),
         ]
       : [],
@@ -234,6 +216,23 @@ function CompareBar() {
   );
 }
 
+/** Move the playhead to the next or previous recording flag that is still in the video. */
+function jumpFlag(dir: 1 | -1) {
+  const app = useApp.getState();
+  const p = app.project;
+  if (!p) return;
+  const flags = flagsOf(p);
+  if (!flags.length) return app.toast('This recording has no flags. Press the flag shortcut while recording to mark a moment.');
+  const map = timeMapOf(p);
+  const now = usePlayback.getState().time;
+  // Compare in output time, so a flag inside a cut is not a place the playhead gets stuck on.
+  const outs = flags.map((f) => map.toOutput(f.t)).sort((a, b) => a - b);
+  const target = dir > 0 ? outs.find((t) => t > now + 0.03) : [...outs].reverse().find((t) => t < now - 0.03);
+  if (target === undefined) return app.toast(dir > 0 ? 'No flag after this point.' : 'No flag before this point.');
+  usePlayback.getState().setPlaying(false);
+  usePlayback.getState().seek(target);
+}
+
 export function Editor() {
   const project = useShownProject();
   const selection = useApp((s) => s.selection);
@@ -243,6 +242,7 @@ export function Editor() {
   const [pick, setPick] = useState<Pick>(null);
   const [revising, setRevising] = useState(false);
   const [mark, setMark] = useState<number | null>(null);
+  const [sheet, setSheet] = useState<'crop' | 'sensitive' | null>(null);
   const dragStart = useRef<PreviewPoint | null>(null);
 
   // Keep the library card's poster current: grab the preview when leaving the editor.
@@ -280,6 +280,9 @@ export function Editor() {
         const r = selectedRange(useApp.getState().selection);
         if (r) lockRange(r);
       } else if (cmd === 'toggle-timeline') useApp.getState().patch((q) => ({ ...q, ui: { ...q.ui, expandedTimeline: !q.ui.expandedTimeline } }));
+      else if (cmd === 'flag-next' || cmd === 'flag-prev') jumpFlag(cmd === 'flag-next' ? 1 : -1);
+      else if (cmd === 'crop' && p.sources.some((x) => x.role === 'screen')) setSheet('crop');
+      else if (cmd === 'find-sensitive' && p.sources.some((x) => x.role === 'screen')) setSheet('sensitive');
     };
     window.addEventListener('cutaway-revise', onRevise);
     window.addEventListener('cutaway-command', onCommand);
@@ -295,57 +298,71 @@ export function Editor() {
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
       const app = useApp.getState();
       const p = app.project;
-      if (!p || app.comparison) return;
-      // ⌃L camera, ⌃S screen, ⌃B both: add a layout at the playhead
-      if (e.ctrlKey && !e.metaKey && !e.altKey && ['l', 's', 'b'].includes(e.key.toLowerCase())) {
-        const t = playheadSource(p);
-        const r = selectedRange(app.selection) ?? { start: t, end: Math.min(p.duration, t + 4) };
-        const hasCam = p.sources.some((x) => x.role === 'cameraA' || x.role === 'cameraB');
-        const hasScreen = p.sources.some((x) => x.role === 'screen');
-        const mode = e.key.toLowerCase() === 'l' ? 'camera' : e.key.toLowerCase() === 's' ? 'screen' : 'overlay';
-        if ((mode !== 'screen' && !hasCam) || (mode !== 'camera' && !hasScreen)) return;
-        e.preventDefault();
-        return setLayout(r, mode);
+      // A sheet or the command menu on top owns the keyboard.
+      if (!p || app.comparison || document.querySelector('.scrim, .qs')) return;
+      if (e.key === 'Escape') {
+        setPick(null);
+        app.select(null);
+        return;
       }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Bindings come from the keymap, so shortcuts changed in Settings apply here. ⌦ always removes, like ⌫.
+      const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+      const cmd = commandForEvent(e) ?? (e.key === 'Delete' && plain ? 'delete' : null);
+      if (!cmd) return;
       const fps = p.edit.appearance.output.fps;
       const pb = usePlayback.getState();
-      switch (e.key) {
-        case 'Backspace':
-        case 'Delete':
+      const step = (seconds: number) => (e.preventDefault(), pb.seek(Math.max(0, Math.min(timeMapOf(p).outDuration, pb.time + seconds))));
+      switch (cmd) {
+        case 'layout-camera':
+        case 'layout-screen':
+        case 'layout-both': {
+          const t = playheadSource(p);
+          const r = selectedRange(app.selection) ?? { start: t, end: Math.min(p.duration, t + 4) };
+          const hasCam = p.sources.some((x) => x.role === 'cameraA' || x.role === 'cameraB');
+          const hasScreen = p.sources.some((x) => x.role === 'screen');
+          const mode = cmd === 'layout-camera' ? 'camera' : cmd === 'layout-screen' ? 'screen' : 'overlay';
+          if ((mode !== 'screen' && !hasCam) || (mode !== 'camera' && !hasScreen)) return;
+          e.preventDefault();
+          return setLayout(r, mode);
+        }
+        case 'delete':
           if (app.selection) (e.preventDefault(), removeSelected());
           break;
-        case 'Escape':
-          setPick(null);
-          app.select(null);
+        case 'frame-back':
+          step(-1 / fps);
           break;
-        case 'ArrowLeft':
+        case 'frame-forward':
+          step(1 / fps);
+          break;
+        case 'second-back':
+          step(-1);
+          break;
+        case 'second-forward':
+          step(1);
+          break;
+        case 'flag-prev':
           e.preventDefault();
-          pb.seek(pb.time - (e.shiftKey ? 1 : 1 / fps));
+          jumpFlag(-1);
           break;
-        case 'ArrowRight':
+        case 'flag-next':
           e.preventDefault();
-          pb.seek(Math.min(timeMapOf(p).outDuration, pb.time + (e.shiftKey ? 1 : 1 / fps)));
+          jumpFlag(1);
           break;
-        case 'i':
-        case 'I':
+        case 'mark-in':
           setMark(playheadSource(p));
-          app.toast('In point set. Press O at the end of the range.');
+          app.toast('In point set. Move the playhead and mark the end of the range.');
           break;
-        case 'o':
-        case 'O': {
+        case 'mark-out': {
           const t = playheadSource(p);
           if (mark !== null && Math.abs(t - mark) > 0.05) app.select({ kind: 'range', range: { start: Math.min(mark, t), end: Math.max(mark, t) } });
           break;
         }
-        case 'x':
-        case 'X': {
+        case 'cut': {
           const r = selectedRange(app.selection);
           if (r) cutRange(r);
           break;
         }
-        case 'l':
-        case 'L': {
+        case 'keep': {
           const r = selectedRange(app.selection);
           if (r) lockRange(r);
           break;
@@ -403,7 +420,7 @@ export function Editor() {
   return (
     <div className={`editor${inspector ? '' : ' no-inspector'}`}>
       <section className="ed-stage">
-        <TopControls />
+        <TopControls onCrop={() => setSheet('crop')} />
         {!project.firstCut && !comparing ? (
           <div className="stage-note">
             <span className="row" style={{ gap: 8 }}>
@@ -415,7 +432,7 @@ export function Editor() {
         ) : null}
         <CompareBar />
         <div className="stage-preview">
-          {!comparing ? <PreviewToolbar pickMask={() => setPick('mask')} /> : null}
+          {!comparing ? <PreviewToolbar pickMask={() => setPick('mask')} findSensitive={() => setSheet('sensitive')} /> : null}
           <Preview onPointer={pick ? onPointer : undefined} cursorStyle={pick ? 'crosshair' : undefined} selectedMaskId={selection?.kind === 'mask' ? selection.id : null} />
           {pick ? (
             <div className="pick-hint">
@@ -444,6 +461,8 @@ export function Editor() {
         <Timeline zoom={zoom} onZoom={setZoom} />
       </div>
       <button className="sr-only" onClick={() => seekSource(project, 0)}>Go to start</button>
+      {sheet === 'crop' ? <CropSheet onClose={() => setSheet(null)} /> : null}
+      {sheet === 'sensitive' ? <SensitiveSheet onClose={() => setSheet(null)} /> : null}
     </div>
   );
 }

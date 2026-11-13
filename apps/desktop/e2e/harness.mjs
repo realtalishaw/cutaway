@@ -17,7 +17,7 @@ export async function launch({ profile, settings = {} } = {}) {
   const settingsFile = path.join(userData, 'settings.json');
   const prev = fs.existsSync(settingsFile) ? JSON.parse(fs.readFileSync(settingsFile, 'utf8')) : {};
   fs.writeFileSync(settingsFile, JSON.stringify({ ...prev, libraryDir, exportDir, ...settings }));
-  const env = { ...process.env, CUTAWAY_USER_DATA: userData, CUTAWAY_E2E: '1' };
+  const env = { ...process.env, CUTAWAY_USER_DATA: userData, CUTAWAY_E2E: '1', CUTAWAY_CLAUDE: process.env.CUTAWAY_CLAUDE ?? 'off' };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ args: [root], cwd: root, env });
   app.process().stderr?.on('data', (d) => { const t = d.toString(); if (/gone|Error|error/.test(t)) process.stdout.write(`[main] ${t}`); });

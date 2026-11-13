@@ -25,6 +25,21 @@ enum Permissions {
     }
 }
 
+/// Asks macOS for Screen Recording access. The first call shows the system prompt and adds the
+/// launching app to the Screen & System Audio Recording list; later calls only report the state.
+enum RequestScreenCommand {
+    static func run(_ a: Args) async throws -> Any {
+        if CGPreflightScreenCaptureAccess() { return ["screen": "granted", "asked": false] }
+        if a.flags.contains("check") { return ["screen": "undetermined", "asked": false] }
+        let ok = CGRequestScreenCaptureAccess()
+        // Touching ScreenCaptureKit registers the app in the list even when no prompt appears.
+        _ = try? await withTimeout(seconds: 3, {
+            try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        })
+        return ["screen": (ok || CGPreflightScreenCaptureAccess()) ? "granted" : "undetermined", "asked": true]
+    }
+}
+
 enum DeviceCatalog {
     static func cameras() -> [AVCaptureDevice] {
         let session = AVCaptureDevice.DiscoverySession(

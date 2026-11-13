@@ -236,7 +236,8 @@ export interface Appearance {
     /** One of Cutaway's built-in abstract wallpapers (see WALLPAPERS). */
     | { type: 'wallpaper'; id: string; blur: number }
     | { type: 'solid'; color: string }
-    | { type: 'image'; path: string; blur: number };
+    /** `path` is absolute, or relative to the project folder for images Cutaway downloaded into it. */
+    | { type: 'image'; path: string; blur: number; credit?: ImageCredit };
   frame: { padding: number; radius: number; shadow: number; inset: number };
   /** Crop of the screen source, normalised. */
   crop: Rect;
@@ -272,6 +273,36 @@ export interface Appearance {
   device?: { frame: boolean; color: 'graphite' | 'silver' | 'midnight' };
   captions: { burnIn: boolean; size: number; position: 'bottom' | 'top'; style: 'pill' | 'plain' | 'bold' };
   motion: 'calm' | 'balanced' | 'lively';
+  /** Colour LUT and sharpening for the screen recording and for the cameras. */
+  grade?: { screen?: LayerGrade; camera?: LayerGrade };
+  /** Scale a new zoom starts at (by hand or from the automatic pass). Unset = 1.8. */
+  zoomLevel?: number;
+}
+
+/** A .cube file copied into the project folder. */
+export interface LutRef {
+  /** Path relative to the project folder. */
+  file: string;
+  name: string;
+  kind: '1d' | '3d';
+  size: number;
+}
+
+export interface LayerGrade {
+  lut: LutRef | null;
+  /** 0–1 mix of the LUT over the original picture. */
+  strength: number;
+  /** 0–1 unsharp-mask amount. */
+  sharpen: number;
+}
+
+/** Who made a downloaded background image, kept so the credit travels with the project. */
+export interface ImageCredit {
+  source: 'unsplash';
+  id: string;
+  author: string;
+  authorUrl: string;
+  pageUrl: string;
 }
 
 export interface CameraLook {
@@ -493,4 +524,13 @@ export interface Project {
   /** Completed stage checkpoints so a retry resumes instead of restarting. */
   stages: Partial<Record<JobStage, { doneAt: string; inputKey: string }>>;
   ui: { playhead: Seconds; view: 'sources' | 'brief' | 'edit' | 'package' | 'export'; expandedTimeline: boolean };
+  /** Moments the creator flagged while recording (session time). */
+  flags?: Flag[];
+}
+
+/** A marker dropped during recording: "look here". */
+export interface Flag {
+  id: string;
+  t: Seconds;
+  takeId?: string;
 }

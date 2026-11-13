@@ -16,6 +16,8 @@ import {
 import {
   TimeMap,
   applyProposal,
+  flagsOf,
+  keepFlaggedMoments,
   markFillers,
   proposeLayouts,
   proposePacing,
@@ -24,6 +26,7 @@ import {
   sourceByRole,
   stageKey,
   toSessionTime,
+  zoomLevelOf,
   uid,
   unresolvedGaps,
   withSources,
@@ -296,6 +299,8 @@ function keyframeWants(p: Project): FrameWant[] {
         if (v > 0.02 && v >= a.activity[i - 1]! && v >= a.activity[i + 1]!) cands.push({ t: Math.min(p.duration, i / hz + 0.5), priority: 2 + Math.min(0.9, v * 5) });
       }
     }
+    // Moments the creator flagged while recording are looked at first.
+    for (const f of flagsOf(p)) cands.push({ t: Math.min(p.duration, f.t), priority: 5 });
     cands.push(...sentenceStarts, { t: Math.min(1, p.duration / 2), priority: 1.5 }, { t: Math.max(0, p.duration - 1), priority: 1.2 });
     for (const t of spread(cands, 18, spacing)) wants.push({ sessionTime: t, role: 'screen' });
   }
@@ -336,9 +341,12 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
   // Built-in rules. Without speech they need real screen-activity data: a
   // silent camera-only take has nothing safe to cut on.
   const canPace = hasSpeech || (!!screen && activityInput.activity.length > 0);
-  const pacing: EditOp[] = canPace ? proposePacing({ ...activityInput, duration: p.duration, words, hasSpeech, brief: p.brief, silences: p.analysis?.voiceLevelDb != null ? p.analysis.silences : undefined }) : [];
-  const retakes: EditOp[] = hasSpeech ? proposeRetakes(words) : [];
-  const zooms: EditOp[] = screen ? proposeZooms(activityInput.clicks, p.duration, p.brief.visualIntensity) : [];
+  const flagTimes = flagsOf(p).map((f) => f.t);
+  // A moment the creator flagged while recording is never trimmed away by the automatic cleanup.
+  const guarded = keepFlaggedMoments([...(canPace ? proposePacing({ ...activityInput, duration: p.duration, words, hasSpeech, brief: p.brief, silences: p.analysis?.voiceLevelDb != null ? p.analysis.silences : undefined }) : []), ...(hasSpeech ? proposeRetakes(words) : [])], flagTimes);
+  const pacing: EditOp[] = guarded.ops;
+  const retakes: EditOp[] = [];
+  const zooms: EditOp[] = screen ? proposeZooms(activityInput.clicks, p.duration, p.brief.visualIntensity, zoomLevelOf(p.edit.appearance)) : [];
   const layouts: EditOp[] = proposeLayouts({ ...activityInput, duration: p.duration, words, sources: p.sources, brief: p.brief });
 
   const gate = await claudeGate(ctx);
@@ -359,6 +367,7 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
       projectName: p.name,
       duration: p.duration,
       brief: p.brief,
+      zoomLevel: zoomLevelOf(p.edit.appearance),
       sources: promptSources(p),
       hasSpeech,
       sentences: hasSpeech ? promptSentences(p) : [],
@@ -369,6 +378,7 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
       assets: p.brief.allowBroll ? promptAssets(p) : [],
       locks: p.edit.locks.map((l) => ({ start: l.start, end: l.end, note: l.note })),
       keeps: p.edit.keeps,
+      flags: flagTimes,
       keyframes,
     });
     st.detail('assemble', `Claude is reviewing the transcript${keyframes.length ? ` and ${n(keyframes.length, 'still frame')}` : ''}. Video and audio stay on this Mac.`);
@@ -389,7 +399,9 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
   }
 
   checkAbort(ctx, 'assemble');
-  const ops: unknown[] = ai.mode === 'claude' ? [...pacing, ...retakes, ...claudeOps!] : [...pacing, ...retakes, ...zooms, ...layouts];
+  // The model is told to leave flagged moments alone; this makes sure of it.
+  const claudeSafe = (claudeOps ?? []).flatMap((o) => (o && typeof o === 'object' && (o as EditOp).op === 'cut' ? keepFlaggedMoments([o as EditOp], flagTimes).ops : [o]));
+  const ops: unknown[] = ai.mode === 'claude' ? [...pacing, ...retakes, ...claudeSafe] : [...pacing, ...retakes, ...zooms, ...layouts];
   // No await between reading and writing the project: the proposal is applied to the latest state.
   const q = ctx.get();
   const outcome = applyProposal(q, ops, { label: FIRST_CUT_LABEL, replaceAi: [...ALL_LANES] });
@@ -405,6 +417,7 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
     const brollText = c.broll ? n(c.broll, 'B-roll insert') : hasAssets ? 'no B-roll (no supplied asset fit)' : 'no B-roll (none supplied)';
     parts.push(`Chose ${n(c.views, 'view change')}, ${n(c.zooms, 'zoom')}, ${n(c.graphics, 'graphic')}${c.speeds ? `, ${n(c.speeds, 'speed change')}` : ''} and ${brollText}.`);
     if (c.open) parts.push(`${n(c.open, 'uncertain choice')} ${c.open === 1 ? 'is' : 'are'} waiting for your review; nothing was removed for ${c.open === 1 ? 'it' : 'them'}.`);
+    if (flagTimes.length) parts.push(`${n(flagTimes.length, 'flagged moment')} from the recording ${flagTimes.length === 1 ? 'was' : 'were'} kept${guarded.protectedCount ? ` (${n(guarded.protectedCount, 'automatic trim')} held back for ${guarded.protectedCount === 1 ? 'it' : 'them'})` : ''}.`);
     if (!hasSpeech) parts.push('No speech was found, so the cut follows what happens on screen and there are no captions.');
     if (typeof q.brief.targetDuration === 'number' && map.outDuration > q.brief.targetDuration * 1.15) parts.push(`The cut runs ${fmt(map.outDuration)}; the ${fmt(q.brief.targetDuration)} target could not be reached without removing speech.`);
     if (ai.mode === 'claude') {

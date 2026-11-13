@@ -375,6 +375,20 @@ enum ActivityCommand {
 enum MuxCommand {
     private static func bt709Tagged(_ fd: CMFormatDescription) -> CMFormatDescription {
         var ext = (CMFormatDescriptionGetExtensions(fd) as? [String: Any]) ?? [:]
+        // The H.264 stream carries its own colour description; make it agree with the container.
+        let atomsKey = kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String
+        if var atoms = ext[atomsKey] as? [String: Any], let avcC = atoms["avcC"] as? Data {
+            do {
+                if let patched = try H264Color.patchAvcC(avcC) {
+                    atoms["avcC"] = patched
+                    ext[atomsKey] = atoms
+                    // The verbatim copy of the original sample entry would win over the patched atoms.
+                    ext.removeValue(forKey: kCMFormatDescriptionExtension_VerbatimISOSampleEntry as String)
+                }
+            } catch {
+                Out.log("could not rewrite the H.264 colour description (\(error)); keeping the stream as encoded")
+            }
+        }
         ext[kCMFormatDescriptionExtension_ColorPrimaries as String] = kCMFormatDescriptionColorPrimaries_ITU_R_709_2
         ext[kCMFormatDescriptionExtension_TransferFunction as String] = kCMFormatDescriptionTransferFunction_ITU_R_709_2
         ext[kCMFormatDescriptionExtension_YCbCrMatrix as String] = kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2
@@ -416,7 +430,7 @@ enum MuxCommand {
         return result
     }
 
-    private static func pump(_ input: AVAssetWriterInput, label: String, next: @escaping () -> CMSampleBuffer?) async {
+    static func pump(_ input: AVAssetWriterInput, label: String, next: @escaping () -> CMSampleBuffer?) async {
         let queue = DispatchQueue(label: "cutaway.mux.\(label)")
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             var finished = false
@@ -437,6 +451,13 @@ enum MuxCommand {
         let videoPath = try a.require("video")
         let outPath = try a.require("out")
         let audioPath = a.string("audio")
+        let codec = a.string("codec") ?? "h264"
+        guard codec == "h264" || codec == "prores422" else {
+            throw CLIError("usage", "--codec must be h264 or prores422")
+        }
+        if codec == "prores422" {
+            return try await ProResExport.run(videoPath: videoPath, audioPath: audioPath, outPath: outPath)
+        }
         let fm = FileManager.default
         guard fm.fileExists(atPath: videoPath) else { throw CLIError("not-found", "No file exists at \(videoPath)") }
         if let ap = audioPath, !fm.fileExists(atPath: ap) { throw CLIError("not-found", "No file exists at \(ap)") }
@@ -546,6 +567,6 @@ enum MuxCommand {
         let outAsset = AVURLAsset(url: outURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         let duration = (try? await outAsset.load(.duration).seconds) ?? 0
         let size = ((try? fm.attributesOfItem(atPath: outPath))?[.size] as? NSNumber)?.int64Value ?? 0
-        return ["path": outPath, "duration": r6(duration), "sizeBytes": size, "bt709Tagged": colorTagged]
+        return ["path": outPath, "duration": r6(duration), "sizeBytes": size, "bt709Tagged": colorTagged, "codec": "h264"]
     }
 }

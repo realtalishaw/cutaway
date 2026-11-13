@@ -1,4 +1,4 @@
-import { deviceKindFor, deviceOf, motionBlurOf, type Appearance } from '@cutaway/core';
+import { ZOOM_LEVEL_DEFAULT, ZOOM_LEVEL_MAX, ZOOM_LEVEL_MIN, deviceKindFor, deviceOf, motionBlurOf, zoomLevelOf, type Appearance } from '@cutaway/core';
 import { useProject } from '../../../state/store';
 import { Segmented, Slider, Toggle } from '../../../ui/kit';
 import { Reset, Section, pct, setAppearance } from './shared';
@@ -11,6 +11,8 @@ export function MotionTab() {
   const dev = deviceOf(ap);
   const screen = project.sources.find((s) => s.role === 'screen');
   const kind = deviceKindFor(screen);
+  const zoomLevel = zoomLevelOf(ap);
+  const setZoomLevel = (v: number) => setAppearance((a) => ({ ...a, zoomLevel: Math.round(v * 20) / 20 }), 'Default zoom level', 'zoomlevel');
   const blur = (patch: Partial<NonNullable<Appearance['motionBlur']>>, key: string) => setAppearance((a) => ({ ...a, motionBlur: { ...motionBlurOf(a), ...patch } }), 'Motion blur', key);
   const device = (patch: Partial<NonNullable<Appearance['device']>>, key: string) => setAppearance((a) => ({ ...a, device: { ...deviceOf(a), ...patch } }), 'Device frame', key);
   return (
@@ -19,6 +21,12 @@ export function MotionTab() {
         <Segmented full value={ap.motion} onChange={(v) => setAppearance((a) => ({ ...a, motion: v }), 'Motion', 'motion')} options={[{ value: 'calm', label: 'Slow' }, { value: 'balanced', label: 'Medium' }, { value: 'lively', label: 'Rapid' }]} />
         <div className="tiny dim">How quickly zooms and view changes animate in the video.</div>
       </Section>
+      {screen ? (
+        <Section title="Default zoom level" icon="zoom" action={<Reset show={Math.abs(zoomLevel - ZOOM_LEVEL_DEFAULT) > 0.001} onClick={() => setZoomLevel(ZOOM_LEVEL_DEFAULT)} />}>
+          <Slider min={ZOOM_LEVEL_MIN} max={ZOOM_LEVEL_MAX} step={0.05} value={zoomLevel} label="Zoom" format={(v) => `${v.toFixed(2).replace(/0$/, '')}×`} onChange={setZoomLevel} />
+          <div className="tiny dim">New zooms start here, whether you add one or Cutaway does. Zooms already on the timeline keep their own level.</div>
+        </Section>
+      ) : null}
       <Section title="Motion blur" icon="path" action={<Reset show={mb.amount !== 0} onClick={() => blur({ amount: 0 }, 'mbamount')} />}>
         <Slider min={0} max={1} value={mb.amount} format={(v) => (v < 0.01 ? 'Off' : pct(v))} label="Amount" onChange={(v) => blur({ amount: v }, 'mbamount')} />
         {mb.amount > 0.01 ? (

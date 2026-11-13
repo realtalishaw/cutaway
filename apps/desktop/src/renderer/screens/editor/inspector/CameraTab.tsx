@@ -3,6 +3,7 @@ import { CAMERA_LOOKS, LOOK_DEFAULT, cameraLookOf, cutoutOf, defaultAppearance, 
 import { useApp, useProject } from '../../../state/store';
 import { ensureFaces, ensureMatte, facesKey, matteKey, retry, useData } from '../../../engine/parityData';
 import { Segmented, Slider, Toggle } from '../../../ui/kit';
+import { GradeSection } from './GradeSection';
 import { Reset, Section, pct, setAppearance } from './shared';
 import './parity.css';
 
@@ -109,6 +110,8 @@ export function CameraTab() {
         <Slider label="Saturation" min={0} max={1.6} value={look.saturation} format={pct} onChange={(v) => setLook({ saturation: v }, 'looks')} />
         <Slider label="Warmth" min={-1} max={1} value={look.warmth} format={(v) => (Math.abs(v) < 0.02 ? 'Neutral' : `${v > 0 ? 'Warm' : 'Cool'} ${Math.round(Math.abs(v) * 100)}`)} onChange={(v) => setLook({ warmth: v }, 'lookw')} />
       </Section>
+
+      <GradeSection layer="camera" />
 
       <Section group="Framing" title="Face tracking" icon="user">
         <Toggle label="Zoom on face" hint="Punches in so your face fills the camera frame." checked={face.zoom} onChange={(v) => camera({ face: { ...face, zoom: v } }, 'Zoom on face', 'camfacezoom')} />

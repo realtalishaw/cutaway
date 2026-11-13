@@ -1,8 +1,9 @@
 // Rendering parity checks through the real app, helper and exporter.
 // Records a synthetic take (with captureKeys), then switches each feature on, screenshots the
 // preview, exports, and compares exported frames with a baseline export by PSNR.
-// Usage: node e2e/render-parity.mjs <outDir>
+// Usage: node e2e/render-parity.mjs <outDir>      (ONLY=parity or ONLY=look runs one half)
 import { launch } from './harness.mjs';
+import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -11,7 +12,38 @@ import { execFileSync, spawnSync } from 'node:child_process';
 const FF = '/opt/homebrew/bin/ffmpeg';
 const out = process.argv[2] ?? '/tmp/cutaway-render-parity';
 fs.mkdirSync(out, { recursive: true });
-const { app, page, exportDir } = await launch();
+const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
+const run = (section) => !ONLY || ONLY.has(section);
+
+// ── a local stand-in for the Unsplash API (the live service is never contacted by this test) ──
+const mock = { searches: [], downloads: [], auth: [] };
+for (const [id, color] of [['mockA', '0x10a0c0'], ['mockB', '0xc04020']]) execFileSync(FF, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `color=c=${color}:s=1280x720`, '-frames:v', '1', path.join(out, `${id}.jpg`)]);
+const mockServer = http.createServer((req, res) => {
+  const url = new URL(req.url, 'http://127.0.0.1');
+  const base = `http://127.0.0.1:${mockServer.address().port}`;
+  const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+  if (url.pathname.startsWith('/img/')) {
+    const file = path.join(out, path.basename(url.pathname));
+    if (!fs.existsSync(file)) return json(404, {});
+    res.writeHead(200, { 'content-type': 'image/jpeg' });
+    return res.end(fs.readFileSync(file));
+  }
+  mock.auth.push(req.headers.authorization ?? '');
+  if (req.headers.authorization !== 'Client-ID test-key') return json(401, { errors: ['OAuth error: The access token is invalid'] });
+  if (url.pathname === '/search/photos') {
+    mock.searches.push({ query: url.searchParams.get('query'), page: url.searchParams.get('page') });
+    const photo = (id, color, name) => ({ id, width: 1280, height: 720, color, alt_description: `${name} test photo`, urls: { raw: `${base}/img/${id}.jpg`, thumb: `${base}/img/${id}.jpg` }, links: { html: `https://unsplash.com/photos/${id}`, download_location: `${base}/photos/${id}/download` }, user: { name, links: { html: `https://unsplash.com/@${id}` } } });
+    if (url.searchParams.get('query') === 'nothing') return json(200, { total: 0, total_pages: 0, results: [] });
+    return json(200, { total: 3, total_pages: 1, results: [photo('mockA', '#10a0c0', 'Ada Example'), photo('mockB', '#c04020', 'Ben Sample'), { ...photo('evil', '#000000', 'Mallory'), urls: { raw: 'https://evil.example/x.jpg', thumb: 'https://evil.example/t.jpg' } }] });
+  }
+  const dl = /^\/photos\/([\w-]+)\/download$/.exec(url.pathname);
+  if (dl) { mock.downloads.push(dl[1]); return json(200, { url: `${base}/img/${dl[1]}.jpg` }); }
+  json(404, {});
+});
+await new Promise((r) => mockServer.listen(0, '127.0.0.1', r));
+process.env.CUTAWAY_UNSPLASH_BASE = `http://127.0.0.1:${mockServer.address().port}`;
+
+const { app, page, exportDir, userData } = await launch();
 const results = [];
 const check = (name, ok, detail = '') => { results.push([ok, name]); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  — ${detail}` : ''}`); };
 const note = (s) => console.log(`NOTE  ${s}`);
@@ -86,6 +118,7 @@ const T = { blur: 2.2, cursorDash: 2.2, zoomed: 3.5, shortcut: 1.3, pointer: 5.0
 const B = Object.fromEntries(Object.entries(T).map(([k, t]) => [k, frame(baseVideo, t, `base-${k}`)]));
 check('two exports of the same edit are pixel-identical', psnr(B.zoomed, frame(baseAgain, T.zoomed, 'base-again-zoomed')) === Infinity && psnr(B.blur, frame(baseAgain, T.blur, 'base-again-blur')) === Infinity);
 
+if (run('parity')) {
 // ── 1. motion blur ──
 await setAp((a) => ({ ...a, motionBlur: { amount: 1, cursor: true, animation: true } }));
 await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.select(null); s.setPanels({ tab: 'motion', inspector: true, drawer: null }); });
@@ -215,7 +248,213 @@ for (const [name, w, h] of [['vertical', 1080, 1920], ['square', 1080, 1080]]) {
   await reset();
 }
 
+} // parity
+
+if (run('look')) {
+  // ══════════════════ LOOK: colour LUTs, sharpening, photo search, default zoom ══════════════════
+  const cube3 = (n, fn, title = '') => { const rows = []; for (let b = 0; b < n; b++) for (let g = 0; g < n; g++) for (let r = 0; r < n; r++) rows.push(fn(r / (n - 1), g / (n - 1), b / (n - 1)).map((x) => x.toFixed(6)).join(' ')); return `${title ? `TITLE "${title}"\n` : ''}LUT_3D_SIZE ${n}\n${rows.join('\n')}\n`; };
+  const lutDir = path.join(out, 'luts'); fs.mkdirSync(lutDir, { recursive: true });
+  const lutFile = (name, text) => { const f = path.join(lutDir, name); fs.writeFileSync(f, text); return f; };
+  const files = {
+    swap: lutFile('Swap red and blue.cube', cube3(17, (r, g, b) => [b, g, r], 'Swap')),
+    green: lutFile('green.cube', cube3(2, () => [0, 1, 0])),
+    invert: lutFile('invert-1d.cube', 'TITLE "Invert"\nLUT_1D_SIZE 2\n1 1 1\n0 0 0\n'),
+    big: lutFile('identity-65.cube', cube3(65, (r, g, b) => [r, g, b], 'Identity 65')),
+    cut: lutFile('cut-short.cube', cube3(9, (r, g, b) => [r, g, b]).split('\n').slice(0, 200).join('\n')),
+    huge: lutFile('too-big.cube', 'LUT_3D_SIZE 66\n'),
+    notLut: lutFile('not-a-lut.cube', 'This is a text file.\n'),
+  };
+  const importLut = (file) => page.evaluate(async ({ pp, file }) => { try { return { ok: true, ref: await window.cutaway.looks.importLut(pp, file) }; } catch (e) { return { ok: false, code: e.code, message: e.message }; } }, { pp: info.projectPath, file });
+  const setGrade = (grade) => page.evaluate((grade) => window.__cutaway.useApp.getState().edit((e) => ({ ...e, appearance: { ...e.appearance, grade } }), 'grade'), grade);
+  const previewPixel = (x, y) => page.evaluate(([x, y]) => { const c = document.querySelector('.preview-canvas'); const ctx = c.getContext('2d'); const d = ctx.getImageData(Math.round((x / 1920) * c.width) - 2, Math.round((y / 1080) * c.height) - 2, 5, 5).data; let r = 0, g = 0, b = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; } const n = d.length / 4; return [Math.round(r / n), Math.round(g / n), Math.round(b / n)]; }, [x, y]);
+  const near = (a, b, tol) => a.every((x, i) => Math.abs(x - b[i]) <= tol);
+  const strip = (png, x, y, w) => [...execFileSync(FF, ['-hide_banner', '-loglevel', 'error', '-i', png, '-vf', `crop=${w}:8:${x}:${y},scale=${w}:1:flags=area,format=gray`, '-f', 'rawvideo', '-'])];
+  const timed = async (label) => { const t0 = Date.now(); const video = await exportVideo(label); return { video, ms: Date.now() - t0 }; };
+  const t = T.cam;
+  // The synthetic pictures are a flat colour with a white bar that sweeps on the host clock: sample away from the bar.
+  const awayFromBar = (x0, w, y, candidates) => { const s = strip(B.cam, x0, y, w); const bar = x0 + s.indexOf(Math.max(...s)); return candidates.sort((a, b) => Math.abs(b - bar) - Math.abs(a - bar))[0]; };
+  const SX = awayFromBar(130, 1660, 700, [300, 1000, 1500]); const SCREEN = [SX, 700];
+  const CX = awayFromBar(1640, 220, 912, [1680, 1752, 1830]); const CAM = [CX, 912];
+  const BG = [40, 30];
+  const baseScreen = pixel(B.cam, ...SCREEN); const baseCam = pixel(B.cam, ...CAM); const baseBg = pixel(B.cam, ...BG);
+  note(`sample points: screen ${SCREEN} = ${baseScreen}; camera ${CAM} = ${baseCam}; background ${BG} = ${baseBg}`);
+
+  // ── 9. LUT import ──
+  const imp = {}; for (const k of Object.keys(files)) imp[k] = await importLut(files[k]);
+  check('a 3D .cube is validated, copied into the project folder and described', imp.swap.ok && imp.swap.ref.file === 'media/luts/Swap red and blue.cube' && imp.swap.ref.kind === '3d' && imp.swap.ref.size === 17 && imp.swap.ref.name === 'Swap' && fs.existsSync(path.join(info.projectPath, imp.swap.ref.file)), JSON.stringify(imp.swap.ref ?? imp.swap));
+  check('a 1D .cube and a 65-point 3D .cube are accepted', imp.invert.ok && imp.invert.ref.kind === '1d' && imp.invert.ref.size === 2 && imp.big.ok && imp.big.ref.size === 65, `${JSON.stringify(imp.invert.ref ?? imp.invert)} ${JSON.stringify(imp.big.ref ?? imp.big)}`);
+  check('broken files are refused with a reason and nothing is copied', !imp.cut.ok && imp.cut.code === 'bad-lut' && /rows/.test(imp.cut.message) && !imp.huge.ok && /largest Cutaway reads is 65/.test(imp.huge.message) && !imp.notLut.ok && imp.notLut.code === 'bad-lut' && fs.readdirSync(path.join(info.projectPath, 'media', 'luts')).length === 4, `${imp.cut.message} | ${imp.huge.message} | ${imp.notLut.message}`);
+  const again = await importLut(files.swap);
+  check('importing the same name twice keeps both files', again.ok && again.ref.file !== imp.swap.ref.file, again.ref?.file);
+  const backend = await page.evaluate(() => window.__cutawayGrade.gradeBackend());
+  check('the grade pass runs on the GPU here', backend === 'gl', `backend: ${backend}`);
+
+  // ── 10. screen LUT in the export, and only on the screen ──
+  await setGrade({ screen: { lut: imp.swap.ref, strength: 1, sharpen: 0 } });
+  await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.select(null); s.setPanels({ tab: 'background', inspector: true, drawer: null }); });
+  await seek(t); await page.waitForTimeout(600);
+  await page.getByTestId('lut-screen').scrollIntoViewIfNeeded().catch(() => {});
+  await shot('09-screen-lut', 900);
+  const lutRow = await page.getByTestId('lut-screen').innerText().catch(() => '');
+  check('the Background tab shows the screen LUT by name and size', /Swap/.test(lutRow) && /17×17×17/.test(lutRow), lutRow.replace(/\n/g, ' · '));
+  const pvSwap = await previewPixel(...SCREEN);
+  let lv = await exportVideo('lut-screen-swap');
+  let lf = frame(lv, t, 'lut-screen-swap');
+  let got = pixel(lf, ...SCREEN);
+  check('screen LUT (red↔blue .cube): the exported screen colour is the baseline with red and blue swapped', near(got, [baseScreen[2], baseScreen[1], baseScreen[0]], 14), `baseline ${baseScreen} → ${got}`);
+  check('the screen LUT leaves the camera and the background alone', near(pixel(lf, ...CAM), baseCam, 5) && near(pixel(lf, ...BG), baseBg, 5), `camera ${pixel(lf, ...CAM)} (was ${baseCam}); background ${pixel(lf, ...BG)} (was ${baseBg})`);
+  check('Preview and export agree on the graded screen colour', near(pvSwap, got, 14), `preview ${pvSwap}; export ${got}`);
+  await page.evaluate(() => window.__cutaway.saveNow?.());
+  const savedGrade = JSON.parse(fs.readFileSync(path.join(info.projectPath, 'project.json'), 'utf8')).edit.appearance.grade;
+  check('the project stores a reference to the LUT, not the table', JSON.stringify(savedGrade).length < 300 && savedGrade.screen.lut.file === imp.swap.ref.file, JSON.stringify(savedGrade));
+
+  await setGrade({ screen: { lut: imp.green.ref, strength: 0.5, sharpen: 0 } });
+  await seek(t); await page.waitForTimeout(900);
+  const pvHalf = await previewPixel(...SCREEN);
+  lv = await exportVideo('lut-screen-half');
+  got = pixel(frame(lv, t, 'lut-screen-half'), ...SCREEN);
+  const half = [Math.round(baseScreen[0] / 2), Math.round((baseScreen[1] + 255) / 2), Math.round(baseScreen[2] / 2)];
+  check('strength 50% lands halfway between the original and the LUT colour', near(got, half, 14) && near(pvHalf, got, 14), `expected about ${half}; export ${got}; preview ${pvHalf}`);
+
+  await setGrade({ screen: { lut: imp.big.ref, strength: 1, sharpen: 0 } });
+  lv = await exportVideo('lut-identity-65');
+  const idp = psnr(B.cam, frame(lv, t, 'lut-identity-65'));
+  check('a 65-point identity LUT leaves the picture as it was', idp === Infinity || idp > 42, `PSNR ${idp === Infinity ? 'inf' : idp.toFixed(1)} dB vs baseline`);
+
+  // ── 11. camera LUT (1D) ──
+  await setGrade({ camera: { lut: imp.invert.ref, strength: 1, sharpen: 0 } });
+  await page.evaluate(() => window.__cutaway.useApp.getState().setPanels({ tab: 'camera' }));
+  await seek(t); await shot('10-camera-lut', 1500);
+  const pvCam = await previewPixel(...CAM);
+  lv = await exportVideo('lut-camera-invert');
+  lf = frame(lv, t, 'lut-camera-invert');
+  got = pixel(lf, ...CAM);
+  check('camera LUT (1D invert .cube): the exported camera colour is the baseline inverted', near(got, baseCam.map((x) => 255 - x), 16), `baseline ${baseCam} → ${got}`);
+  check('the camera LUT leaves the screen alone, and Preview agrees with the export', near(pixel(lf, ...SCREEN), baseScreen, 5) && near(pvCam, got, 16), `screen ${pixel(lf, ...SCREEN)} (was ${baseScreen}); camera preview ${pvCam}`);
+
+  // ── 12. GPU and CPU paths give the same picture ──
+  await setGrade({ screen: { lut: imp.swap.ref, strength: 0.8, sharpen: 0 }, camera: { lut: imp.invert.ref, strength: 0.6, sharpen: 0 } });
+  await seek(t); await page.waitForTimeout(900);
+  const glPx = [await previewPixel(...SCREEN), await previewPixel(...CAM)];
+  await page.evaluate(() => window.__cutawayGrade.setGradeBackend('cpu'));
+  await page.waitForTimeout(1500);
+  const cpuBackend = await page.evaluate(() => window.__cutawayGrade.gradeBackend());
+  const cpuPx = [await previewPixel(...SCREEN), await previewPixel(...CAM)];
+  await page.evaluate(() => window.__cutawayGrade.setGradeBackend(null));
+  check('without WebGL the same grade runs on the CPU and matches the GPU result', cpuBackend === 'cpu' && near(cpuPx[0], glPx[0], 3) && near(cpuPx[1], glPx[1], 3), `gpu ${JSON.stringify(glPx)}; cpu ${JSON.stringify(cpuPx)}`);
+
+  // ── 13. sharpening ──
+  await reset();
+  await setGrade({ screen: { lut: null, strength: 1, sharpen: 1 }, camera: { lut: null, strength: 1, sharpen: 1 } });
+  await seek(t); await page.waitForTimeout(900);
+  const pvSharp = await previewPixel(...SCREEN);
+  lv = await exportVideo('sharpen');
+  lf = frame(lv, t, 'sharpen');
+  const edge = (png, x, y, w) => { const s = strip(png, x, y, w); let sum = 0; for (let i = 1; i < s.length; i++) sum += Math.abs(s[i] - s[i - 1]); return { sum, min: Math.min(...s) }; };
+  const e0 = edge(B.cam, 130, 700, 1660); const e1 = edge(lf, 130, 700, 1660);
+  check('sharpening raises contrast at the edges of the screen picture', e1.sum > e0.sum * 1.08 && e1.min < e0.min - 6, `edge travel ${e0.sum} → ${e1.sum}; darkest value beside the bar ${e0.min} → ${e1.min}`);
+  // the camera's bar is only inside the bubble part of the time: use the moment where the baseline shows it best
+  const camEdge = [5.6, 6.0, 6.4, 6.8, 7.0, 7.3, 7.7, 8.1, 8.5, 9.0].map((tt) => ({ tt, e: edge(frame(baseVideo, tt, `base-camedge-${tt}`), 1640, 912, 220) })).sort((a, b) => b.e.sum - a.e.sum)[0];
+  const c1 = edge(frame(lv, camEdge.tt, 'sharpen-camedge'), 1640, 912, 220);
+  check('sharpening raises contrast at the edges of the camera picture', camEdge.e.sum > 150 && c1.sum > camEdge.e.sum * 1.08 && c1.min < camEdge.e.min - 6, `at ${camEdge.tt}s: edge travel ${camEdge.e.sum} → ${c1.sum}; darkest value beside the bar ${camEdge.e.min} → ${c1.min}`);
+  check('sharpening leaves flat areas alone, in Preview and in the export', near(pixel(lf, ...SCREEN), baseScreen, 4) && near(pvSharp, pixel(lf, ...SCREEN), 12) && near(pixel(lf, ...BG), baseBg, 4), `screen ${pixel(lf, ...SCREEN)} (was ${baseScreen}); preview ${pvSharp}`);
+  await page.evaluate(() => window.__cutaway.useApp.getState().setPanels({ tab: 'background' }));
+  await page.getByText('Screen sharpening').scrollIntoViewIfNeeded().catch(() => {});
+  await shot('11-sharpen', 900);
+
+  // ── 14. speed: both layers graded and sharpened ──
+  await reset();
+  const plain = await timed('speed-plain');
+  await setGrade({ screen: { lut: imp.big.ref, strength: 1, sharpen: 0.5 }, camera: { lut: imp.swap.ref, strength: 1, sharpen: 0.5 } });
+  const graded = await timed('speed-graded');
+  const frames = Number(execFileSync('/opt/homebrew/bin/ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=nb_frames', '-of', 'csv=p=0', graded.video]).toString().trim());
+  const fpsPlain = frames / (plain.ms / 1000); const fpsGraded = frames / (graded.ms / 1000);
+  check('a 1080p30 export with a LUT and sharpening on both layers still renders faster than real time', fpsGraded > 30, `${frames} frames: ${fpsPlain.toFixed(0)} fps plain, ${fpsGraded.toFixed(0)} fps graded (whole export, including audio and mux)`);
+
+  // ── 15. a LUT file that went missing ──
+  fs.rmSync(path.join(info.projectPath, imp.big.ref.file));
+  await setGrade({ screen: { lut: imp.big.ref, strength: 1, sharpen: 0 } });
+  await page.evaluate(() => window.__cutaway.saveNow?.());
+  await page.evaluate(() => window.location.reload());
+  await page.waitForFunction(() => !!window.__cutaway, null, { timeout: 15000 });
+  await page.evaluate((p) => window.__cutaway.actions.openProjectAt(p), info.projectPath);
+  await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.setView('edit'); s.setPanels({ tab: 'background', inspector: true, drawer: null }); });
+  await seek(t); await page.waitForTimeout(1500);
+  const missingText = await page.locator('.status-line.bad').first().innerText().catch(() => '');
+  lv = await exportVideo('lut-missing');
+  const mp = psnr(B.cam, frame(lv, t, 'lut-missing'));
+  check('a missing LUT file is reported in the inspector and the picture is drawn ungraded, not broken', /no longer in the project folder/.test(missingText) && (mp === Infinity || mp > 42), `"${missingText.replace(/\n/g, ' ')}"; PSNR ${mp === Infinity ? 'inf' : mp.toFixed(1)} dB vs baseline`);
+  await reset();
+
+  // ── 16. photo search (against the local stand-in; the live Unsplash API is not contacted) ──
+  const openImagePage = async () => { await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.go('project'); s.setView('edit'); s.select(null); s.setPanels({ tab: 'background', inspector: true, drawer: null }); }); await page.getByRole('group', { name: 'Background type' }).getByRole('button', { name: 'Image' }).click(); };
+  await openImagePage();
+  const noKeyText = await page.getByTestId('image-search-nokey').innerText().catch(() => '');
+  const noKeyCall = await page.evaluate(async () => { try { await window.cutaway.looks.searchImages('mountains', 1); return 'ok'; } catch (e) { return e.code; } });
+  const bgAfterTab = await page.evaluate(() => window.__cutaway.useApp.getState().project.edit.appearance.background.type);
+  check('without an access key the Image page says where to add one, and nothing is searched', /access key/.test(noKeyText) && /Settings/.test(noKeyText) && noKeyCall === 'no-key' && mock.searches.length === 0 && bgAfterTab === 'wallpaper', `"${noKeyText}" · call → ${noKeyCall}`);
+  await shot('12-image-no-key', 500);
+  const saveKey = async (key) => { await page.evaluate(() => window.__cutaway.useApp.getState().go('settings')); const field = page.getByLabel('Unsplash access key'); await field.fill(key); await page.getByTestId('images-section').getByRole('button', { name: 'Save' }).click(); await page.waitForFunction((k) => window.__cutaway.useApp.getState().settings.unsplashKey === k, key, { timeout: 5000 }); };
+  await saveKey('wrong-key');
+  await shot('13-settings-key', 400);
+  const fieldType = await page.getByLabel('Unsplash access key').getAttribute('type');
+  const wrong = await page.evaluate(async () => { try { await window.cutaway.looks.searchImages('mountains', 1); return { ok: true }; } catch (e) { return { ok: false, code: e.code, message: e.message }; } });
+  check('a key Unsplash rejects is reported plainly; the field hides the key by default', !wrong.ok && wrong.code === 'bad-key' && /did not accept the access key/.test(wrong.message) && fieldType === 'password', `${wrong.code}: ${wrong.message}`);
+  await saveKey('test-key');
+  const settingsOnDisk = JSON.parse(fs.readFileSync(path.join(userData, 'settings.json'), 'utf8'));
+  check('the key is saved in this Mac\'s settings file', settingsOnDisk.unsplashKey === 'test-key');
+  await openImagePage();
+  await page.getByLabel('Search Unsplash photos').fill('mountains');
+  await page.getByTestId('image-search').getByRole('button', { name: 'Search' }).click();
+  await page.waitForSelector('.photo', { timeout: 10000 });
+  const photoCount = await page.locator('.photo').count();
+  const thumbs = await page.locator('.photo img').evaluateAll((els) => els.filter((i) => i.complete && i.naturalWidth > 0 && i.src.startsWith('data:image/')).length);
+  check('searching shows the photos, with thumbnails fetched by the main process', photoCount === 2 && thumbs === 2 && mock.searches.some((s) => s.query === 'mountains' && s.page === '1'), `${photoCount} photos, ${thumbs} thumbnails; requests ${JSON.stringify(mock.searches)}`);
+  check('a result that points at another host is dropped', photoCount === 2 && !(await page.locator('.photo[aria-label*="Mallory"]').count()));
+  await shot('14-image-search', 500);
+  await page.locator('.photo').first().click();
+  await page.waitForFunction(() => window.__cutaway.useApp.getState().project.edit.appearance.background.type === 'image', null, { timeout: 15000 });
+  const bg = await page.evaluate(() => window.__cutaway.useApp.getState().project.edit.appearance.background);
+  check('picking a photo downloads it into the project and keeps the photographer credit', bg.path === 'media/backgrounds/unsplash-mockA.jpg' && fs.existsSync(path.join(info.projectPath, bg.path)) && bg.credit?.author === 'Ada Example' && bg.credit?.source === 'unsplash' && /^https:\/\/unsplash\.com\/@mockA\?utm_source=cutaway/.test(bg.credit?.authorUrl ?? '') && mock.downloads.includes('mockA'), JSON.stringify(bg));
+  const creditText = await page.getByTestId('image-credit').innerText().catch(() => '');
+  check('the inspector credits the photographer', /Photo by\s+Ada Example\s+on\s+Unsplash/.test(creditText.replace(/\s+/g, ' ')), creditText.replace(/\s+/g, ' '));
+  await seek(t); await shot('15-image-background', 1500);
+  const pvBg = await previewPixel(...BG);
+  lv = await exportVideo('image-background');
+  const exBg = pixel(frame(lv, t, 'image-background'), ...BG);
+  check('the downloaded photo is the background in Preview and in the export', near(exBg, [16, 160, 192], 16) && near(pvBg, exBg, 14), `expected about 16,160,192; export ${exBg}; preview ${pvBg}`);
+  await page.evaluate(() => window.__cutaway.saveNow?.());
+  const grep = spawnSync('/usr/bin/grep', ['-rl', 'test-key', info.projectPath]);
+  const pj = JSON.parse(fs.readFileSync(path.join(info.projectPath, 'project.json'), 'utf8'));
+  check('the access key is not written anywhere in the project', grep.stdout.toString().trim() === '' && pj.edit.appearance.background.credit.author === 'Ada Example' && mock.auth.every((a) => a === 'Client-ID test-key' || a === 'Client-ID wrong-key'), grep.stdout.toString().trim() || 'no file in the project contains it');
+  await page.getByLabel('Search Unsplash photos').fill('nothing');
+  await page.getByTestId('image-search').getByRole('button', { name: 'Search' }).click();
+  await page.waitForFunction(() => /No photos found/.test(document.querySelector('[data-testid="image-search"]')?.textContent ?? ''), null, { timeout: 8000 }).catch(() => {});
+  check('an empty result says so', /No photos found for “nothing”/.test(await page.getByTestId('image-search').innerText()));
+  await reset();
+
+  // ── 17. default zoom level ──
+  await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); s.select(null); s.setPanels({ tab: 'motion', inspector: true, drawer: null }); });
+  const zoomSlider = page.getByLabel('Zoom', { exact: true });
+  const before = await page.evaluate(() => window.__cutaway.core.zoomLevelOf(window.__cutaway.useApp.getState().project.edit.appearance));
+  await zoomSlider.focus(); await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight');
+  const afterKeys = await page.evaluate(() => window.__cutaway.useApp.getState().project.edit.appearance.zoomLevel);
+  check('the Motion tab has a default zoom level, starting at 1.8×', before === 1.8 && Math.abs(afterKeys - 1.9) < 1e-6, `1.8 → ${afterKeys} after two steps`);
+  await page.evaluate(() => window.__cutaway.useApp.getState().edit((e) => ({ ...e, zooms: [], appearance: { ...e.appearance, zoomLevel: 2.6 } }), 'zoom level'));
+  await shot('16-default-zoom', 600);
+  await seek(8);
+  await page.locator('[title="Add zoom at the playhead"], [aria-label="Add zoom at the playhead"]').first().click();
+  const added = await page.evaluate(() => window.__cutaway.useApp.getState().project.edit.zooms.map((z) => [z.scale, z.meta.origin]));
+  check('a zoom added by hand starts at the project level', added.length === 1 && added[0][0] === 2.6 && added[0][1] === 'creator', JSON.stringify(added));
+  await page.evaluate(() => window.__cutaway.useApp.getState().edit((e) => ({ ...e, zooms: [] }), 'clear zooms'));
+  await page.evaluate(() => window.__cutaway.jobs.startFirstCut(false));
+  await page.waitForFunction(() => { const s = window.__cutaway.useApp.getState(); return !s.job || s.job.status !== 'running'; }, null, { timeout: 180000 });
+  const fc = await page.evaluate(() => { const s = window.__cutaway.useApp.getState(); return { job: s.job && { status: s.job.status, error: s.job.error }, zooms: s.project.edit.zooms.map((z) => [z.scale, z.meta.origin]), clicks: s.project.analysis?.clicks.length }; });
+  check('the first cut (built-in rules) places its zooms at the project level', !fc.job && fc.zooms.length > 0 && fc.zooms.every((z) => z[0] === 2.6 && z[1] === 'ai'), JSON.stringify(fc));
+} // look
+
 const failed = results.filter((x) => !x[0]);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed. Frames and screenshots: ${out}`);
 await app.close();
+mockServer.close();
 process.exit(failed.length ? 1 : 0);

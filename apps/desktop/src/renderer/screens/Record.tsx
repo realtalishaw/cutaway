@@ -1,24 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fmtTime } from '@cutaway/core';
-import type { CameraInfo, DeviceList, DisplayInfo, ExtraPermission, Permission, PermissionKind, PreflightResult, RecordConfig, RecordEvent } from '@shared/api';
+import type { CameraInfo, DeviceList, DisplayInfo, ExtraPermission, Permission, PermissionKind, PreflightResult, RecordConfig, RecordEvent, TakeManifest } from '@shared/api';
 import { useApp } from '../state/store';
 import { backToLibrary, errorText, pickAndImport, setRecordingActive } from '../state/actions';
 import { addTakeToProject, describeTake } from '../state/recording';
 import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Meter, Segmented, Toggle, fmtBytes } from '../ui/kit';
+import { QuickShare, type QuickShareExit } from './QuickShare';
+import { keyHint } from '../state/keymap';
 import './Notes';
 import './record.css';
 
 type Mode = 'display' | 'window' | 'region' | 'device' | 'none';
 type Thumb = { kind: 'display' | 'window'; id: number; displayId: number | null; name: string; dataUrl: string };
-type Phase = 'setup' | 'checking' | 'countdown' | 'starting' | 'recording' | 'finishing' | 'failed';
+type Phase = 'setup' | 'checking' | 'countdown' | 'starting' | 'recording' | 'finishing' | 'done' | 'failed';
 type Region = { x: number; y: number; width: number; height: number };
 
 const api = () => window.cutaway;
 
 const SOURCE_LABEL: Record<string, string> = { screen: 'Screen', cameraA: 'Camera A', cameraB: 'Camera B', microphone: 'Microphone', system: 'System audio' };
 const SOURCE_ICON: Record<string, IconName> = { screen: 'screen', cameraA: 'camera', cameraB: 'camera', microphone: 'mic', system: 'speaker' };
-const PERMISSION_NAME: Record<PermissionKind, string> = { screen: 'Screen Recording', camera: 'Camera', microphone: 'Microphone' };
+const PERMISSION_NAME: Record<PermissionKind, string> = { screen: 'Screen & System Audio Recording', camera: 'Camera', microphone: 'Microphone' };
 
 // ───────────────────────────── device helpers ─────────────────────────────
 
@@ -133,26 +135,38 @@ function LiveVideo({ stream, mirror }: { stream: MediaStream | null; mirror?: bo
 // ───────────────────────────── small pieces ─────────────────────────────
 
 function PermissionNote({ kind, status, onRequest, children }: { kind: PermissionKind; status: Permission; onRequest: () => void; children?: ReactNode }) {
+  const packaged = useApp((s) => s.info?.packaged) !== false;
   if (status === 'granted') return null;
   if (status === 'undetermined') {
     return (
-      <div className="perm-note">
+      <div className="perm-note" data-testid={`perm-${kind}`}>
         <Icon name="shield" size={14} />
-        <span className="grow">macOS will ask once for {PERMISSION_NAME[kind]} access.</span>
-        <Button size="sm" onClick={onRequest}>Allow…</Button>
+        <span className="grow">{kind === 'screen' ? 'Cutaway needs your permission to record the screen. macOS will ask once.' : `macOS will ask once for ${PERMISSION_NAME[kind]} access.`}</span>
+        <Button size="sm" variant={kind === 'screen' ? 'primary' : undefined} onClick={onRequest} data-testid={`perm-allow-${kind}`}>Allow…</Button>
       </div>
     );
   }
+  // macOS lists the app that started the capture: Cutaway itself, or the terminal it was started from in development.
+  const who = packaged ? 'Cutaway' : 'the app you started Cutaway from (Terminal, iTerm or your editor)';
   return (
-    <div className="perm-note denied" role="alert">
+    <div className="perm-note denied" role="alert" data-testid={`perm-${kind}`}>
       <Icon name="warn" size={14} />
       <div className="grow">
-        <div style={{ fontWeight: 600, color: 'var(--text)' }}>{PERMISSION_NAME[kind]} access is off for Cutaway</div>
-        <div>
-          Turn it on in System Settings → Privacy &amp; Security → {PERMISSION_NAME[kind]}, then come back. {children}
-        </div>
+        <div style={{ fontWeight: 600, color: 'var(--text)' }}>{kind === 'screen' ? 'Screen recording' : PERMISSION_NAME[kind]} access is off for Cutaway</div>
+        {kind === 'screen' ? (
+          <div>
+            Switch on {who} in System Settings → Privacy &amp; Security → {PERMISSION_NAME.screen}. Not in the list? Press + there and add it. Already on? Switch it off and on again. {children}
+          </div>
+        ) : (
+          <div>
+            Turn it on in System Settings → Privacy &amp; Security → {PERMISSION_NAME[kind]}, then come back. {children}
+          </div>
+        )}
       </div>
-      <Button size="sm" icon="external" onClick={() => void api().app.openPrivacySettings(kind)}>Open settings</Button>
+      <div className="col" style={{ gap: 6 }}>
+        <Button size="sm" icon="external" onClick={() => void api().app.openPrivacySettings(kind)}>Open settings</Button>
+        {kind === 'screen' ? <Button size="sm" variant="ghost" onClick={() => void api().app.relaunch()}>Relaunch Cutaway</Button> : null}
+      </div>
     </div>
   );
 }
@@ -300,8 +314,10 @@ export function Record() {
   const [blocking, setBlocking] = useState<PreflightResult['issues'] | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [count, setCount] = useState(0);
-  const [live, setLive] = useState<{ elapsed: number; paused: boolean; frames: Record<string, number>; mic: number | null; lost: { source: string; elapsed: number; reason: string; restored: number | null }[]; diskLow: boolean; sources: string[]; warnings: string[] }>({ elapsed: 0, paused: false, frames: {}, mic: null, lost: [], diskLow: false, sources: [], warnings: [] });
+  const [live, setLive] = useState<{ elapsed: number; paused: boolean; frames: Record<string, number>; mic: number | null; lost: { source: string; elapsed: number; reason: string; restored: number | null }[]; diskLow: boolean; sources: string[]; warnings: string[]; flags: number }>({ elapsed: 0, paused: false, frames: {}, mic: null, lost: [], diskLow: false, sources: [], warnings: [], flags: 0 });
   const [failure, setFailure] = useState<{ title: string; detail: string } | null>(null);
+  /** The take that just finished, while its quick-share sheet is up. */
+  const [take, setTake] = useState<{ manifest: TakeManifest; takeDir: string; note?: string } | null>(null);
   const phaseRef = useRef<Phase>('setup');
   phaseRef.current = phase;
   const finished = useRef(false);
@@ -311,7 +327,10 @@ export function Record() {
   const refresh = useCallback(async () => {
     try {
       const [screen, camera, microphone] = await Promise.all([api().app.permission('screen'), api().app.permission('camera'), api().app.permission('microphone')]);
-      setPerms({ screen, camera, microphone });
+      setPerms((prev) => {
+        if (initialised.current && prev.screen !== 'granted' && screen === 'granted') useApp.getState().toast('Screen recording is on. If the screen preview stays empty, relaunch Cutaway once.');
+        return { screen, camera, microphone };
+      });
       const [list, shots] = await Promise.all([api().native.devices(), api().app.captureThumbnails().catch(() => [] as Thumb[])]);
       setDevices(list);
       setThumbs(shots);
@@ -320,7 +339,6 @@ export function Record() {
         initialised.current = true;
         const main = list.displays.find((d) => d.main) ?? list.displays[0];
         setDisplayId(main?.id ?? null);
-        if (screen === 'denied') setMode('none');
         // Sources that would need a new permission stay off until the creator turns them on.
         if (camera === 'granted' && list.cameras[0]) setCamA(list.cameras[0].id);
         if (microphone === 'granted') setMic((list.microphones.find((m) => m.default) ?? list.microphones[0])?.id ?? null);
@@ -344,6 +362,8 @@ export function Record() {
     async (kind: PermissionKind) => {
       const status = await api().app.requestPermission(kind);
       setPerms((p) => ({ ...p, [kind]: status }));
+      // macOS shows its own prompt only the first time; after that the switch lives in System Settings.
+      if (kind === 'screen' && status !== 'granted') void api().app.openPrivacySettings('screen');
       await refresh();
       return status;
     },
@@ -461,7 +481,7 @@ export function Record() {
   }, [configKey, phase, helper]);
 
   // ── recorder events ──
-  const finish = useCallback(async (run: () => Promise<{ text: string; tone?: 'info' | 'error' }>) => {
+  const finish = useCallback(async (run: () => Promise<{ text: string; tone?: 'info' | 'error'; share?: { manifest: TakeManifest; takeDir: string; note?: string } }>) => {
     if (finished.current) return;
     finished.current = true;
     setPhase('finishing');
@@ -470,6 +490,12 @@ export function Record() {
     try {
       const r = await run();
       const app = useApp.getState();
+      if (r.share) {
+        // A finished take: offer to share it right away or carry on into the editor.
+        setTake(r.share);
+        setPhase('done');
+        return;
+      }
       app.setView('sources');
       app.go('project');
       app.toast(r.text, r.tone ?? 'info');
@@ -500,6 +526,9 @@ export function Record() {
         case 'resumed':
           setLive((l) => ({ ...l, paused: false }));
           break;
+        case 'flag':
+          setLive((l) => ({ ...l, flags: e.count }));
+          break;
         case 'source-lost':
           setLive((l) => ({ ...l, lost: [...l.lost, { source: e.source, elapsed: e.elapsed, reason: e.reason, restored: null }] }));
           break;
@@ -521,7 +550,8 @@ export function Record() {
             const r = await addTakeToProject(manifest, takeDir);
             const gaps = manifest.sources.some((s) => s.gaps.length > 0);
             const demoted = r.demoted.length ? ` ${r.demoted.length} track${r.demoted.length === 1 ? ' was' : 's were'} added as supporting media because that role was already filled.` : '';
-            return { text: `Recorded ${fmtTime(manifest.duration)} of ${describeTake(manifest)}.${gaps ? ' Missing stretches are marked on the track.' : ''}${demoted}` };
+            const note = `${gaps ? 'Missing stretches are marked on the track.' : ''}${demoted}`.trim();
+            return { text: `Recorded ${fmtTime(manifest.duration)} of ${describeTake(manifest)}.${note ? ` ${note}` : ''}`, share: { manifest, takeDir, note: note || undefined } };
           });
           break;
         }
@@ -585,7 +615,7 @@ export function Record() {
     if (!config || !projectPath) return;
     setPhase('starting');
     finished.current = false;
-    setLive({ elapsed: 0, paused: false, frames: {}, mic: null, lost: [], diskLow: false, sources: [], warnings: [] });
+    setLive({ elapsed: 0, paused: false, frames: {}, mic: null, lost: [], diskLow: false, sources: [], warnings: [], flags: 0 });
     try {
       const { takeDir } = await api().record.start(projectPath, config);
       takeDirRef.current = takeDir;
@@ -650,6 +680,24 @@ export function Record() {
 
   // ───────────────────────────── render ─────────────────────────────
 
+  if (phase === 'done' && take) {
+    const exit = (how: QuickShareExit) => {
+      const app = useApp.getState();
+      setTake(null);
+      if (how === 'deleted' && !(app.project?.sources.length ?? 0)) {
+        // Nothing left in the project: back to the recorder for another go.
+        finished.current = false;
+        takeDirRef.current = null;
+        setPhase('setup');
+        void refresh();
+        return;
+      }
+      app.setView(how === 'editor' ? 'edit' : how === 'first-cut' ? 'brief' : 'sources');
+      app.go('project');
+    };
+    return <QuickShare manifest={take.manifest} takeDir={take.takeDir} note={take.note} onExit={exit} />;
+  }
+
   if (phase === 'recording' || phase === 'starting' || phase === 'finishing') {
     const ids = live.sources.length ? live.sources : [...Object.keys(live.frames), ...(config?.microphone ? ['microphone'] : []), ...(config?.systemAudio ? ['system'] : [])];
     const openLoss = (id: string) => live.lost.find((l) => l.source === id && l.restored === null);
@@ -696,6 +744,9 @@ export function Record() {
           ) : null}
           {phase === 'recording' ? (
             <div className="row" style={{ gap: 10, justifyContent: 'center', marginTop: 6 }}>
+              <Button size="lg" icon="flag" onClick={() => void api().record.flag().catch(() => {})} data-testid="rec-flag" title={`Mark this moment so you can find it later${keyHint('flag') ? ` (${keyHint('flag')} from any app)` : ''}`}>
+                Flag{live.flags ? ` · ${live.flags}` : ''}
+              </Button>
               <Button size="lg" icon={live.paused ? 'record' : 'pause'} onClick={togglePause}>{live.paused ? 'Resume' : 'Pause'}</Button>
               <button className="btn lg rec-stop" onClick={stop}>
                 <Icon name="stop" size={17} /> Stop recording
@@ -833,7 +884,7 @@ export function Record() {
             <Icon name="screen" size={30} />
             <div className="stage-title">The screen cannot be recorded yet</div>
             <PermissionNote kind="screen" status={perms.screen} onRequest={() => void request('screen')}>
-              macOS may ask you to reopen Cutaway.
+              If macOS offers to reopen Cutaway, accept.
             </PermissionNote>
             <div className="row" style={{ gap: 8 }}>
               <Button size="sm" icon="camera" onClick={() => setMode('none')}>Record camera only</Button>

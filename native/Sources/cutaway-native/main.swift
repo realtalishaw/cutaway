@@ -8,13 +8,15 @@ signal(SIGPIPE, SIG_IGN)
 
 let argv = Array(CommandLine.arguments.dropFirst())
 guard let command = argv.first else {
-    Out.fail(CLIError("usage", "cutaway-native <devices|preflight|probe|pcm|frames|activity|transcribe|mux|recover|record|resize-window|faces|matte|gif|voices|speak> …"))
+    Out.fail(CLIError("usage", "cutaway-native <devices|preflight|probe|pcm|frames|activity|transcribe|mux|recover|record|resize-window|faces|matte|gif|voices|speak|screen-text> …"))
 }
 let rest = Array(argv.dropFirst())
 
 switch command {
 case "devices":
     runCommand { try await DevicesCommand.run(Args(rest)) }
+case "request-screen":
+    runCommand { try await RequestScreenCommand.run(Args(rest, flagNames: ["check"])) }
 case "preflight":
     let a = Args(rest)
     runCommand { try await PreflightCommand.run(configPath: try a.require("config")) }
@@ -50,9 +52,11 @@ case "voices":
     runCommand { try await VoicesCommand.run() }
 case "speak":
     runCommand { try await SpeakCommand.run(Args(rest)) }
+case "screen-text":
+    runCommand { try await ScreenTextCommand.run(Args(rest)) }
 case "version", "--version":
     print(Out.line(["version": "0.2.0", "protocol": 1,
-                    "features": ["device-screen", "hide-desktop-icons", "hide-notifications", "app-audio", "keys", "resize-window", "faces", "matte", "gif", "voices", "speak"]]))
+                    "features": ["device-screen", "hide-desktop-icons", "hide-notifications", "app-audio", "keys", "resize-window", "faces", "matte", "gif", "voices", "speak", "flags", "screen-text"]]))
     exit(0)
 default:
     Out.fail(CLIError("usage", "unknown command '\(command)'"))

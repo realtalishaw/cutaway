@@ -187,3 +187,26 @@ describe('runClaude against a fake CLI', () => {
     expect(existsSync(join(dir, 'stdin.txt'))).toBe(false); // no prompt was ever sent
   });
 });
+
+describe('the creator\'s terminal', () => {
+  it('reads claude paths and the exported environment from a noisy login shell', async () => {
+    const { parseShellProbe } = await import('../src/node');
+    const out = `/Users/x/.zshrc:87: command not found: thing\n\n__CUTAWAY_PATHS__\n/opt/homebrew/bin/claude\nalias claude='claude --x'\n/opt/homebrew/bin/claude\n/Users/x/.local/bin/claude\n\n__CUTAWAY_ENV__\nPATH=/opt/homebrew/bin:/usr/bin\0HOME=/Users/x\0MULTI=a\nb\0_=/usr/bin/env\0SHLVL=2\0ANTHROPIC_API_KEY=mine\0\n__CUTAWAY_END__\n`;
+    const ctx = parseShellProbe(out);
+    expect(ctx.claudePaths).toEqual(['/opt/homebrew/bin/claude', '/Users/x/.local/bin/claude']);
+    expect(ctx.env).toEqual({ PATH: '/opt/homebrew/bin:/usr/bin', HOME: '/Users/x', MULTI: 'a\nb', ANTHROPIC_API_KEY: 'mine' });
+  });
+
+  it('gives nothing when the shell printed no markers', async () => {
+    const { parseShellProbe } = await import('../src/node');
+    expect(parseShellProbe('zsh: something went wrong')).toEqual({ claudePaths: [], env: null });
+  });
+
+  it('writes a sign-in script that quotes the CLI path and only runs auth commands', async () => {
+    const { signInScript } = await import('../src/node');
+    const s = signInScript("/Users/o'brien/bin/claude");
+    expect(s.startsWith('#!/bin/zsh -il\n')).toBe(true);
+    expect(s).toContain(`'/Users/o'\\''brien/bin/claude' auth login`);
+    expect(s.split('\n').filter((l) => l.includes('claude')).every((l) => /auth (login|status)/.test(l) || l.startsWith('echo'))).toBe(true);
+  });
+});

@@ -1,0 +1,132 @@
+.qs {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 5, 8, 0.72);
+  backdrop-filter: blur(10px);
+}
+.qs-card {
+  width: min(560px, 100%);
+  border-radius: 20px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #181a21, #14161c);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+}
+.qs-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  background: #0b0c10;
+  border-bottom: 1px solid var(--line);
+}
+.qs-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.qs-duration {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.66);
+}
+.qs-body {
+  padding: 18px 20px 14px;
+}
+.qs-title {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.qs-sub {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.qs-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.qs-open {
+  width: 100%;
+  justify-content: center;
+}
+.qs-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.qs-row .btn {
+  justify-content: center;
+  white-space: nowrap;
+}
+.qs-progress {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.qs-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.qs-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+.qs-bar i.wait {
+  width: 30%;
+  animation: qs-wait 1.1s ease-in-out infinite alternate;
+}
+@keyframes qs-wait {
+  from { transform: translateX(-40%); }
+  to { transform: translateX(270%); }
+}
+.qs-done {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  background: rgba(86, 196, 128, 0.12);
+  overflow-wrap: anywhere;
+}
+.qs-done.error {
+  background: var(--danger-wash, rgba(240, 90, 80, 0.14));
+}
+.qs-foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.qs-delete {
+  color: var(--text-2);
+}
+.qs-delete:hover {
+  color: var(--danger, #f06a60);
+}

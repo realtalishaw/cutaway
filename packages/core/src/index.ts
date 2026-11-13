@@ -10,3 +10,6 @@ export * from './analysis';
 export * from './packaging';
 export * from './project';
 export * from './parity';
+export * from './sensitive';
+export * from './flags';
+export * from './lut';

@@ -27,7 +27,7 @@ before it can touch a project.
 
 ## 2. What was verified, with numbers
 
-Unit tests: 91 passing (core 47, AI layer 31, jobs 13).
+Unit tests: 140 passing (core 73, AI layer 34, desktop 33).
 
 | Journey (real app + real helper) | Result |
 | --- | --- |
@@ -35,8 +35,11 @@ Unit tests: 91 passing (core 47, AI layer 31, jobs 13).
 | Recorder killed with SIGKILL at about 6.5 s | Reported as a crash; recovery returned 6.00 s on all five sources (checkpoint tolerance 2 s) and the sources opened in the editor. |
 | Import MP4 + MOV + corrupt file, audio sync, first cut, manual zoom/mask/callout, local revision, export (`e2e/firstcut.mjs`) | Corrupt file rejected with a reason. Camera started 1.5 s late: found at +1.5014 s, drift 8 ppm, residual ≤ 0.04 ms at five check points. 59 words transcribed on-device. Cut removed 7 pauses and 1 filler, offered the retake as a suggestion, kept "Do not delete this file". Local "no zooms in this section" changed only that section; locked range and manual zoom untouched; undo restored it. |
 | Export of that edit | 772 frames, 1920×1080, 30 fps, H.264 High, AAC-LC 48 kHz stereo, 25.74 s, written in 5.2 s (about 4.9× real time). |
-| Package and export UI (`e2e/package-ui.mjs`) | 21/21 checks: three template concepts from real stills, thumbnail edits, title limit, chapter rules, complete folder, `-rev` naming on re-export, cancel leaves nothing, missing media blocks with a relink action, unwritable folder gives a failed state. |
+| Package and export UI (`e2e/package-ui.mjs`) | 43/43 checks, including a bare file at the chosen path, ProRes 422 (`prores, yuv422p10le, pcm_s16le`), BT.709 tags on stream and container, a 2× section keeping a 330 Hz tone at 330 Hz, and voiceover delete. Earlier checks: three template concepts from real stills, thumbnail edits, title limit, chapter rules, complete folder, `-rev` naming on re-export, cancel leaves nothing, missing media blocks with a relink action, unwritable folder gives a failed state. |
 | Real hardware capture (`e2e/real-capture.mjs`) | Main display 1920×1080 at 60 fps nominal (399 frames in 7.02 s on a mostly static screen), 228 cursor samples recorded separately from the pixels, system audio captured on its own track, edited with a cursor-following zoom and exported. |
+| Recording and editing UX (`e2e/ux.mjs`) | 52/52: quick share after a take, flags during recording (survive `kill -9`), crop sheet, shortcut rebinding with conflict handling, sensitive-data scan on a frame of made-up secrets with no recognised text written to disk. |
+| Looks (`e2e/render-parity.mjs`) | 56/56: a red↔blue 3D LUT swaps the exported pixel, 50% strength lands halfway, identity LUT 58 dB PSNR, GPU and CPU paths agree, sharpening raises edge contrast only, graded 1080p30 export at 106 fps, image search end to end against a local mock. |
+| Screen Recording permission screens (`e2e/permissions.mjs`) | 9/9 with the state pinned to "not allowed": Allow…, then the settings card, System Settings request recorded, state remembered. |
 | Packaged `Cutaway.app` (`e2e/packaged.mjs`) | Boots, finds its bundled helper, probes, analyses and imports media. |
 
 Core behaviours covered by unit tests: time map through cuts and speed;
@@ -54,7 +57,8 @@ complete export.
 
 | Item | Status |
 | --- | --- |
-| **Claude editorial pass and AI thumbnail/title concepts** | Code and prompts are written and tested against a fake CLI. No real model call was possible: neither `claude` install on this Mac is signed in. Until `/login`, cuts use built-in rules and say so. |
+| **Claude editorial pass and AI thumbnail/title concepts** | Code and prompts are written and tested against a fake CLI. No real model call was possible: the `claude` command on this Mac answers "Not logged in" in the owner's own terminal (the saved login has no refresh token and is expired). `e2e/claude-real.mjs` is ready and skips until `claude auth login` is done. |
+| **The real macOS Screen Recording prompt** | The request path (`request-screen` → `CGRequestScreenCaptureAccess`) is new. The permission screens are tested with a pinned state; switching the toggle in System Settings is the owner's action. |
 | **Camera capture and camera previews** | Code-complete. Camera permission on this Mac is undetermined and granting it is the owner's action. |
 | **Two physical cameras at once** | Verified only through the helper's synthetic mode (same clock, writers, manifest and recovery code). One camera is attached here. |
 | Microphone content | The mic delivered digital silence (lid closed). The helper warns about it; capture structure was verified. |
@@ -65,14 +69,18 @@ complete export.
 
 ## 4. Known gaps against the product package
 
-* **Colour tag.** Primaries and matrix are BT.709; the transfer characteristic
-  in the H.264 stream is tagged sRGB (IEC 61966-2-1) because the frames come
-  from an sRGB canvas. Players treat both as SDR; strict BT.709 transfer
-  tagging needs an SPS rewrite in the mux step.
-* **Speed changes shift voice pitch.** There is no time-stretch; above about
-  1.5× voices sound higher.
-* **Voice cleanup is modest.** An 85 Hz high-pass and level normalisation,
-  identical in preview and export. It is not noise reduction.
+* **Colour.** Stream and container are now both tagged BT.709 (primaries,
+  transfer, matrix, limited range). Pixel values are not re-encoded from the
+  sRGB curve to the BT.709 curve; browsers and YouTube treat the two alike.
+* **ProRes** is transcoded from a high-bitrate 8-bit H.264 render, not from
+  raw frames.
+* **Voice cleanup** is a high-pass, a gentle expander and a limiter. It is not
+  spectral noise reduction.
+* **Sensitive-data masks are fixed rectangles.** They do not follow text that
+  scrolls; the scan samples frames, so something on screen for under a second
+  can be missed. Nothing is hidden without the creator pressing Hide.
+* **Ad-hoc signature.** macOS ties Screen Recording permission to the exact
+  build, so each repackage needs the toggle switched off and on again.
 * **Reordering and opening hooks** are offered as notes only; the edit model
   is chronological.
 * **Retry after a failed export** starts a fresh export rather than resuming.
@@ -116,12 +124,18 @@ speaker notes with prompter; GIF export; copy to clipboard; compression tiers;
 project sharing as a zip; on-device voiceover with system voices; ⌘K command
 menu; ⌘1–8 tab shortcuts; "Remove N filler words" and "Tighten N pauses".
 
-**Still not built:** hosted shareable links and view analytics (there is no
-Cutaway server), Unsplash backgrounds (needs an API account), LUT import,
-sharpening, automatic sensitive-data detection for masks, ProRes export, the
-quick-share widget after recording, flags during recording, a standalone
-crop window, and editable shortcut bindings. Screen Studio's own wallpapers,
-cursor art, click sounds and device artwork were not copied.
+**Added in the completion pass:** LUT import (.cube, 1D and 3D) and
+sharpening per layer; online background images through the creator's own
+Unsplash key (live API not exercised: no key); a project default zoom level;
+ProRes 422 export; export to a single file via a save dialog; pitch-preserving
+speed changes; voiceover delete; the quick-share sheet after recording; flags
+during recording (⌃⌥F) shown on the ruler and fed to the first cut; a crop
+sheet with a draggable rectangle; editable shortcut bindings for 38 commands;
+and a sensitive-data scan that proposes blur masks.
+
+**Still not built:** hosted shareable links and view analytics. They need a
+server and storage account, which Cutaway does not have. Screen Studio's own
+wallpapers, cursor art, click sounds and device artwork were not copied.
 
 No Screen Studio binary was inspected: the app is not installed on this Mac
 and it was not downloaded. Evidence used: the public site and guides, the
@@ -132,13 +146,17 @@ preferences file on this Mac.
 
 1. **Name and identity.** "Cutaway" is a working choice; no trademark search
    was done beyond a quick web check.
-2. **Sign in to Claude Code** so the editorial pass can be evaluated on real
-   footage. Prompt quality is untested until then.
+2. **Sign in to Claude Code** (`claude auth login`) so the editorial pass can
+   be evaluated on real footage, then run `e2e/claude-real.mjs`. Prompt
+   quality is untested until then.
 3. **Reverse engineering Screen Studio.** If you want binary inspection for
    the remaining parity items, the app has to be installed first; check its
    licence terms before doing so.
-4. **Distribution.** The package is ad-hoc signed for this Mac. Sharing it
-   needs a Developer ID, hardened runtime entitlements and notarisation.
+4. **Signing.** The package is ad-hoc signed for this Mac, so macOS forgets
+   its Screen Recording permission on every rebuild. One code-signing identity
+   exists in the keychain; using it would make the permission stick. Sharing
+   the app needs a Developer ID, hardened runtime entitlements and
+   notarisation.
 5. **Support floor and envelopes.** Qualify 4K, 60 fps, long takes and real
    two-camera hardware before promising them.
 6. **Whisper fallback.** Optional; only used if you pick a model file in

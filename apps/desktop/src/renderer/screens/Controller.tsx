@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fmtTime } from '@cutaway/core';
 import type { RecordEvent } from '@shared/api';
+import { bindingOf, formatCombo } from '@shared/keymap';
 import { Icon, type IconName } from '../ui/icons';
 import { Meter } from '../ui/kit';
 import './record.css';
@@ -23,6 +24,9 @@ export function Controller() {
   const [mic, setMic] = useState<number | null>(null);
   const [busy, setBusy] = useState<'stop' | 'pause' | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [flags, setFlags] = useState(0);
+  const [flagged, setFlagged] = useState(false);
+  const [flagKeys, setFlagKeys] = useState(formatCombo(bindingOf('flag', null)));
   const lastFrames = useRef<Record<string, number>>({});
 
   useEffect(() => {
@@ -59,6 +63,11 @@ export function Controller() {
           setPaused(false);
           setBusy(null);
           break;
+        case 'flag':
+          setFlags(e.count);
+          setFlagged(true);
+          setTimeout(() => setFlagged(false), 900);
+          break;
         case 'source-lost':
           setLost((s) => new Set(s).add(e.source));
           setNote(`${NAME[e.source] ?? e.source} lost; the rest is still recording`);
@@ -81,6 +90,12 @@ export function Controller() {
     });
   }, []);
 
+  useEffect(() => {
+    // This window has no app state of its own; read the shortcut straight from settings.
+    void window.cutaway.app.getSettings().then((st) => setFlagKeys(formatCombo(bindingOf('flag', st.shortcuts)))).catch(() => {});
+  }, []);
+
+  const flag = () => void window.cutaway.record.flag().catch(() => {});
   const stop = () => {
     setBusy('stop');
     window.cutaway.record.stop().catch(() => setBusy(null));
@@ -116,6 +131,10 @@ export function Controller() {
           ) : null}
         </div>
         <span className="sep" aria-hidden />
+        <button className={`ctl flag${flagged ? ' hit' : ''}`} onClick={flag} disabled={busy === 'stop'} data-testid="controller-flag" title={`Flag this moment${flagKeys ? ` (${flagKeys})` : ''}. Flags show up on the timeline.`} aria-label={`Flag this moment. ${flags} flagged so far.`}>
+          <Icon name="flag" size={16} />
+          {flags > 0 ? <span className="count">{flags}</span> : null}
+        </button>
         <button className="ctl" onClick={togglePause} disabled={busy !== null} title={paused ? 'Resume' : 'Pause'} aria-label={paused ? 'Resume recording' : 'Pause recording'}>
           <Icon name={paused ? 'play' : 'pause'} size={17} />
         </button>

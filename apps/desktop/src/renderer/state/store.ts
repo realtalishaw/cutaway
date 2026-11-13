@@ -40,7 +40,7 @@ export interface JobState {
 interface AppState {
   route: Route;
   settings: AppSettings | null;
-  info: { version: string; libraryDir: string; exportDir: string; nativeHelper: boolean; os: string } | null;
+  info: { packaged?: boolean; version: string; libraryDir: string; exportDir: string; nativeHelper: boolean; os: string } | null;
   claude: ClaudeStatus | null;
 
   projectPath: string | null;
