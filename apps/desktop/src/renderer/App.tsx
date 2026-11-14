@@ -3,6 +3,7 @@ import { portableAppearance } from '@cutaway/core';
 import { saveNow, startAutosave, useApp, usePlayback, type InspectorTab, type ProjectView } from './state/store';
 import { commandForEvent } from './state/keymap';
 import { backToLibrary, newRecording, pickAndImport, useDemoTake } from './state/actions';
+import { startControl } from './control/handlers';
 import { Icon, Logo } from './ui/icons';
 import { Button, Modal, fmtAgo } from './ui/kit';
 import { Library } from './screens/Library';
@@ -277,6 +278,8 @@ export function App() {
   const route = useApp((s) => s.route);
   const project = useApp((s) => s.project);
   const demoTake = useDemoTake((s) => s.projectPath);
+  // AI tools (cutaway-mcp) send their commands to the main window only, never to the overlay windows
+  useEffect(() => (window.location.hash ? undefined : startControl()), []);
   const reduce = useApp((s) => s.settings?.reduceMotion ?? false);
   const isController = window.location.hash === '#controller';
   const isNotes = window.location.hash === '#notes';

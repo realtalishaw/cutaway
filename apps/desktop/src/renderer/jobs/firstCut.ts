@@ -69,6 +69,8 @@ export interface FirstCutResult {
 export interface FirstCutOptions {
   /** Re-run assembly even when a first cut for the same inputs already exists. */
   regenerate?: boolean;
+  /** Stop after transcription and analysis, changing nothing in the edit (an AI tool reads the result and edits itself). */
+  prepareOnly?: boolean;
 }
 
 function mark(ctx: JobContext, stage: JobStage): void {
@@ -327,6 +329,8 @@ export async function runFirstCut(ctx: JobContext, opts: FirstCutOptions = {}): 
       const active = screenActivity(ctx.get()).reduce((s, r) => s + (r.end - r.start), 0);
       return `${screen ? `${fmt(active)} of visible screen activity; ` : ''}${parts.join('; ')}.`;
     });
+
+  if (opts.prepareOnly) return { mode: 'local-rules', ai: { mode: 'local-rules', reason: null, fellBack: false }, summary: 'Transcribed and analysed. The edit was not changed.', accepted: 0, rejected: [], adjusted: [], notes: [], ran, skipped };
 
   // ── assemble ────────────────────────────────────────────────────────────
   let result: Omit<FirstCutResult, 'ran' | 'skipped'> | null = null;

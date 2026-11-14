@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime, meta, musicClipsOf, newMusicClip, sourceFromProbe, uid, withMusic, withSources, type MediaSource, type SourceRole } from '@cutaway/core';
 import type { GenKeyStatus, GenKind, GenProvider, GenVoice, VoiceInfo } from '@shared/api';
-import { photosToClips, sourceToClip } from '../../state/actions';
+import { placeGenerated } from '../../state/generated';
 import { timeMapOf, useApp, usePlayback } from '../../state/store';
 import { Icon } from '../../ui/icons';
 import { Banner, Button, Modal, Segmented, Slider, Toggle } from '../../ui/kit';
@@ -134,37 +134,10 @@ export function GenerateSheet({ kind, target = 'over', onClose }: { kind: GenKin
     if (!made) return;
     setBusy(true);
     try {
-      const [probe] = await window.cutaway.native.probe([`${projectPath}/${made.path}`]);
-      if (!probe?.ok) throw new Error(probe?.error?.message ?? 'The generated file could not be read.');
-      const role: SourceRole = kind === 'image' ? 'image' : kind === 'video' ? 'broll' : 'music';
-      const label = kind === 'voice' ? 'Voiceover' : kind === 'music' ? 'Music' : kind === 'sound' ? 'Sound' : kind === 'image' ? 'Image' : 'Video';
-      const short = made.prompt.length > 40 ? `${made.prompt.slice(0, 38)}…` : made.prompt;
-      const source: MediaSource = {
-        ...sourceFromProbe({ ...probe, path: made.path }, role, { managed: true, origin: 'import', name: `${label} · ${short}` }),
-        note: `Generated with ${NAME[made.provider]} (${made.model}) from: “${made.prompt}”`,
-        license: made.provider === 'mac' ? 'macOS system voice' : `Generated with ${NAME[made.provider]}; see its terms for use`,
-      };
       const app = useApp.getState();
+      const { itemId, label } = await placeGenerated({ path: made.path, kind, provider: made.provider, model: made.model, prompt: made.prompt, target });
       pending.current = null; // the project owns the file now
-      app.patch((p) => withSources(p, [...p.sources, source]));
-      if (kind === 'image') target === 'clip' ? photosToClips([source.id]) : placeOverlays([source.id]);
-      else if (kind === 'video') target === 'clip' ? sourceToClip(source.id) : placeOverlays([source.id]);
-      else {
-        let id = '';
-        app.edit((e, p) => {
-          const map = timeMapOf(p);
-          const at = Math.min(usePlayback.getState().time, Math.max(0, map.outDuration - 0.3));
-          const m = meta('creator', p.revision + 1);
-          // music sits under the voice; a voice or a sound plays at its own level and is never lowered
-          const clip =
-            kind === 'music'
-              ? newMusicClip(source, at, map.outDuration, m)
-              : { id: uid('mus'), sourceId: source.id, start: at, sourceIn: 0, length: Math.max(0.2, source.duration), gain: kind === 'voice' ? 1 : 0.8, fadeIn: 0, fadeOut: kind === 'sound' ? Math.min(0.15, source.duration / 4) : 0, duck: false, meta: m };
-          id = clip.id;
-          return withMusic(e, [...musicClipsOf(e, p.sources), clip]);
-        }, `Add ${label.toLowerCase()}`);
-        if (id) app.select({ kind: 'music', id });
-      }
+      if (itemId && kind !== 'image' && kind !== 'video') app.select({ kind: 'music', id: itemId });
       app.toast(`${label} added at ${fmtTime(usePlayback.getState().time, true)}.`);
       onClose();
     } catch (e) {

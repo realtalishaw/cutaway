@@ -125,6 +125,17 @@ export interface PreviewFrame { source: string; width: number; height: number; j
 
 export interface SelfViewPrefs { x?: number; y?: number; size?: number; shape?: 'circle' | 'rounded'; hidden?: boolean }
 
+export interface ControlStatus {
+  enabled: boolean;
+  running: boolean;
+  /** How to start the MCP server: the command and its arguments (this app's own runtime and script). */
+  command: string;
+  args: string[];
+  /** Whether each tool already lists the cutaway server (null = that tool is not installed). */
+  claude: boolean | null;
+  codex: boolean | null;
+}
+
 /** Where the teleprompter window was last put. */
 export interface PrompterBounds { x: number; y: number; width: number; height: number }
 /** Quick places for the teleprompter. "top" sits just under the built-in camera, for eye contact. */
@@ -279,6 +290,8 @@ export interface StylePreset {
 }
 
 export interface AppSettings {
+  /** Let AI tools (Claude Code or Codex, through cutaway-mcp) control Cutaway on this Mac. On unless turned off. */
+  aiControl?: boolean;
   libraryDir: string;
   exportDir: string;
   countdownSeconds: number;
@@ -637,6 +650,16 @@ export interface CutawayApi {
     onProgress(cb: (p: { key: string; done: number; total: number }) => void): () => void;
   };
   /** Media generation with the creator's own keys. Keys never come back to the window: only whether one is set. */
+  /** AI tools controlling Cutaway (cutaway-mcp). */
+  control: {
+    status(): Promise<ControlStatus>;
+    setEnabled(on: boolean): Promise<ControlStatus>;
+    /** Register the cutaway MCP server with Claude Code or Codex (runs their own `mcp add` command). */
+    connect(tool: 'claude' | 'codex'): Promise<{ ok: boolean; message: string }>;
+    /** A command arrived from an AI tool; answer with `respond`. */
+    onCall(cb: (call: { id: string; method: string; params: Record<string, unknown> }) => void): () => void;
+    respond(r: { id: string; ok: boolean; result?: unknown; error?: string }): void;
+  };
   gen: {
     status(): Promise<GenKeyStatus>;
     setKey(provider: GenProvider, key: string | null): Promise<GenKeyStatus>;

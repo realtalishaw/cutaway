@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { MEDIA_SCHEME, type CountdownState, type GenModels, type GenProvider, type GenRequest, type MotionRenderRequest, type Permission, type PermissionKind, type PrompterPlace, type RecordConfig } from '../shared/api';
+import { MEDIA_SCHEME, type CountdownState, type GenModels, type GenProvider, type GenRequest, type MotionRenderRequest, type Permission, type PermissionKind, type PrompterPlace, type RecordConfig, type ControlStatus } from '../shared/api';
 import * as native from './native';
 import * as library from './library';
 import * as exporter from './exporter';
@@ -11,6 +11,10 @@ import * as looks from './looks';
 import { registerAi } from './ai';
 import * as gen from './gen';
 import * as motion from './motion';
+import * as control from './control';
+import { claudeEnv, findClaude } from '@cutaway/ai/node';
+import { findCodex } from '@cutaway/ai/codex';
+import { execFile } from 'node:child_process';
 import { bindingOf, toAccelerator } from '../shared/keymap';
 
 const DEV_URL = process.env.CUTAWAY_DEV_URL;
@@ -165,6 +169,56 @@ function showController() {
   controller.webContents.once('did-finish-load', () => (pushSelfView(), pushPrompter()));
   controller.on('closed', () => (controller = null));
   load(controller, 'controller');
+}
+
+
+// ───────────────────────────── AI tools (cutaway-mcp) ─────────────────────────────
+
+/** The MCP server script: bundled into the app, or the dev build's copy. */
+function mcpScript(): string {
+  return app.isPackaged ? path.join(process.resourcesPath, 'mcp', 'cutaway-mcp.cjs') : path.resolve(__dirname, '../mcp/cutaway-mcp.cjs');
+}
+/** How an AI tool starts the server: this app's own runtime in plain Node mode, so nothing else needs installing. */
+function mcpLaunch() {
+  return { command: process.execPath, args: [mcpScript()], env: { ELECTRON_RUN_AS_NODE: '1' } };
+}
+
+async function syncControl() {
+  if (library.getSettings().aiControl === false) await control.stopControl();
+  else await control.startControl(() => mainWindow ?? (createMainWindow(), mainWindow)).catch((e) => console.error('[control]', e));
+}
+
+/** Run a tool's own CLI (claude / codex) with the creator's login-shell environment. */
+function runTool(bin: string, args: string[]): Promise<{ code: number; out: string }> {
+  return claudeEnv(bin).then(
+    (env) =>
+      new Promise((done) => {
+        execFile(bin, args, { env, timeout: 30_000 }, (err, stdout, stderr) => done({ code: err ? ((err as { code?: number }).code ?? 1) : 0, out: `${stdout}${stderr}`.trim() }));
+      }),
+  );
+}
+
+async function controlStatus(): Promise<ControlStatus> {
+  const l = mcpLaunch();
+  const [claude, codex] = await Promise.all([findClaude(null), findCodex(null)]);
+  const has = async (bin: string | null) => (bin ? (await runTool(bin, ['mcp', 'get', 'cutaway'])).code === 0 : null);
+  const [c1, c2] = await Promise.all([has(claude), has(codex)]);
+  return { enabled: library.getSettings().aiControl !== false, running: control.controlStatus().running, command: l.command, args: l.args, claude: c1, codex: c2 };
+}
+
+async function connectTool(tool: 'claude' | 'codex'): Promise<{ ok: boolean; message: string }> {
+  const l = mcpLaunch();
+  const name = tool === 'claude' ? 'Claude Code' : 'Codex';
+  const bin = tool === 'claude' ? await findClaude(null) : await findCodex(null);
+  if (!bin) return { ok: false, message: `${name} is not installed on this Mac.` };
+  // replace an older registration (for example from a build in another folder)
+  await runTool(bin, tool === 'claude' ? ['mcp', 'remove', 'cutaway', '--scope', 'user'] : ['mcp', 'remove', 'cutaway']);
+  const args =
+    tool === 'claude'
+      ? ['mcp', 'add', '--scope', 'user', 'cutaway', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', l.command, ...l.args]
+      : ['mcp', 'add', 'cutaway', '--env', 'ELECTRON_RUN_AS_NODE=1', '--', l.command, ...l.args];
+  const r = await runTool(bin, args);
+  return r.code === 0 ? { ok: true, message: `Added to ${name}. Start a new ${name} session and ask it to make a video with Cutaway.` } : { ok: false, message: `${name} could not add it: ${r.out.split('\n').slice(-2).join(' ').slice(0, 300)}` };
 }
 
 let notes: BrowserWindow | null = null;
@@ -556,6 +610,7 @@ function registerIpc() {
     getSettings: () => library.getSettings(),
     setSettings: async (patch: Parameters<typeof library.setSettings>[0]) => {
       const next = await library.setSettings(patch);
+      if ('aiControl' in patch) await syncControl();
       if ('shortcuts' in patch) {
         buildMenu();
         applyGlobalShortcuts();
@@ -717,6 +772,15 @@ function registerIpc() {
   });
 
   // media generation with the creator's own ElevenLabs or fal.ai key; the keys stay in this process
+  handle('control', {
+    status: () => controlStatus(),
+    setEnabled: async (on: boolean) => {
+      await library.setSettings({ aiControl: !!on });
+      await syncControl();
+      return controlStatus();
+    },
+    connect: (tool: 'claude' | 'codex') => (tool === 'claude' || tool === 'codex' ? connectTool(tool) : Promise.resolve({ ok: false, message: 'Unknown tool.' })),
+  });
   handle('gen', {
     status: () => gen.keyStatus(),
     setKey: (provider: GenProvider, key: string | null) => gen.setKey(provider, key),
@@ -782,6 +846,7 @@ void app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'media'));
   session.defaultSession.setPermissionCheckHandler((_wc, perm) => perm === 'media');
   createMainWindow();
+  await syncControl();
   applyGlobalShortcuts();
   // The flag shortcut exists only while a take is running.
   native.onSessionEnded(() => applyGlobalShortcuts());
@@ -816,6 +881,7 @@ app.on('before-quit', (e) => {
 });
 
 app.on('will-quit', () => {
+  void control.stopControl();
   globalShortcut.unregisterAll();
   native.killHelpers();
 });

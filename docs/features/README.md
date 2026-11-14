@@ -105,6 +105,18 @@ the basic workflow, see the [main README](../../README.md).
   to be written.
 - Every applied change becomes a **version** you can view or restore.
 
+## Make videos from Claude Code or Codex (MCP)
+
+- **Text to finished video** from the AI tool you already use: it can create a
+  project, import footage, read the transcript, cut, zoom, add text,
+  animations, music, voiceovers and captions, look at frames to check its
+  work, and export.
+- **Connect in one click** from Settings → AI tools, or add it to any MCP
+  client by hand.
+- **You stay in control**: every change appears live in Cutaway, is marked as
+  an AI decision, and is saved as a version you can undo or restore. Turn it
+  off any time. See [docs/mcp.md](../mcp.md).
+
 ## AI generation (your own keys)
 
 With your own **ElevenLabs** or **fal.ai** key:

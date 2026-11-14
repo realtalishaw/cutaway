@@ -5,7 +5,7 @@
  */
 import type { CutawayApi } from '@shared/api';
 
-const SYNC = new Set(['app.onMenu', 'app.pathForFile', 'record.onEvent', 'media.url', 'app.onCountdown', 'app.onCountdownCancel', 'app.onSelfView', 'record.onPreview', 'gen.onStatus', 'motion.onProgress', 'ai.onProgress', 'app.onPrompter']);
+const SYNC = new Set(['app.onMenu', 'app.pathForFile', 'record.onEvent', 'media.url', 'app.onCountdown', 'app.onCountdownCancel', 'app.onSelfView', 'record.onPreview', 'gen.onStatus', 'motion.onProgress', 'ai.onProgress', 'app.onPrompter', 'control.onCall', 'control.respond']);
 
 interface Envelope {
   __ok: boolean;

@@ -106,6 +106,15 @@ For generated voiceovers, music, sound effects, images and video, add your own
 **ElevenLabs** or **fal.ai** key in **Settings → AI generation**. Keys are stored
 encrypted in your Mac's keychain-backed storage and only sent to that service.
 
+### Make videos from Claude Code or Codex
+
+Cutaway includes an MCP server, so the AI tool you already use can make a whole
+video here from a text request ("cut this down, add a title and captions, and
+export it"). Open **Settings → AI tools** and click **Connect** next to Claude
+Code or Codex. You watch every change happen in Cutaway, and you can keep
+editing by hand afterwards. Details and the full tool list:
+**[docs/mcp.md](docs/mcp.md)**.
+
 ### Where your work lives
 
 Projects are folders in `~/Movies/Cutaway/<name>.cutaway`. Exports go to

@@ -60,6 +60,11 @@ const api: CutawayApi = {
     ...ns<Omit<CutawayApi['motion'], 'onProgress'>>('motion', ['save', 'read', 'check', 'render', 'preview', 'templates', 'saveTemplate', 'removeTemplate']),
     onProgress: (cb) => on<{ key: string; done: number; total: number }>('motion:progress', cb),
   },
+  control: {
+    ...ns<Pick<CutawayApi['control'], 'status' | 'setEnabled' | 'connect'>>('control', ['status', 'setEnabled', 'connect']),
+    onCall: (cb) => on<{ id: string; method: string; params: Record<string, unknown> }>('control:call', cb),
+    respond: (r) => ipcRenderer.send('control:result', r),
+  },
   gen: {
     ...ns<Omit<CutawayApi['gen'], 'onStatus'>>('gen', ['status', 'setKey', 'setModels', 'testKey', 'voices', 'generate', 'cancel', 'discard']),
     onStatus: (cb) => on<{ jobId: string; text: string }>('gen:status', cb),

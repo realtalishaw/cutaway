@@ -12,6 +12,8 @@ export async function buildMain() {
     esbuild({ ...common, entryPoints: [path.join(root, 'src/main/index.ts')], outfile: path.join(root, 'dist/main/index.cjs') }),
     esbuild({ ...common, entryPoints: [path.join(root, 'src/main/worker.ts')], outfile: path.join(root, 'dist/main/worker.cjs') }),
     esbuild({ ...common, entryPoints: [path.join(root, 'src/preload/index.ts')], outfile: path.join(root, 'dist/preload/index.cjs') }),
+    // the MCP server AI tools start: one file, no dependencies, run on the app's own runtime
+    esbuild({ ...common, sourcemap: false, entryPoints: [path.join(root, 'src/mcp/server.ts')], outfile: path.join(root, 'dist/mcp/cutaway-mcp.cjs') }),
   ]);
 }
 
