@@ -32,9 +32,21 @@
 .target-note { color: var(--text-2); min-height: 14px; }
 
 .cam-bubble { position: absolute; bottom: 16px; width: 15%; max-width: 190px; aspect-ratio: 1; border-radius: 24%; overflow: hidden; background: var(--bg-2); box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.22), 0 12px 32px rgba(0, 0, 0, 0.6); display: grid; place-items: center; color: var(--text-3); z-index: 2; }
-.cam-bubble.a { right: 16px; }
-.cam-bubble.b { left: 16px; }
-.cam-bubble.b.solo { left: auto; right: 16px; }
+.cam-bubble.at-br { right: 16px; bottom: 16px; }
+.cam-bubble.at-bl { left: 16px; bottom: 16px; }
+.cam-bubble.at-tr { right: 16px; top: 16px; bottom: auto; }
+.cam-bubble.at-tl { left: 16px; top: 16px; bottom: auto; }
+.cam-bubble.shape-circle { border-radius: 50%; }
+.cam-bubble.shape-square { border-radius: 6%; }
+.cam-bubble.movable { cursor: grab; touch-action: none; transition: left 0.18s var(--ease), top 0.18s var(--ease), border-radius 0.18s var(--ease); }
+.cam-bubble.dragging { cursor: grabbing; transition: none; box-shadow: 0 0 0 2px var(--accent-2), 0 18px 40px rgba(0, 0, 0, 0.65); }
+.cam-bubble.shape-circle span { left: 50%; top: 8px; transform: translateX(-50%); }
+.cam-shape { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; background: rgba(10, 10, 14, 0.72); backdrop-filter: blur(10px); opacity: 0; transition: opacity 0.14s; cursor: pointer; }
+.cam-bubble:hover .cam-shape, .cam-shape:focus-visible { opacity: 1; }
+.cam-shape:hover { background: rgba(40, 40, 48, 0.9); }
+.cam-shape-icon { width: 12px; height: 12px; border: 1.6px solid #fff; border-radius: 30%; }
+.cam-shape-icon.shape-circle { border-radius: 50%; }
+.cam-shape-icon.shape-square { border-radius: 1px; }
 .cam-bubble video { width: 100%; height: 100%; object-fit: cover; }
 .cam-bubble span { position: absolute; left: 7px; top: 6px; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; background: rgba(0, 0, 0, 0.6); color: #fff; }
 
@@ -63,7 +75,7 @@
 .link-btn { background: none; border: 0; padding: 0; color: var(--text); text-decoration: underline; text-underline-offset: 2px; font-size: inherit; }
 
 /* ───────── the recorder bar ───────── */
-.rec-bar { flex: none; display: flex; align-items: center; gap: 6px; height: 58px; padding: 0 8px; border-radius: 14px; background: rgba(28, 29, 33, 0.92); backdrop-filter: blur(24px) saturate(1.3); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); max-width: 100%; }
+.rec-bar { position: relative; z-index: 20; flex: none; display: flex; align-items: center; gap: 6px; height: 58px; padding: 0 8px; border-radius: 14px; background: rgba(28, 29, 33, 0.92); backdrop-filter: blur(24px) saturate(1.3); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); max-width: 100%; }
 .rb-close { width: 22px; height: 22px; border-radius: 50%; border: 0; background: #fff; color: #111; display: grid; place-items: center; padding: 0; margin: 0 6px 0 4px; flex: none; transition: transform 0.1s, opacity 0.12s; }
 .rb-close:hover { opacity: 0.85; }
 .rb-close:active { transform: scale(0.92); }

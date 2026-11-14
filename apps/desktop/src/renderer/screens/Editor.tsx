@@ -11,7 +11,7 @@ import { CropSheet } from './editor/CropSheet';
 import { SensitiveSheet } from './editor/SensitiveSheet';
 import { commandForEvent } from '../state/keymap';
 import { stepVersion } from '../state/chat';
-import { addMask, addOverlay, addZoom, cutRange, lockRange, patchItem, playheadSource, removeSelected, seekSource, selectedRange, setLayout, splitSelected } from './editor/ops';
+import { addMask, addOverlay, addZoom, cutRange, lockRange, patchItem, playheadSource, removeSelected, seekSource, selectedRange, setLayout, splitSelected, switchCamera } from './editor/ops';
 import { moveClipTo, splitClipAtPlayhead } from './editor/clipOps';
 import { SelectionBar } from './editor/SelectionBar';
 import { setMotionBox } from '../motion/actions';
@@ -133,6 +133,7 @@ function PreviewToolbar({ pickMask, findSensitive }: { pickMask(): void; findSen
   const project = useShownProject();
   const hasScreen = project.sources.some((s) => s.role === 'screen');
   const hasCam = project.sources.some((s) => s.role === 'cameraA' || s.role === 'cameraB');
+  const twoCams = project.sources.some((s) => s.role === 'cameraA') && project.sources.some((s) => s.role === 'cameraB');
   const range = (len: number) => {
     const t = playheadSource(project);
     return { start: t, end: Math.min(project.duration, t + len) };
@@ -147,6 +148,7 @@ function PreviewToolbar({ pickMask, findSensitive }: { pickMask(): void; findSen
     hasCam
       ? [
           tool('camera', 'Fullscreen camera from the playhead', () => setLayout(range(4), 'camera')),
+          ...(twoCams ? [tool('sync', 'Show the other camera (A or B) from the playhead (Ctrl+A)', () => void switchCamera(range(4)))] : []),
           ...(hasScreen ? [tool('split', 'Split screen from the playhead', () => setLayout(range(4), 'split')), tool('layout', 'Camera overlay from the playhead', () => setLayout(range(4), 'overlay')), tool('screen', 'Screen only from the playhead', () => setLayout(range(4), 'screen'))] : []),
         ]
       : [],
@@ -463,6 +465,12 @@ export function Editor() {
           if ((mode !== 'screen' && !hasCam) || (mode !== 'camera' && !hasScreen)) return;
           e.preventDefault();
           return setLayout(r, mode);
+        }
+        case 'switch-camera': {
+          const t = playheadSource(p);
+          const r = selectedRange(app.selection) ?? { start: t, end: Math.min(p.duration, t + 4) };
+          if (switchCamera(r)) e.preventDefault();
+          break;
         }
         case 'delete':
           if (app.selection) (e.preventDefault(), removeSelected());

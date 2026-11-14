@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { fmtTime } from '@cutaway/core';
-import type { BrowserTabTarget, CameraInfo, CountdownState, DeviceList, DisplayInfo, ExtraPermission, Permission, PermissionKind, PreflightResult, RecordConfig, RecordEvent, TakeManifest, WindowInsets } from '@shared/api';
+import type { BrowserTabTarget, CamShape, CameraInfo, CountdownState, DeviceList, DisplayInfo, ExtraPermission, Permission, PermissionKind, PreflightResult, RecordConfig, RecordEvent, TakeManifest, WindowInsets } from '@shared/api';
 import { useApp } from '../state/store';
 import { backToLibrary, errorText, openProjectAt, pickAndImport, setRecordingActive, useDemoTake } from '../state/actions';
 import { addTakeToProject, describeTake } from '../state/recording';
@@ -128,6 +128,72 @@ function useMicLevel(name: string | null, enabled: boolean): number | null {
   return db;
 }
 
+const SHAPES: CamShape[] = ['rounded', 'circle', 'square'];
+const opposite = (c: Corner): Corner => `${c[0]}${c[1] === 'r' ? 'l' : 'r'}` as Corner;
+
+/** The camera's corner and shape for the new take, read when the take ends: the floating bubble may have changed the shape. */
+async function cameraPlacement(): Promise<{ corner: Corner; shape: CamShape }> {
+  const st = await api().app.getSettings().catch(() => null);
+  const shape = SHAPES.includes(st?.selfView?.shape as CamShape) ? (st!.selfView!.shape as CamShape) : 'rounded';
+  return { corner: loadPrefs().camCorner, shape };
+}
+const SHAPE_NAME: Record<CamShape, string> = { rounded: 'Rounded', circle: 'Circle', square: 'Square' };
+
+/**
+ * The camera on the record screen. Drag it to any corner, out of the way of what you're showing;
+ * it lands in that corner of the video too. The shape button cycles rounded, circle and square.
+ */
+function CamBubble({ slot, stream, corner, shape, solo, onCorner, onShape }: { slot: 'A' | 'B'; stream: MediaStream | null; corner: Corner; shape: CamShape; solo?: boolean; onCorner?: (c: Corner) => void; onShape?: (s: CamShape) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const start = (e: ReactPointerEvent) => {
+    if (!onCorner || e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    const el = ref.current;
+    const stage = el?.parentElement;
+    if (!el || !stage) return;
+    e.preventDefault();
+    const box = el.getBoundingClientRect();
+    const area = stage.getBoundingClientRect();
+    const dx = e.clientX - box.left;
+    const dy = e.clientY - box.top;
+    const at = (ev: PointerEvent) => ({ x: Math.max(0, Math.min(area.width - box.width, ev.clientX - area.left - dx)), y: Math.max(0, Math.min(area.height - box.height, ev.clientY - area.top - dy)) });
+    setDrag({ x: box.left - area.left, y: box.top - area.top });
+    const move = (ev: PointerEvent) => setDrag(at(ev));
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      const p = at(ev);
+      const right = p.x + box.width / 2 > area.width / 2;
+      const bottom = p.y + box.height / 2 > area.height / 2;
+      setDrag(null);
+      onCorner(`${bottom ? 'b' : 't'}${right ? 'r' : 'l'}` as Corner);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  const next: CamShape = shape === 'rounded' ? 'circle' : shape === 'circle' ? 'square' : 'rounded';
+  return (
+    <div
+      ref={ref}
+      className={`cam-bubble ${slot.toLowerCase()} at-${corner} shape-${shape}${solo ? ' solo' : ''}${onCorner ? ' movable' : ''}${drag ? ' dragging' : ''}`}
+      style={drag ? { left: drag.x, top: drag.y, right: 'auto', bottom: 'auto' } : undefined}
+      onPointerDown={start}
+      title={onCorner ? 'Drag to move the camera to another corner. It sits there in the video too.' : undefined}
+      data-testid={`cam-bubble-${slot.toLowerCase()}`}
+      data-corner={corner}
+      data-shape={shape}
+    >
+      {stream ? <LiveVideo stream={stream} mirror /> : <Icon name="camera" size={18} />}
+      <span>{slot}</span>
+      {onShape ? (
+        <button className="cam-shape" onClick={() => onShape(next)} title={`Shape: ${SHAPE_NAME[shape]}. Click for ${SHAPE_NAME[next].toLowerCase()}.`} aria-label="Change the camera shape" data-testid="cam-shape">
+          <i className={`cam-shape-icon shape-${next}`} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function LiveVideo({ stream, mirror }: { stream: MediaStream | null; mirror?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
@@ -159,7 +225,7 @@ function PermissionNote({ kind, status, onRequest, children }: { kind: Permissio
         <div style={{ fontWeight: 600, color: 'var(--text)' }}>{kind === 'screen' ? 'Screen recording' : PERMISSION_NAME[kind]} access is off for Cutaway</div>
         {kind === 'screen' ? (
           <div>
-            Switch on {who} in System Settings → Privacy &amp; Security → {PERMISSION_NAME.screen}. Not in the list? Press + there and add it. Already on? Switch it off and on again. {children}
+            Switch on {who} in System Settings → Privacy &amp; Security → {PERMISSION_NAME.screen}. Not in the list? Press + there and add it. Already on? Select Cutaway in that list, press − to remove it, then press + and add Cutaway again (an update can leave an old entry behind). {children}
           </div>
         ) : (
           <div>
@@ -253,15 +319,19 @@ interface Prefs {
   captureKeys: boolean;
   /** How screen and camera are arranged (Camera only is the Camera target, not a preference). */
   layout: ScreenLayout;
+  /** Where the camera sits in the video; dragged on the record screen. */
+  camCorner: Corner;
 }
+type Corner = 'tl' | 'tr' | 'bl' | 'br';
+const CORNERS: Corner[] = ['tl', 'tr', 'bl', 'br'];
 const PREFS_KEY = 'cutaway.recorder';
 const NOTES_OPEN_KEY = 'cutaway.notes.open';
 
 function loadPrefs(): Prefs {
-  const d: Prefs = { fps: 60, cursor: 'clean', hideIcons: false, hideNotifs: false, captureKeys: false, layout: 'overlay' };
+  const d: Prefs = { fps: 60, cursor: 'clean', hideIcons: false, hideNotifs: false, captureKeys: false, layout: 'overlay', camCorner: 'br' };
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<Prefs>;
-    return { fps: p.fps === 30 ? 30 : 60, cursor: p.cursor === 'baked' ? 'baked' : 'clean', hideIcons: !!p.hideIcons, hideNotifs: !!p.hideNotifs, captureKeys: !!p.captureKeys, layout: p.layout === 'split' || p.layout === 'presenter' || p.layout === 'screen' ? p.layout : 'overlay' };
+    return { fps: p.fps === 30 ? 30 : 60, cursor: p.cursor === 'baked' ? 'baked' : 'clean', hideIcons: !!p.hideIcons, hideNotifs: !!p.hideNotifs, captureKeys: !!p.captureKeys, layout: p.layout === 'split' || p.layout === 'presenter' || p.layout === 'screen' ? p.layout : 'overlay', camCorner: CORNERS.includes(p.camCorner as Corner) ? (p.camCorner as Corner) : 'br' };
   } catch {
     return d;
   }
@@ -316,6 +386,15 @@ export function Record() {
   const [notesOpen, setNotesOpen] = useState(() => localStorage.getItem(NOTES_OPEN_KEY) === '1');
   // Recording a demo of Cutaway: only for this session, so an ordinary recording never shows Cutaway by surprise.
   const [demo, setDemo] = useState(false);
+  // The camera's shape is shared with the floating bubble, which can change it during a take.
+  const [camShape, setCamShapeState] = useState<CamShape>('rounded');
+  useEffect(() => {
+    void api().app.getSettings().then((st) => setCamShapeState(SHAPES.includes(st.selfView?.shape as CamShape) ? (st.selfView!.shape as CamShape) : 'rounded')).catch(() => {});
+  }, []);
+  const setCamShape = (shape: CamShape) => {
+    setCamShapeState(shape);
+    void api().app.getSettings().then((st) => api().app.setSettings({ selfView: { ...(st.selfView ?? {}), shape } })).catch(() => {});
+  };
   const [resizeNote, setResizeNote] = useState<{ tone: 'info' | 'warn'; text: string } | null>(null);
   const [resizing, setResizing] = useState(false);
   const initialised = useRef(false);
@@ -620,7 +699,7 @@ export function Record() {
           if (!takeDir) break;
           const manifest = e.manifest;
           void finish(async () => {
-            const r = await addTakeToProject(manifest, takeDir, { layout: toLayoutMode(takeLayout.current) });
+            const r = await addTakeToProject(manifest, takeDir, { layout: toLayoutMode(takeLayout.current), camera: await cameraPlacement() });
             const gaps = manifest.sources.some((s) => s.gaps.length > 0);
             const demoted = r.demoted.length ? ` ${r.demoted.length} track${r.demoted.length === 1 ? ' was' : 's were'} added as supporting media because that role was already filled.` : '';
             const note = `${gaps ? 'Missing stretches are marked on the track.' : ''}${demoted}`.trim();
@@ -640,7 +719,7 @@ export function Record() {
               throw Object.assign(new Error(`The recorder stopped before anything could be saved: ${e.message}`), { nothingRecorded: true, cause: err });
             }
             if (!manifest.sources.length || manifest.duration <= 0) throw Object.assign(new Error(`The recorder stopped before anything could be saved: ${e.message}`), { nothingRecorded: true });
-            await addTakeToProject(manifest, takeDir, { layout: toLayoutMode(takeLayout.current) });
+            await addTakeToProject(manifest, takeDir, { layout: toLayoutMode(takeLayout.current), camera: await cameraPlacement() });
             return { text: `The recorder stopped unexpectedly. Recovered ${fmtTime(manifest.duration)} up to the last checkpoint: ${describeTake(manifest)}.`, tone: 'error' };
           });
           break;
@@ -1094,8 +1173,8 @@ export function Record() {
             {mode === 'tab' && tabTarget ? <span className="dim">page only</span> : null}
           </div>
         ) : null}
-        {layout === 'overlay' && camA && !cameraBlocked ? <div className="cam-bubble a">{previewA.stream ? <LiveVideo stream={previewA.stream} mirror /> : <Icon name="camera" size={18} />}<span>A</span></div> : null}
-        {camerasOn && camB && !cameraBlocked && (layout === 'overlay' || layout === 'camera' || !!camA) ? <div className={`cam-bubble b${mode === 'none' ? ' solo' : ''}`}>{previewB.stream ? <LiveVideo stream={previewB.stream} mirror /> : <Icon name="camera" size={18} />}<span>B</span></div> : null}
+        {layout === 'overlay' && camA && !cameraBlocked ? <CamBubble slot="A" stream={previewA.stream} corner={prefs.camCorner} shape={camShape} onCorner={(c) => setPrefs({ camCorner: c })} onShape={setCamShape} /> : null}
+        {camerasOn && camB && !cameraBlocked && (layout === 'overlay' || layout === 'camera' || !!camA) ? <CamBubble slot="B" stream={previewB.stream} solo={mode === 'none'} corner={mode === 'none' ? 'br' : opposite(prefs.camCorner)} shape={camShape} /> : null}
       </div>
 
       <div className="rec-strip">

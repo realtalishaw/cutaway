@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PreviewFrame, SelfViewPrefs } from '@shared/api';
+import type { CamShape, PreviewFrame, SelfViewPrefs } from '@shared/api';
 import { Icon } from '../../ui/icons';
 import './recorder.css';
 
@@ -9,17 +9,21 @@ import './recorder.css';
  * The pictures come from the recorder itself, a few times a second, so the
  * camera is not opened a second time and the take is not disturbed.
  */
+const SHAPES: CamShape[] = ['rounded', 'circle', 'square'];
+const SHAPE_NAME: Record<CamShape, string> = { rounded: 'rounded', circle: 'a circle', square: 'square' };
+const nextShape = (s: CamShape): CamShape => (s === 'rounded' ? 'circle' : s === 'circle' ? 'square' : 'rounded');
+
 export function SelfView() {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [slots, setSlots] = useState<string[]>([]);
   const [slot, setSlot] = useState<string | null>(null);
   const [live, setLive] = useState(false);
-  const [shape, setShape] = useState<'circle' | 'rounded'>('circle');
+  const [shape, setShape] = useState<CamShape>('rounded');
   const slotRef = useRef<string | null>(null);
   slotRef.current = slot;
 
   useEffect(() => {
-    void window.cutaway.app.getSettings().then((s) => setShape(s.selfView?.shape === 'rounded' ? 'rounded' : 'circle')).catch(() => {});
+    void window.cutaway.app.getSettings().then((s) => setShape(SHAPES.includes(s.selfView?.shape as CamShape) ? (s.selfView!.shape as CamShape) : 'rounded')).catch(() => {});
     const offState = window.cutaway.app.onSelfView((s) => setSlots(s.cameras));
     let busy = false;
     const offFrames = window.cutaway.record.onPreview((f: PreviewFrame) => {
@@ -57,7 +61,7 @@ export function SelfView() {
   }, []);
 
   const toggleShape = () => {
-    const next = shape === 'circle' ? 'rounded' : 'circle';
+    const next = nextShape(shape);
     setShape(next);
     void window.cutaway.app
       .getSettings()
@@ -67,7 +71,7 @@ export function SelfView() {
   const other = slots.find((s) => s !== slot) ?? null;
 
   return (
-    <div className={`sv ${shape}`} data-testid="self-view" data-live={live ? '1' : '0'} data-slot={slot ?? ''} title="Only you see this. Drag to move, drag an edge to resize.">
+    <div className={`sv ${shape}`} data-testid="self-view" data-live={live ? '1' : '0'} data-slot={slot ?? ''} title="Only you see this. Drag it anywhere, drag an edge to resize.">
       <canvas ref={canvas} className="sv-picture" />
       {!live ? (
         <div className="sv-wait">
@@ -81,8 +85,8 @@ export function SelfView() {
             {slot?.endsWith('B') ? 'B' : 'A'}
           </button>
         ) : null}
-        <button onClick={toggleShape} title={shape === 'circle' ? 'Rounded square' : 'Circle'} aria-label="Change the bubble shape" data-testid="self-view-shape">
-          <Icon name={shape === 'circle' ? 'frame' : 'record'} size={13} />
+        <button onClick={toggleShape} title={`Make it ${SHAPE_NAME[nextShape(shape)]}. The camera in your video changes too.`} aria-label="Change the camera shape" data-testid="self-view-shape">
+          <i className={`sv-shape-icon ${nextShape(shape)}`} />
         </button>
         <button onClick={() => void window.cutaway.app.selfView(false)} title="Hide (the camera keeps recording). Bring it back from the recording control." aria-label="Hide the camera bubble" data-testid="self-view-hide">
           <Icon name="x" size={13} />

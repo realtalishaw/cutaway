@@ -24,7 +24,11 @@ function RangeActions({ project, range, pickTarget }: { project: Project; range:
   const anyCam = project.sources.some((s) => s.role === 'cameraA' || s.role === 'cameraB');
   const assets = project.sources.filter((s) => (s.role === 'broll' || s.role === 'image') && s.available);
   const cutInside = project.edit.cuts.some((c) => c.start < range.end && c.end > range.start);
-  const view = (mode: LayoutMode) => setLayout(range, mode, cams[0]);
+  // With two cameras, pick which one the buttons below show (the main camera to start with).
+  const main = project.edit.appearance.camera.main === 'B' ? 'B' : 'A';
+  const [slot, setSlot] = useState<'A' | 'B'>(main);
+  const pickSlot = cams.includes(slot) ? slot : cams[0];
+  const view = (mode: LayoutMode) => setLayout(range, mode, pickSlot);
   return (
     <>
       <Section title={`Selection · ${(range.end - range.start).toFixed(1)}s`}>
@@ -39,6 +43,11 @@ function RangeActions({ project, range, pickTarget }: { project: Project; range:
         </Field>
       </Section>
       <Section title="Show here">
+        {cams.length === 2 ? (
+          <Field label="With camera">
+            <Segmented full value={pickSlot ?? 'A'} onChange={(v) => setSlot(v)} options={[{ value: 'A', label: 'Camera A' }, { value: 'B', label: 'Camera B' }]} />
+          </Field>
+        ) : null}
         <div className="grid-2">
           {hasScreen ? <Button icon="screen" onClick={() => view('screen')}>Screen only</Button> : null}
           {hasScreen && anyCam ? <Button icon="layout" disabled={!cams.length} onClick={() => view('overlay')}>Screen + camera</Button> : null}

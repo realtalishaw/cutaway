@@ -30,7 +30,7 @@ try {
   await page.waitForSelector('[data-testid="perm-screen"].denied', { timeout: 10000 });
   const text = await page.locator('[data-testid="perm-screen"]').innerText();
   check('after a refused request the card names the settings pane', /Screen & System Audio Recording/.test(text), text.slice(0, 90));
-  check('it explains the + button and the off/on fix', /Press \+/.test(text) && /off and on again/.test(text));
+  check('it explains the + button and the remove-and-re-add fix', /Press \+/.test(text) && /press − to remove it/.test(text));
   check('Open settings and Relaunch are offered', (await page.getByRole('button', { name: 'Open settings' }).isVisible()) && (await page.getByRole('button', { name: 'Relaunch Cutaway' }).isVisible()));
   const opened = await app.evaluate(() => globalThis.__openedPrivacy ?? []);
   check('System Settings was opened on the Screen Recording pane', opened.includes('screen'), JSON.stringify(opened));

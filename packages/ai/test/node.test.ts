@@ -71,18 +71,20 @@ describe('parseEnvelope', () => {
 });
 
 describe('argument and environment safety', () => {
-  it('gives the model no tools without images, and only Read with them', () => {
+  it('gives the model no tools, and sends still frames inside a streamed message', () => {
     const none = buildArgs({ schema, imageDir: null, imagePaths: [], model: 'sonnet' });
-    expect(none.slice(none.indexOf('--tools'), none.indexOf('--tools') + 2)).toEqual(['--tools', '']);
-    expect(none).not.toContain('--add-dir');
     const some = buildArgs({ schema, imageDir: '/p/cache/frames', imagePaths: ['/p/cache/frames/a.jpg'], model: '' });
-    expect(some.slice(some.indexOf('--tools'), some.indexOf('--tools') + 2)).toEqual(['--tools', 'Read']);
-    expect(some.slice(some.indexOf('--add-dir'), some.indexOf('--add-dir') + 2)).toEqual(['--add-dir', '/p/cache/frames']);
-    expect(some).not.toContain('--model');
     for (const args of [none, some]) {
-      expect(args).toEqual(expect.arrayContaining(['-p', '--output-format', 'json', '--json-schema', '--no-session-persistence', '--strict-mcp-config']));
-      expect(args.join(' ')).not.toMatch(/dangerously|bypassPermissions|Bash|Write|Edit/);
+      expect(args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2)).toEqual(['--tools', '']);
+      expect(args).not.toContain('--add-dir');
+      expect(args).toEqual(expect.arrayContaining(['-p', '--output-format', '--json-schema', '--no-session-persistence', '--strict-mcp-config']));
+      expect(args.join(' ')).not.toMatch(/dangerously|bypassPermissions|Bash|Write|Edit|Read/);
     }
+    expect(none).not.toContain('--input-format');
+    expect(none[none.indexOf('--output-format') + 1]).toBe('json');
+    expect(some.slice(some.indexOf('--input-format'), some.indexOf('--input-format') + 2)).toEqual(['--input-format', 'stream-json']);
+    expect(some[some.indexOf('--output-format') + 1]).toBe('stream-json');
+    expect(some).not.toContain('--model');
   });
   it('drops every CLAUDE*/ANTHROPIC* variable', () => {
     const env = scrubbedEnv({ PATH: '/usr/bin', HOME: '/Users/x', CLAUDECODE: '1', CLAUDE_CODE_OAUTH_TOKEN: 't', ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: 'u', claude_config_dir: '/x', LANG: 'en_US.UTF-8' });
@@ -129,18 +131,22 @@ describe('runClaude against a fake CLI', () => {
     expect(env).not.toContain('leak');
   });
 
-  it('runs in the image directory with Read only when stills are supplied', async () => {
+  it('attaches still frames to the message, each after its file name, and refuses files outside the folder', async () => {
     setReply(envelope({ structured_output: { ok: true } }));
     const frames = join(dir, 'frames');
-    const { mkdirSync, realpathSync } = await import('node:fs');
+    const { mkdirSync } = await import('node:fs');
     mkdirSync(frames, { recursive: true });
     writeFileSync(join(frames, 'a.jpg'), 'x');
-    const r = await runClaude({ claudePath: fake, prompt: 'p', schema, imageDir: frames, imagePaths: [join(frames, 'a.jpg')] });
+    const r = await runClaude({ claudePath: fake, prompt: 'PROMPT', schema, imageDir: frames, imagePaths: [join(frames, 'a.jpg')] });
     expect(r.ok).toBe(true);
     const args = readFileSync(join(dir, 'args.txt'), 'utf8').split('\n');
-    expect(args[args.indexOf('--tools') + 1]).toBe('Read');
-    expect(args[args.indexOf('--add-dir') + 1]).toBe(frames);
-    expect(realpathSync(readFileSync(join(dir, 'cwd.txt'), 'utf8').trim())).toBe(realpathSync(frames));
+    expect(args[args.indexOf('--tools') + 1]).toBe('');
+    const msg = JSON.parse(readFileSync(join(dir, 'stdin.txt'), 'utf8'));
+    expect(msg.type).toBe('user');
+    const content = msg.message.content;
+    expect(content[0].text).toMatch(/^PROMPT[\s\S]*attached to this message as an image/);
+    expect(content[1]).toEqual({ type: 'text', text: 'a.jpg' });
+    expect(content[2]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: Buffer.from('x').toString('base64') } });
     const outside = await runClaude({ claudePath: fake, prompt: 'p', schema, imageDir: frames, imagePaths: ['/etc/hosts'] });
     expect(outside.ok).toBe(false);
   });
@@ -224,17 +230,36 @@ describe('fast, streamed calls (animations)', () => {
     expect(JSON.parse(fast[fast.indexOf('--settings') + 1]!)).toEqual({ alwaysThinkingEnabled: false });
   });
 
-  it('counts the answer as it is written, not the thinking, across split chunks', async () => {
-    const seen: number[] = [];
-    const feed = streamProgress((p) => seen.push(p.chars));
+  it('counts thinking and the answer separately, across split chunks', async () => {
+    const seen: { chars: number; thinking: number }[] = [];
+    const feed = streamProgress((p) => seen.push({ chars: p.chars, thinking: p.thinking }));
     const ev = (delta: object) => JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta } }) + '\n';
     feed(ev({ type: 'thinking_delta', thinking: 'x'.repeat(500) }));
+    expect(seen).toEqual([{ chars: 0, thinking: 500 }]);
+    await new Promise((r) => setTimeout(r, 260));
     const line = ev({ type: 'input_json_delta', partial_json: '{"html":"<!doctype' });
     feed(line.slice(0, 30));
     feed(line.slice(30));
-    expect(seen).toEqual([18]);
+    expect(seen.at(-1)).toEqual({ chars: 18, thinking: 500 });
     await new Promise((r) => setTimeout(r, 260));
     feed(ev({ type: 'text_delta', text: 'abc' }) + '{"type":"result"}\n');
-    expect(seen).toEqual([18, 21]);
+    expect(seen.at(-1)).toEqual({ chars: 21, thinking: 500 });
+  });
+
+  it('tallies the edits as they are written, even when an op is split across events', () => {
+    let last: Record<string, number> = {};
+    const feed = streamProgress((p) => (last = p.ops));
+    const ev = (partial_json: string) => JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json } } }) + '\n';
+    feed(ev('{"ops":[{"op":"cut","start":1},{"o') + ev('p": "zoom"},{"op":"cut"}]'));
+    expect(last).toEqual({ cut: 2, zoom: 1 });
+  });
+});
+
+describe('effort', () => {
+  it('passes --effort when asked, and leaves it out otherwise', () => {
+    const schema = {};
+    const low = buildArgsFast({ schema, effort: 'low' });
+    expect(low.slice(low.indexOf('--effort'), low.indexOf('--effort') + 2)).toEqual(['--effort', 'low']);
+    expect(buildArgsFast({ schema })).not.toContain('--effort');
   });
 });

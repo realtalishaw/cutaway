@@ -62,6 +62,7 @@ export const KEY_COMMANDS: KeyCommand[] = [
   { id: 'lock', label: 'Lock the selection against AI changes', group: 'Editing', scope: 'menu', combo: 'Cmd+L' },
   { id: 'layout-camera', label: 'Fullscreen camera from the playhead', group: 'Editing', scope: 'editor', combo: 'Ctrl+L' },
   { id: 'layout-screen', label: 'Screen only from the playhead', group: 'Editing', scope: 'editor', combo: 'Ctrl+S' },
+  { id: 'switch-camera', label: 'Show the other camera (A or B) from the playhead, or on the selected view', group: 'Editing', scope: 'editor', combo: 'Ctrl+A' },
   { id: 'layout-both', label: 'Screen with camera overlay from the playhead', group: 'Editing', scope: 'editor', combo: 'Ctrl+B' },
   { id: 'add-text', label: 'Add text at the playhead', group: 'Editing', scope: 'editor', combo: 'T' },
   { id: 'duplicate', label: 'Duplicate the selected blocks', group: 'Editing', scope: 'menu', combo: 'Cmd+D' },

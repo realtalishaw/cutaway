@@ -215,6 +215,13 @@ describe('camera coverage (SC-005, SC-012)', () => {
     expect(resolveLayout(q, 25)).toMatchObject({ camera: 'B', fellBack: false });
     expect(resolveLayout(q, 37)).toMatchObject({ camera: 'A', fellBack: true });
   });
+  it('shows the main camera outside view blocks, and falls back where it has no footage', () => {
+    const pr = p();
+    const q = { ...pr, edit: { ...pr.edit, appearance: { ...pr.edit.appearance, camera: { ...pr.edit.appearance.camera, main: 'B' as const } } } };
+    expect(resolveLayout(pr, 25).camera).toBe('A');
+    expect(resolveLayout(q, 25).camera).toBe('B');
+    expect(resolveLayout(q, 10).camera).toBe('A');
+  });
 });
 
 describe('sync (SC-007, SC-032)', () => {

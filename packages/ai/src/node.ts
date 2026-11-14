@@ -16,7 +16,7 @@
  */
 import { spawn } from 'node:child_process';
 import { constants as FS } from 'node:fs';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { basename, delimiter, isAbsolute, join, resolve, sep } from 'node:path';
 
@@ -46,8 +46,23 @@ export interface ClaudeRunOptions {
    * the wait several times over and checks after the reply catch the mistakes.
    */
   fast?: boolean;
-  /** Hear the reply being written: characters of the answer so far. Streams the CLI's output (Claude only). */
-  onProgress?(p: { chars: number }): void;
+  /** Cap extended thinking at this many tokens, so a long request cannot think for many minutes. Ignored with `fast`. */
+  thinkingTokens?: number;
+  /**
+   * The CLI's effort level. A first cut at the default effort was measured thinking for 15 minutes and timing out;
+   * at "low" the same request finished in under two minutes with a sound edit. Older CLIs without --effort are
+   * retried without it.
+   */
+  effort?: 'low' | 'medium' | 'high';
+  /** Hear the reply being written. Streams the CLI's output (Claude only). */
+  onProgress?(p: StreamProgress): void;
+}
+
+/** What the model has done so far: characters thought and written, and how many of each `"op"` it has written. */
+export interface StreamProgress {
+  chars: number;
+  thinking: number;
+  ops: Record<string, number>;
 }
 
 export type ClaudeErrorCode = 'not-found' | 'not-signed-in' | 'cancelled' | 'timeout' | 'bad-output' | 'failed';
@@ -266,17 +281,38 @@ function signInMessage(): string {
 }
 
 /** Arguments for one structured, non-interactive call. Exported for tests. */
-export function buildArgs(opts: Pick<ClaudeRunOptions, 'schema' | 'imageDir' | 'imagePaths' | 'model' | 'fast'> & { stream?: boolean }): string[] {
+export function buildArgs(opts: Pick<ClaudeRunOptions, 'schema' | 'imageDir' | 'imagePaths' | 'model' | 'fast' | 'effort'> & { stream?: boolean }): string[] {
   const withImages = !!opts.imageDir && (opts.imagePaths?.length ?? 0) > 0;
+  // Still frames go inside the message (one turn), not as files the model opens one by one: reading ~20 stills
+  // through a tool took ~20 round trips and could pass the 15-minute limit. Images in a message need streamed input,
+  // and streamed input needs streamed output.
+  const stream = opts.stream || withImages;
   // Streaming prints one event per line (the reply as it is written, then the same result envelope at the end).
-  const output = opts.stream ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'] : ['--output-format', 'json'];
-  const args = ['-p', ...output, '--json-schema', JSON.stringify(opts.schema), '--no-session-persistence', '--strict-mcp-config'];
+  const output = stream ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'] : ['--output-format', 'json'];
+  const input = withImages ? ['--input-format', 'stream-json'] : [];
+  const args = ['-p', ...input, ...output, '--json-schema', JSON.stringify(opts.schema), '--no-session-persistence', '--strict-mcp-config'];
   if (opts.fast) args.push('--settings', JSON.stringify({ alwaysThinkingEnabled: false }));
-  // Tool surface: nothing, or Read alone so the model can look at stills.
-  args.push('--tools', withImages ? 'Read' : '');
-  if (withImages) args.push('--add-dir', opts.imageDir!);
+  // No tools: everything the model needs is in the message.
+  args.push('--tools', '');
   if (opts.model && opts.model.trim()) args.push('--model', opts.model.trim());
+  if (opts.effort) args.push('--effort', opts.effort);
   return args;
+}
+
+/** Said after a prompt whose still frames come attached: the prompts are written for a model that reads files. */
+export function inlineImageNote(count: number): string {
+  return `\n\nNOTE ON THE STILL FRAMES: the ${count === 1 ? 'still frame listed above is attached to this message as an image' : `${count} still frames listed above are attached to this message as images, in the order listed, each after a line with its file name`}. Look at the attachments; there is no Read tool and nothing to read.`;
+}
+
+/** The single streamed-input message: the prompt, then each still frame labelled with its file name. */
+export async function inlineMessage(prompt: string, imagePaths: string[]): Promise<string> {
+  const content: unknown[] = [{ type: 'text', text: prompt + inlineImageNote(imagePaths.length) }];
+  for (const path of imagePaths) {
+    const data = (await readFile(path)).toString('base64');
+    const media_type = /\.png$/i.test(path) ? 'image/png' : /\.webp$/i.test(path) ? 'image/webp' : 'image/jpeg';
+    content.push({ type: 'text', text: basename(path) }, { type: 'image', source: { type: 'base64', media_type, data } });
+  }
+  return JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n';
 }
 
 /** Parse the CLI's `--output-format json` envelope into a result. Pure. */
@@ -341,33 +377,45 @@ export function imagesInsideDir(imageDir: string | null | undefined, imagePaths:
 }
 
 /**
- * Count the answer's characters from the CLI's streamed events: text and the structured reply as it is typed
- * (thinking is not counted). Calls back at most every 250 ms. Exported for tests.
+ * Follow the CLI's streamed events: characters of thinking, characters of the answer (text and the structured
+ * reply as it is typed), and a tally of the `"op"` values written so far. Calls back at most every 250 ms,
+ * and once as soon as thinking starts. Exported for tests.
  */
-export function streamProgress(cb: (p: { chars: number }) => void): (chunk: string) => void {
+export function streamProgress(cb: (p: StreamProgress) => void): (chunk: string) => void {
   let buf = '';
   let chars = 0;
+  let thinking = 0;
+  let written = '';
   let last = 0;
   return (chunk) => {
     buf += chunk;
     const lines = buf.split('\n');
     buf = lines.pop() ?? '';
     let grew = false;
+    let firstThought = false;
     for (const line of lines) {
       if (!line.includes('"content_block_delta"')) continue;
       try {
-        const ev = JSON.parse(line) as { type?: string; event?: { type?: string; delta?: { type?: string; text?: string; partial_json?: string } } };
+        const ev = JSON.parse(line) as { type?: string; event?: { type?: string; delta?: { type?: string; text?: string; partial_json?: string; thinking?: string } } };
         const d = ev.type === 'stream_event' && ev.event?.type === 'content_block_delta' ? ev.event.delta : undefined;
+        if (d?.type === 'thinking_delta' && d.thinking) {
+          if (!thinking) firstThought = true;
+          thinking += d.thinking.length;
+          grew = true;
+          continue;
+        }
         const piece = d?.type === 'text_delta' ? d.text : d?.type === 'input_json_delta' ? d.partial_json : undefined;
-        if (piece) (chars += piece.length), (grew = true);
+        if (piece) (chars += piece.length), (written += piece), (grew = true);
       } catch {
         /* a line that is not an event */
       }
     }
     const now = Date.now();
-    if (grew && now - last >= 250) {
+    if (grew && (firstThought || now - last >= 250)) {
       last = now;
-      cb({ chars });
+      const ops: Record<string, number> = {};
+      for (const m of written.matchAll(/"op"\s*:\s*"(\w+)"/g)) ops[m[1]!] = (ops[m[1]!] ?? 0) + 1;
+      cb({ chars, thinking, ops });
     }
   };
 }
@@ -382,14 +430,26 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
   if (!path) return { ok: false, error: { code: 'not-found', message: 'Claude Code is not installed on this Mac (no "claude" command was found).' }, durationMs: elapsed() };
   const env = await claudeEnv(path);
   if (opts.fast) env.MAX_THINKING_TOKENS = '0';
+  else if (opts.thinkingTokens) env.MAX_THINKING_TOKENS = String(opts.thinkingTokens);
   const progress = opts.onProgress ? streamProgress(opts.onProgress) : undefined;
-  const out = await spawnClaude(path, buildArgs({ ...opts, stream: !!opts.onProgress }), opts.prompt, {
-    cwd: opts.imageDir && (opts.imagePaths?.length ?? 0) > 0 ? opts.imageDir : tmpdir(),
-    env,
-    signal: opts.signal,
-    timeoutMs: opts.timeoutMs ?? 12 * 60_000,
-    onData: progress,
-  });
+  const images = opts.imageDir ? (opts.imagePaths ?? []) : [];
+  let input = opts.prompt;
+  try {
+    if (images.length) input = await inlineMessage(opts.prompt, images);
+  } catch (e) {
+    return { ok: false, error: { code: 'failed', message: `Could not read a still frame: ${(e as Error).message}` }, durationMs: elapsed() };
+  }
+  const run = (effort: ClaudeRunOptions['effort']) =>
+    spawnClaude(path, buildArgs({ ...opts, effort, stream: !!opts.onProgress }), input, {
+      cwd: tmpdir(),
+      env,
+      signal: opts.signal,
+      timeoutMs: opts.timeoutMs ?? 12 * 60_000,
+      onData: progress,
+    });
+  let out = await run(opts.effort);
+  // An older Claude Code without --effort refuses the option at once; ask again without it.
+  if (opts.effort && out.code !== 0 && /unknown option.*effort|effort.*unknown/i.test(out.stderr) && !out.aborted && !out.timedOut) out = await run(undefined);
   if (out.aborted) return { ok: false, error: { code: 'cancelled', message: 'Cancelled.' }, durationMs: elapsed() };
   if (out.timedOut) return { ok: false, error: { code: 'timeout', message: 'Claude Code did not answer in time. Nothing was changed.' }, durationMs: elapsed() };
   if (out.spawnError) return { ok: false, error: { code: 'failed', message: `Could not start Claude Code: ${out.spawnError}` }, durationMs: elapsed() };

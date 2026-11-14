@@ -109,7 +109,18 @@ export function baseLayoutFor(layout: LayoutMode | undefined, roles: SourceRole[
   return screen && camera ? layout : undefined;
 }
 
-export async function addTakeToProject(manifest: TakeManifest, takeDir: string, opts: { layout?: LayoutMode; as?: TakeUse } = {}): Promise<AddTakeResult> {
+/** Where the camera sits and its shape, as set on the record screen and in the floating bubble. */
+export interface CameraPlacement { corner: 'tl' | 'tr' | 'bl' | 'br'; shape: 'circle' | 'rounded' | 'square' }
+
+/** The video starts with the camera where the creator put it while recording. */
+function withCameraPlacement(p: Project, cam: CameraPlacement | undefined, roles: SourceRole[]): Project {
+  if (!cam || !roles.some((r) => r === 'cameraA' || r === 'cameraB')) return p;
+  const camera = p.edit.appearance.camera;
+  if (camera.corner === cam.corner && camera.shape === cam.shape) return p;
+  return { ...p, edit: { ...p.edit, appearance: { ...p.edit.appearance, camera: { ...camera, corner: cam.corner, shape: cam.shape } } } };
+}
+
+export async function addTakeToProject(manifest: TakeManifest, takeDir: string, opts: { layout?: LayoutMode; as?: TakeUse; camera?: CameraPlacement } = {}): Promise<AddTakeResult> {
   const app = useApp.getState();
   const { projectPath, project } = app;
   if (!projectPath || !project) throw new Error('No project is open.');
@@ -144,7 +155,8 @@ export async function addTakeToProject(manifest: TakeManifest, takeDir: string, 
     const next = withTakeFlags(withSources(p, [...p.sources, ...added]), manifest.takeId, (manifest.flags ?? []).filter((t) => t <= manifest.duration + 0.001));
     // The recorder's layout becomes the starting view, unless this take only added supporting media.
     const base = baseLayoutFor(opts.layout, added.map((s) => s.role));
-    return base ? { ...next, edit: { ...next.edit, baseLayout: base } } : next;
+    const placed = withCameraPlacement(next, opts.camera, added.map((s) => s.role));
+    return base ? { ...placed, edit: { ...placed.edit, baseLayout: base } } : placed;
   });
   return { added, demoted, alreadyPresent: false };
 }

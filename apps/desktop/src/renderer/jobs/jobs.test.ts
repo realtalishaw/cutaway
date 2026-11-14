@@ -42,7 +42,7 @@ const SPEECH: [string, number, number][] = [
 interface Mock {
   api: {
     native: Record<'probe' | 'frames' | 'activity' | 'transcribe' | 'analyzeVoice' | 'correlate' | 'readCursor', ReturnType<typeof vi.fn>>;
-    ai: { status: ReturnType<typeof vi.fn>; run: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> };
+    ai: { status: ReturnType<typeof vi.fn>; run: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn>; onProgress: ReturnType<typeof vi.fn> };
   };
   status: ClaudeStatus;
   reply: (req: AiRequest) => AiResult | Promise<AiResult>;
@@ -66,6 +66,7 @@ function installMock(opts: { speech?: boolean; activity?: (t: number) => number 
         status: vi.fn(async () => m.status),
         run: vi.fn(async (req: AiRequest) => m.reply(req)),
         cancel: vi.fn(async () => undefined),
+        onProgress: vi.fn(() => () => undefined),
       },
     },
   };
@@ -426,5 +427,16 @@ describe('proposeRevision', () => {
     expect(preview.edit.zooms.filter((z) => z.start >= 45 && z.end <= 58).map((z) => z.scale)).toEqual([1.2]);
     expect(preview.edit.zooms.find((z) => z.start === 10)!.scale).toBe(1.3);
     expect(ctx.state.updates).toBe(0);
+  });
+});
+
+describe('assembleStatus (the live line while the AI works)', () => {
+  it('says what the AI is doing, with a clock and a tally of the edits so far', async () => {
+    const { assembleStatus } = await import('./firstCut');
+    const none = { chars: 0, thinking: 0, ops: {} };
+    expect(assembleStatus('Claude', 'reading your transcript and 6 still frames', none, 42_000)).toMatch(/^Claude is reading your transcript and 6 still frames · 0:42\./);
+    expect(assembleStatus('Claude', 'x', { ...none, thinking: 900 }, 75_000)).toMatch(/^Claude is deciding what to cut, where to zoom and which camera to show · 1:15/);
+    expect(assembleStatus('Claude', 'x', { chars: 500, thinking: 900, ops: { cut: 3, zoom: 1, layout: 2 } }, 125_000)).toMatch(/^Claude is writing the edit: 3 cuts, 2 view changes, 1 zoom so far · 2:05/);
+    expect(assembleStatus('Claude', 'x', none, 301_000)).toContain('stops at 15 minutes');
   });
 });

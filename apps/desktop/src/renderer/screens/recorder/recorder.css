@@ -16,6 +16,11 @@
 .sv { position: fixed; inset: 4px; overflow: hidden; background: #111216; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.28), 0 6px 18px rgba(0, 0, 0, 0.45); -webkit-app-region: drag; }
 .sv.circle { border-radius: 50%; }
 .sv.rounded { border-radius: 22%; }
+.sv.square { border-radius: 5%; }
+.sv { transition: border-radius 0.18s ease; }
+.sv-shape-icon { width: 12px; height: 12px; border: 1.6px solid #fff; border-radius: 30%; }
+.sv-shape-icon.circle { border-radius: 50%; }
+.sv-shape-icon.square { border-radius: 1px; }
 /* mirrored, the way people expect to see themselves */
 .sv-picture { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
 .sv-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: rgba(255, 255, 255, 0.6); font: 500 11px 'Inter Variable', Inter, system-ui, sans-serif; }

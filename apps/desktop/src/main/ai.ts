@@ -21,6 +21,13 @@ import type { AiImageRequest, AiImageResult, AiProviders, AiRequest, AiResult, A
 
 const STATUS_TTL_MS = 60_000;
 const TIMEOUTS: Partial<Record<string, number>> = { 'first-cut': 15 * 60_000, 'local-revision': 6 * 60_000, packaging: 8 * 60_000, motion: 6 * 60_000 };
+/**
+ * Thinking caps. Uncapped, a first cut of a few minutes of video was seen thinking past the 15-minute limit
+ * and falling back to the built-in rules; the cut itself is checked by Cutaway after the reply.
+ */
+const THINKING: Partial<Record<string, number>> = { 'first-cut': 8000, 'local-revision': 6000, packaging: 6000 };
+/** Low effort for the long editorial requests: measured 101 s for a 3-minute recording, against a 15-minute timeout at the default. */
+const EFFORT: Partial<Record<string, 'low' | 'medium' | 'high'>> = { 'first-cut': 'low', 'local-revision': 'low', packaging: 'low' };
 const MAX_PROMPT_CHARS = 1_500_000;
 const GENERATED_DIR = join('media', 'generated');
 
@@ -93,8 +100,8 @@ export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): vo
     try {
       // An animation is mostly writing: extended thinking made it take minutes, and the renderer check after the reply catches mistakes.
       const fast = req.purpose === 'motion';
-      const onProgress = req.progress ? (p: { chars: number }) => !e.sender.isDestroyed() && e.sender.send('ai:progress', { id: req.id, chars: p.chars }) : undefined;
-      const opts = { claudePath: preferredPath(id), model: modelFor(id), prompt: req.prompt, schema: req.schema, imageDir, imagePaths, signal: controller.signal, timeoutMs: TIMEOUTS[req.purpose] ?? 10 * 60_000, fast, onProgress };
+      const onProgress = req.progress ? (p: { chars: number; thinking: number; ops: Record<string, number> }) => !e.sender.isDestroyed() && e.sender.send('ai:progress', { id: req.id, chars: p.chars, thinking: p.thinking, ops: p.ops }) : undefined;
+      const opts = { claudePath: preferredPath(id), model: modelFor(id), prompt: req.prompt, schema: req.schema, imageDir, imagePaths, signal: controller.signal, timeoutMs: TIMEOUTS[req.purpose] ?? 10 * 60_000, fast, thinkingTokens: THINKING[req.purpose], effort: EFFORT[req.purpose], onProgress };
       const res = id === 'claude' ? await runClaude(opts) : await runCodex(opts);
       if (res.error?.code === 'not-signed-in' || res.error?.code === 'not-found') delete cached[id];
       return { ...res, provider: id };

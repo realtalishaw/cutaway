@@ -4,7 +4,7 @@ import { useApp, useProject } from '../../../state/store';
 import { ensureFaces, ensureMatte, facesKey, matteKey, retry, useData } from '../../../engine/parityData';
 import { Segmented, Slider, Toggle } from '../../../ui/kit';
 import { GradeSection } from './GradeSection';
-import { Reset, Section, pct, setAppearance } from './shared';
+import { Reset, Section, app, pct, setAppearance } from './shared';
 import { PunchSection } from './PunchSection';
 import './parity.css';
 
@@ -68,8 +68,24 @@ export function CameraTab() {
       </Section>
     );
   }
+  const slots = (['A', 'B'] as const).filter((x) => cams.some((c) => c.role === `camera${x}`));
+  const main = ap.camera.main === 'B' && slots.includes('B') ? 'B' : 'A';
+  const views = project.edit.layouts.filter((l) => l.mode !== 'screen');
+  const onB = views.filter((l) => l.camera === 'B').length;
+  const showEverywhere = (slot: 'A' | 'B') =>
+    app().edit((e) => ({ ...e, appearance: { ...e.appearance, camera: { ...e.appearance.camera, main: slot } }, layouts: e.layouts.map((l) => (l.mode === 'screen' ? l : { ...l, camera: slot })) }), `Show Camera ${slot}`, 'look:cammain');
   return (
     <>
+      {slots.length === 2 ? (
+        <Section title="Your two cameras" icon="camera">
+          <div className="tiny dim" data-testid="two-cameras-note">
+            Camera A and Camera B were both recorded. Camera {main} shows unless a block on the View track picks the other one
+            {views.length ? `. Right now ${onB} of ${views.length} view${views.length === 1 ? '' : 's'} show${views.length === 1 ? 's' : ''} Camera B.` : '.'}
+          </div>
+          <Segmented full value={main} onChange={(v) => showEverywhere(v)} options={[{ value: 'A', label: 'Camera A' }, { value: 'B', label: 'Camera B' }]} />
+          <div className="tiny dim">Picking one shows it everywhere. To switch for one moment, click a block on the View track and choose its camera.</div>
+        </Section>
+      ) : null}
       {hasScreen ? (
         <>
           <Section title="Camera shape" icon="camera">

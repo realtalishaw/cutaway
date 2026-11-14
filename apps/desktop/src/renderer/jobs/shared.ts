@@ -164,8 +164,8 @@ export function clearReplyCache(): void {
 let seq = 0;
 
 /** One structured Claude call with cancellation and retry-safe caching. */
-/** `onProgress` hears how many characters of the answer have been written (Claude, streamed). */
-export async function askClaude(ctx: JobContext, req: Omit<AiRequest, 'id'>, onProgress?: (chars: number) => void): Promise<AiResult & { reused: boolean }> {
+/** `onProgress` hears how many characters of the answer have been written (Claude, streamed), plus thinking and an edit tally. */
+export async function askClaude(ctx: JobContext, req: Omit<AiRequest, 'id'>, onProgress?: (chars: number, more?: { thinking: number; ops: Record<string, number> }) => void): Promise<AiResult & { reused: boolean }> {
   const fake = fakeAi();
   if (fake) {
     fake.seen.push({ purpose: req.purpose, prompt: req.prompt, images: req.imagePaths?.length ?? 0 });
@@ -188,7 +188,7 @@ export async function askClaude(ctx: JobContext, req: Omit<AiRequest, 'id'>, onP
   const id = `ai_${Date.now().toString(36)}_${(seq++).toString(36)}`;
   const onAbort = () => void window.cutaway.ai.cancel(id).catch(() => undefined);
   ctx.signal.addEventListener('abort', onAbort, { once: true });
-  const stop = onProgress ? window.cutaway.ai.onProgress((p) => p.id === id && onProgress(p.chars)) : null;
+  const stop = onProgress ? window.cutaway.ai.onProgress((p) => p.id === id && onProgress(p.chars, { thinking: p.thinking ?? 0, ops: p.ops ?? {} })) : null;
   try {
     const res = await window.cutaway.ai.run({ ...req, id, ...(onProgress ? { progress: true } : {}) });
     if (res.ok && res.data !== undefined) replyCache.set(key, res.data);

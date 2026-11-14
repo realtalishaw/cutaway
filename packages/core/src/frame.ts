@@ -261,7 +261,9 @@ export function resolveLayout(project: PLayout, t: Seconds): ResolvedLayout {
   const seg = at(project.edit.layouts, t) ?? null;
   // With several clips each one has its own sources and its own base view.
   let mode: LayoutMode = seg?.mode ?? baseLayoutAt(project, t) ?? defaultLayoutMode(sourcesAt(project, t));
-  let camera: CameraSlot = seg?.camera ?? (cameraSourceAt(project, 'A', t) ? 'A' : 'B');
+  // Outside a view block the main camera shows (Camera A unless the creator picked B).
+  const main: CameraSlot = project.edit.appearance?.camera?.main === 'B' ? 'B' : 'A';
+  let camera: CameraSlot = seg?.camera ?? (cameraSourceAt(project, main, t) ? main : main === 'A' ? 'B' : 'A');
   const screen = sourceAt(project, 'screen', t);
   const screenOk = covers(screen, t);
   const camOk = (slot: CameraSlot) => covers(cameraSourceAt(project, slot, t), t);

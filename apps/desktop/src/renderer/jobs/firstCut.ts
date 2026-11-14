@@ -410,6 +410,24 @@ function countAi(p: Project): { pauses: number; fillers: number; otherCuts: numb
 
 const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 
+const OP_WORDS: Record<string, [string, string]> = { cut: ['cut', 'cuts'], speed: ['speed-up', 'speed-ups'], layout: ['view change', 'view changes'], zoom: ['zoom', 'zooms'], overlay: ['title', 'titles'], broll: ['B-roll clip', 'B-roll clips'], suggest: ['suggestion', 'suggestions'] };
+
+/** The live line under "Assembling the cut": what the AI is doing now, what it has written, and for how long. */
+export function assembleStatus(name: string, reading: string, p: { chars: number; thinking: number; ops: Record<string, number> }, ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const clock = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const tally = Object.entries(OP_WORDS)
+    .filter(([op]) => (p.ops[op] ?? 0) > 0)
+    .map(([op, [one, many]]) => n(p.ops[op]!, one, many));
+  let now: string;
+  if (tally.length) now = `${name} is writing the edit: ${tally.join(', ')} so far`;
+  else if (p.chars > 0) now = `${name} is writing the edit`;
+  else if (p.thinking > 0) now = `${name} is deciding what to cut, where to zoom and which camera to show`;
+  else now = `${name} is ${reading}`;
+  const slow = s >= 300 ? ' This one is taking a while; it stops at 15 minutes and Cutaway finishes the cut on its own.' : '';
+  return `${now} · ${clock}. Video and audio stay on this Mac.${slow}`;
+}
+
 async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResult, 'ran' | 'skipped'>> {
   const p = ctx.get();
   const a = p.analysis;
@@ -462,8 +480,17 @@ async function assemble(ctx: JobContext, st: Stager): Promise<Omit<FirstCutResul
       flags: flagTimes,
       keyframes,
     });
-    st.detail('assemble', `${gate.name} is reviewing the transcript${keyframes.length ? ` and ${n(keyframes.length, 'still frame')}` : ''}. Video and audio stay on this Mac.`);
-    const res = await askClaude(ctx, { purpose: 'first-cut', prompt, schema: FIRST_CUT_SCHEMA as unknown as Record<string, unknown>, imagePaths: stills.map((s) => s.path), imageDir });
+    // Say what the AI is doing while it works, with a clock, so a long wait never looks stuck.
+    const reading = `reading your transcript${keyframes.length ? ` and ${n(keyframes.length, 'still frame')}` : ''}`;
+    const started = Date.now();
+    let seen = { chars: 0, thinking: 0, ops: {} as Record<string, number> };
+    const say = () => st.detail('assemble', assembleStatus(gate.name, reading, seen, Date.now() - started));
+    say();
+    const clock = setInterval(say, 1000);
+    const res = await askClaude(ctx, { purpose: 'first-cut', prompt, schema: FIRST_CUT_SCHEMA as unknown as Record<string, unknown>, imagePaths: stills.map((s) => s.path), imageDir }, (chars, more) => {
+      seen = { chars, thinking: more?.thinking ?? 0, ops: more?.ops ?? {} };
+      say();
+    }).finally(() => clearInterval(clock));
     if (!res.ok && (res.error?.code === 'cancelled' || ctx.signal.aborted)) throw new JobError('assemble', 'cancelled', 'Cancelled. Finished stages are kept.', true);
     if (res.ok) {
       try {

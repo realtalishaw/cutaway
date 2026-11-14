@@ -465,6 +465,8 @@ export interface Appearance {
     shape: 'rounded' | 'circle' | 'square';
     size: number;
     corner: 'tl' | 'tr' | 'bl' | 'br';
+    /** With two cameras: the one shown outside view blocks. Absent = A. */
+    main?: 'A' | 'B';
     mirror: boolean;
     radius: number;
     shadow: number;

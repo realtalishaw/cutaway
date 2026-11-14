@@ -123,7 +123,9 @@ export interface CountdownState {
 /** A camera still for the self-view bubble while a take is being recorded. */
 export interface PreviewFrame { source: string; width: number; height: number; jpeg: string }
 
-export interface SelfViewPrefs { x?: number; y?: number; size?: number; shape?: 'circle' | 'rounded'; hidden?: boolean }
+export interface SelfViewPrefs { x?: number; y?: number; size?: number; shape?: CamShape; hidden?: boolean }
+/** The camera's shape: the same in the floating bubble, on the record screen and in the video. */
+export type CamShape = 'circle' | 'rounded' | 'square';
 
 export interface ControlStatus {
   enabled: boolean;
@@ -408,7 +410,12 @@ export interface AiRequest {
 /** How far along a reply is: characters of the answer written so far. */
 export interface AiProgress {
   id: string;
+  /** Characters of the answer written so far. */
   chars: number;
+  /** Characters of thinking so far (0 = not thinking, or a provider that does not say). */
+  thinking?: number;
+  /** How many of each edit (`cut`, `zoom`, …) the answer has written so far. */
+  ops?: Record<string, number>;
 }
 
 export interface AiResult {

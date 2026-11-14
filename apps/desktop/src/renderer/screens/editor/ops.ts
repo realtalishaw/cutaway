@@ -5,6 +5,7 @@ import {
   applyOps,
   cameraSource,
   coversRange,
+  resolveLayout,
   dismissSuggestion,
   manualCut,
   meta,
@@ -113,12 +114,38 @@ export function camerasFor(project: Project, range: Range): CameraSlot[] {
 export function setLayout(range: Range, mode: LayoutMode, camera?: CameraSlot) {
   let id = '';
   app().edit((e, p) => {
-    const cam = camera ?? camerasFor(p, range)[0] ?? 'A';
+    const ok = camerasFor(p, range);
+    const main: CameraSlot = p.edit.appearance.camera.main === 'B' ? 'B' : 'A';
+    const cam = camera ?? (ok.includes(main) ? main : ok[0]) ?? 'A';
     const next = applyOps(e, [{ op: 'layout', start: range.start, end: range.end, mode, camera: cam, transition: 'smooth' }], 'creator', p.revision + 1);
     id = next.layouts.find((l) => !e.layouts.includes(l) && l.start >= range.start - 1e-3 && l.end <= range.end + 1e-3)?.id ?? '';
     return next;
   }, 'Change view');
   if (id) app().select({ kind: 'layout', id });
+}
+
+/**
+ * Show the other camera: flips the selected view block, or adds a view from the playhead (or over the selected range)
+ * that keeps the current arrangement with the other camera. Screen-only becomes the full camera. False when the
+ * other camera has no footage there.
+ */
+export function switchCamera(range: Range): boolean {
+  const { project: p, selection } = app();
+  if (!p) return false;
+  if (selection?.kind === 'layout') {
+    const block = p.edit.layouts.find((l) => l.id === selection.id);
+    if (block) {
+      const other: CameraSlot = block.camera === 'A' ? 'B' : 'A';
+      if (!camerasFor(p, block).includes(other)) return false;
+      app().edit((e) => ({ ...e, layouts: e.layouts.map((l) => (l.id === block.id ? { ...l, camera: other } : l)) }), `Show Camera ${other}`);
+      return true;
+    }
+  }
+  const now = resolveLayout(p, range.start);
+  const other: CameraSlot = now.camera === 'A' ? 'B' : 'A';
+  if (!camerasFor(p, range).includes(other)) return false;
+  setLayout(range, now.mode === 'screen' ? 'camera' : now.mode, other);
+  return true;
 }
 
 export function addOverlay(range: Range, kind: GraphicKind, text: string) {
