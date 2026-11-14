@@ -1,0 +1,107 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Cutaway",
+  "description": "Record your screen and camera, get a first cut, and export a finished video. No editing experience needed.",
+  "colors": {
+    "primary": "#4D2EF5",
+    "light": "#A190FA",
+    "dark": "#4D2EF5"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "index",
+              "install",
+              "quickstart",
+              "words-to-know"
+            ]
+          },
+          {
+            "group": "Record",
+            "pages": [
+              "record/start-a-recording",
+              "record/layouts-and-cameras",
+              "record/import-footage"
+            ]
+          },
+          {
+            "group": "Edit",
+            "pages": [
+              "edit/editor-tour",
+              "edit/first-cut",
+              "edit/timeline-and-clips",
+              "edit/edit-by-transcript",
+              "edit/zoom",
+              "edit/camera-layouts",
+              "edit/background-and-shape",
+              "edit/captions",
+              "edit/text-and-titles",
+              "edit/callouts",
+              "edit/music-and-sound",
+              "edit/hide-private-info",
+              "edit/cursor-and-animation",
+              "edit/undo-and-versions"
+            ]
+          },
+          {
+            "group": "AI helpers",
+            "pages": [
+              "ai/set-up-ai",
+              "ai/ask-ai",
+              "ai/ai-review",
+              "ai/make-videos-from-claude-or-codex"
+            ]
+          },
+          {
+            "group": "Finish and share",
+            "pages": [
+              "share/thumbnail-and-title",
+              "share/shorts",
+              "share/export"
+            ]
+          },
+          {
+            "group": "Help",
+            "pages": [
+              "help/keyboard-shortcuts",
+              "help/settings",
+              "help/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tutorials",
+        "groups": [
+          {
+            "group": "Tutorials",
+            "pages": [
+              "tutorials/index",
+              "tutorials/your-first-video",
+              "tutorials/cut-out-mistakes",
+              "tutorials/zoom-in-on-a-detail",
+              "tutorials/captions-and-music"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {}
+  }
+}

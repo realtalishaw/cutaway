@@ -1,0 +1,113 @@
+---
+title: "Make videos from Claude Code or Codex"
+sidebarTitle: "Use Cutaway from Claude or Codex"
+description: "Ask your AI assistant to edit a video for you, and watch it happen in Cutaway."
+---
+
+If you use **Claude Code** or **Codex**, you can ask it to make a video in Cutaway, in plain words. For example:
+
+> Make a finished clip from my settings-tour video: cut anything slow, add a title, bold captions, and export it.
+
+The AI does the work inside the Cutaway window while you watch. Everything it does stays editable. You can keep going by hand, undo any step, or go back to an earlier version.
+
+<Note>
+  This works through **MCP**, a standard way for AI assistants to use apps. You don't need to know how it works. Cutaway sets it up for you with one click.
+</Note>
+
+## Connect it (one click)
+
+<Steps>
+  <Step title="Open Settings">
+    In Cutaway, press **Command + ,** and go to **AI tools**.
+  </Step>
+  <Step title="Press Connect">
+    Press **Connect** next to **Claude Code** or **Codex**. When it says **Connected**, you're done.
+
+    If it says **Not installed on this Mac**, install Claude Code or Codex first. See [Set up the AI helpers](/ai/set-up-ai).
+  </Step>
+  <Step title="Start a new chat in your AI tool">
+    Open a **new** session in Claude Code or Codex, so it sees Cutaway. Then ask it to make a video with Cutaway.
+  </Step>
+</Steps>
+
+## Things you can ask for
+
+- "Make a first cut of `~/Movies/demo.mov` and show me."
+- "Remove the part where I say 'let me try that again'."
+- "Zoom in when I open the settings page."
+- "Add a title at the start that says 'Share a list in 1 minute'."
+- "Turn on bold captions and add quiet background music from `~/Music/bed.mp3`."
+- "Export it as an MP4."
+
+<Tip>
+  Ask it to **show you** after each change. Cutaway comes to the front so you can look, and the AI can check its own work with a picture of the video.
+</Tip>
+
+## You stay in control
+
+- **Every change is a version.** Each change the AI makes is saved in **History** as "AI tool: …". Click it to look, or **Restore** an earlier version. See [Undo and versions](/edit/undo-and-versions).
+- **Check its work in AI review.** Changes made by the AI show up in the **AI review** panel, where you can put anything back. See [AI review](/ai/ai-review).
+- **It won't cut your words lightly.** If the AI isn't sure about cutting something you said, Cutaway keeps it as a suggestion for you to approve in **AI review** instead.
+- **Turn it off any time.** Switch off **Let AI tools control Cutaway** in **Settings → AI tools**.
+
+## Is it private?
+
+- Only programs on your own Mac that hold Cutaway's private key can connect. Nothing is reachable from the internet.
+- Your video and sound files stay on your Mac. The AI tool sees text, like your transcript and a description of the edit, plus the pictures it asks for to check its work.
+- Making new voices, music, pictures or video uses **your own** ElevenLabs or fal.ai key and spends your credits. The AI is told to do this only when you ask for it.
+
+## Set it up by hand
+
+Using a different AI tool, or prefer the terminal? **Settings → AI tools → Add it by hand** shows the exact command, with your paths filled in. For an app installed in Applications, it looks like this:
+
+<Tabs>
+  <Tab title="Claude Code">
+    ```bash
+    claude mcp add --scope user cutaway -e ELECTRON_RUN_AS_NODE=1 -- /Applications/Cutaway.app/Contents/MacOS/Cutaway /Applications/Cutaway.app/Contents/Resources/mcp/cutaway-mcp.cjs
+    ```
+  </Tab>
+  <Tab title="Codex">
+    ```bash
+    codex mcp add cutaway --env ELECTRON_RUN_AS_NODE=1 -- /Applications/Cutaway.app/Contents/MacOS/Cutaway /Applications/Cutaway.app/Contents/Resources/mcp/cutaway-mcp.cjs
+    ```
+  </Tab>
+</Tabs>
+
+Other MCP apps work the same way: start that command (it talks over standard input and output) with the setting `ELECTRON_RUN_AS_NODE=1`. Nothing else needs installing, and it opens Cutaway if it isn't running.
+
+<Accordion title="Long exports time out in Codex">
+  Exporting a long video can take a while. Give Codex more time by adding this to `~/.codex/config.toml`:
+
+  ```toml
+  [mcp_servers.cutaway]
+  tool_timeout_sec = 1800
+  ```
+</Accordion>
+
+## What the AI can do
+
+<Accordion title="The full list of tools (for the curious)">
+
+| Tool | What it does |
+| --- | --- |
+| `status` | Whether Cutaway is running, the open project, and whether it's busy |
+| `list_projects`, `create_project`, `open_project` | Your Cutaway projects |
+| `get_project` | The files, clips, lengths and every edit in a project |
+| `import_media` | Add videos, audio or pictures |
+| `prepare` | Transcribe and analyze on your Mac, without changing anything |
+| `get_transcript` | What is said, with times |
+| `get_frame` | A picture of the finished video at a moment, so the AI can check its work |
+| `first_cut` | Make a [first cut](/edit/first-cut) |
+| `apply_edits` | Cuts, speed-ups, zooms, layouts, graphics and B-roll, in one undoable step |
+| `remove_items` | Remove edits, text, animations or audio |
+| `add_text` | Text and titles from Cutaway's designs |
+| `add_audio` | Music, a voiceover or a sound effect from a file |
+| `add_photos` | Pictures as clips |
+| `list_animation_templates`, `get_animation_guide`, `add_animation` | Animated graphics |
+| `generate` | New voice, music, sound effects, pictures or video with your own ElevenLabs or fal.ai key |
+| `set_captions`, `set_look` | Captions, video shape, background and frame |
+| `undo`, `redo`, `list_versions`, `restore_version` | History |
+| `export_video` | Save an MP4 or GIF |
+| `show` | Bring Cutaway to the front so you can look |
+
+</Accordion>
