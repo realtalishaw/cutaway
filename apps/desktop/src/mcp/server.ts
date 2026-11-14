@@ -12,7 +12,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 // ───────────────────────────── tools ─────────────────────────────
