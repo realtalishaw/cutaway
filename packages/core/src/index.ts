@@ -17,6 +17,8 @@ export * from './lut';
 export * from './chat';
 export * from './text';
 export * from './sound';
+export * from './motion';
+export * from './motionIdeas';
 export * from './music';
 export * from './shorts';
 export * from './transitions';

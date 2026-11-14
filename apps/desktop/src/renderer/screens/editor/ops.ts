@@ -25,7 +25,8 @@ import {
   type Project,
   type Range,
 } from '@cutaway/core';
-import { timeMapOf, useApp, usePlayback, type Selection } from '../../state/store';
+import { selectedItems, timeMapOf, useApp, usePlayback, type Selection } from '../../state/store';
+import { removeItems } from './itemOps';
 import { removeClipById } from './clipOps';
 
 type Lane = 'cuts' | 'speeds' | 'layouts' | 'zooms' | 'overlays' | 'broll' | 'masks' | 'locks' | 'suggestions';
@@ -166,6 +167,8 @@ export function retime(lane: 'layouts' | 'zooms' | 'broll' | 'speeds', id: strin
 export function removeSelected() {
   const sel = app().selection;
   if (!sel) return;
+  const many = selectedItems(app());
+  if (many.length > 1) return removeItems(many);
   if (sel.kind === 'range' || sel.kind === 'words') return cutRange(sel.range, sel.kind === 'words' ? 'transcript' : 'manual');
   if (sel.kind === 'cut') return restoreOne(sel.id);
   if (sel.kind === 'clip') return void removeClipById(sel.id);
@@ -196,13 +199,14 @@ export function toggleItemLock(lane: 'layouts' | 'zooms' | 'overlays' | 'broll' 
 export function splitSelected(project: Project) {
   const sel = app().selection;
   const t = playheadSource(project);
-  if (!sel || !['layout', 'zoom', 'broll', 'speed'].includes(sel.kind)) return false;
-  const lane = LANE_OF[sel.kind] as 'layouts' | 'zooms' | 'broll' | 'speeds';
+  if (!sel || !['layout', 'zoom', 'broll', 'speed', 'overlay', 'mask'].includes(sel.kind)) return false;
+  const lane = LANE_OF[sel.kind] as 'layouts' | 'zooms' | 'broll' | 'speeds' | 'overlays' | 'masks';
   let done = false;
   app().edit((e) => {
     const items = e[lane] as (Range & { id: string })[];
     const it = items.find((x) => x.id === (sel as { id: string }).id);
-    if (!it || t <= it.start + 0.2 || t >= it.end - 0.2) return e;
+    // an animation plays from its own start: two halves would both play it from the beginning
+    if (!it || (it as { kind?: string }).kind === 'motion' || t <= it.start + 0.2 || t >= it.end - 0.2) return e;
     done = true;
     const right = { ...it, id: uid(it.id.split('_')[0]), start: t, ...(lane === 'broll' ? { assetIn: (it as unknown as { assetIn: number }).assetIn + (t - it.start) } : {}) };
     return { ...e, [lane]: items.flatMap((x) => (x.id === it.id ? [{ ...it, end: t }, right] : [x])) } as EditState;

@@ -1,3 +1,4 @@
+import { prepareMotionForExport } from './motionFrames';
 import { ALL_FORMATS, AudioSampleSink, CanvasSource, Input, Mp4OutputFormat, Output, StreamTarget, UrlSource, VideoSampleSink, type InputAudioTrack, type StreamTargetChunk, type VideoSample } from 'mediabunny';
 import { cameraSourceAt, isMasterVoice, sourceAt, trackOf, TimeMap, buildCues, burnInCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, estimateVideoBitrate, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorSample, type FaceTrackSmooth, type KeyStroke, type MediaSource, type Project } from '@cutaway/core';
 import { resolveSourcePath } from '@shared/api';
@@ -6,7 +7,7 @@ import { drawFrame, neededSources, type Drawable, type DrawEnv, type FrameResour
 import { keysOnSession, loadCursorOnSession, voiceGain } from './media';
 import { textFontsToLoad } from './textOverlay';
 import { shortCaptionFont } from './shortCaption';
-import { DUCK_SECONDS, DUCK_LEVEL, clipEnd, musicClipsOf, musicFade, placedTransitions, punchInOf, soundEvents, speakingAt, speechWindows, synthSound, transitionGains, type FrameState } from '@cutaway/core';
+import { DUCK_SECONDS, DUCK_LEVEL, clipEnd, loopLength, musicClipsOf, musicFade, musicGainAt, musicSourceTime, placedTransitions, punchInOf, soundEvents, speakingAt, speechWindows, synthSound, transitionGains, type FrameState } from '@cutaway/core';
 import { ensureFaces, ensureKeys, ensureMatte } from './parityData';
 import { ensureGrade, gradeLuts } from './lut';
 
@@ -253,6 +254,8 @@ interface OutputClip {
   length: number;
   /** Level at `t` seconds into the clip (fades included). */
   gainAt(t: number): number;
+  /** Set when the clip loops: how long one pass through the file lasts. */
+  loop?: number | null;
   duck: boolean;
   reader: TrackReader;
   input: Input;
@@ -317,7 +320,8 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
     }
   };
   for (const c of musicClipsOf(project.edit, project.sources)) {
-    if (c.gain > 0) await openOutputClip(c.sourceId, { start: c.start, sourceIn: c.sourceIn, length: c.length, gainAt: (t) => c.gain * musicFade(c, t), duck: c.duck });
+    const fileLength = project.sources.find((x) => x.id === c.sourceId)?.duration;
+    if (c.gain > 0) await openOutputClip(c.sourceId, { start: c.start, sourceIn: c.sourceIn, length: c.length, gainAt: (t) => musicGainAt(c, c.start + t, fileLength), loop: loopLength(c, fileLength), duck: c.duck });
   }
   // One-shot sounds mixed sample for sample: mouse clicks and the built-in sound effects (the same samples the preview plays).
   const shots: { at: number; data: Float32Array; from: number; gain: number }[] = [];
@@ -470,7 +474,22 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
           if (outT >= c.start + c.length || outT + n / SAMPLE_RATE <= c.start) continue;
           const l = new Float32Array(n);
           const r = new Float32Array(n);
-          await c.reader.read(c.sourceIn + (outT - c.start), c.reader.rate / SAMPLE_RATE, n, l, r, 1);
+          if (!c.loop) await c.reader.read(c.sourceIn + (outT - c.start), c.reader.rate / SAMPLE_RATE, n, l, r, 1);
+          else {
+            // a looping clip: read up to the end of the file, then carry on from its beginning
+            let done = 0;
+            let at = musicSourceTime({ start: c.start, sourceIn: c.sourceIn, loop: true }, outT, c.loop);
+            while (done < n) {
+              const k = Math.max(1, Math.min(n - done, Math.ceil((c.loop - at) * SAMPLE_RATE)));
+              const pl = new Float32Array(k);
+              const pr = new Float32Array(k);
+              await c.reader.read(at, c.reader.rate / SAMPLE_RATE, k, pl, pr, 1);
+              l.set(pl, done);
+              r.set(pr, done);
+              done += k;
+              at = 0;
+            }
+          }
           for (let i = 0; i < n; i++) {
             let g = c.gainAt(outT + i / SAMPLE_RATE - c.start);
             if (g <= 0) continue;
@@ -626,7 +645,7 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
       if (camA && facesOf.has(camA.id)) faces.A = facesOf.get(camA.id);
       if (camB && facesOf.has(camB.id)) faces.B = facesOf.get(camB.id);
       const device = frameDevice ? deviceKindFor(screen) : null;
-      return { screen, camA, camB, device, ctx: { project, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * ap.crop.w) / (screen.height * ap.crop.h) : null, keys, faces, quality: 'export' as const, device } };
+      return { screen, camA, camB, device, ctx: { project, map, cursor: cursorTrack, follow: followTrack, screenAspect: ((w, h) => (w && h ? (w * ap.crop.w) / (h * ap.crop.h) : null))(screen?.width || (screen ? stills.get(screen.id)?.width : 0), screen?.height || (screen ? stills.get(screen.id)?.height : 0)), keys, faces, quality: 'export' as const, device } };
     };
     const cues = burnInCues(project, map, buildCues);
 
@@ -649,6 +668,8 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
     output.addVideoTrack(videoSource, { frameRate: fps });
     await output.start();
 
+    // animations are rendered at this export's size and rate before the first frame, then drawn like pictures
+    const motionAt = await prepareMotionForExport(projectPath, project.edit.overlays, { width: W, height: H, fps });
     let canvas2: OffscreenCanvas | null = null;
     type Cast = ReturnType<typeof castAt>;
     const envOf = (cast: Cast, cue: DrawEnv['cue']): DrawEnv => ({ appearance: ap, screenPoints: cast.screen?.pointWidth && cast.screen.pointHeight ? { width: cast.screen.pointWidth, height: cast.screen.pointHeight } : null, cue, device: cast.device, luts: gradeLuts(projectPath, ap) });
@@ -697,6 +718,11 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
       const cast = castAt(map.toSource(out));
       const state = evaluateFrame(cast.ctx, out);
       const res = await gather(state, cast, state.src, false);
+      for (const o of state.overlays) {
+        if (o.overlay.kind !== 'motion') continue;
+        const f = await motionAt(o.overlay, o.sinceIn);
+        if (f) (res.motion ??= new Map()).set(o.overlay.id, f);
+      }
       // A transition between clips: a colour wash, or the neighbouring clip's own frame laid over this one.
       let blend: DrawEnv['blend'] = null;
       const tr = state.transition;

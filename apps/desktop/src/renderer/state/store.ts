@@ -12,6 +12,18 @@ export type Selection =
   | { kind: 'words'; ids: string[]; range: Range }
   | null;
 
+/** One block on the timeline. */
+export type ItemRef = { kind: 'speed' | 'layout' | 'zoom' | 'overlay' | 'broll' | 'mask' | 'music' | 'sound'; id: string };
+/** Blocks that can be selected together, copied, pasted and nudged. */
+export const MULTI_KINDS = new Set<string>(['speed', 'layout', 'zoom', 'overlay', 'broll', 'mask', 'music', 'sound']);
+export const isItemRef = (s: Selection | ItemRef): s is ItemRef => !!s && 'id' in s && MULTI_KINDS.has(s.kind);
+const sameRef = (a: { kind: string; id: string }, b: { kind: string; id: string }) => a.kind === b.kind && a.id === b.id;
+
+/** Every selected block: the main selection (the one the inspector shows) first, then the ones added with ⇧ or ⌘. */
+export function selectedItems(s: Pick<AppState, 'selection' | 'also'>): ItemRef[] {
+  return isItemRef(s.selection) ? [s.selection, ...s.also.filter((r) => !sameRef(r, s.selection as ItemRef))] : [];
+}
+
 export type InspectorTab = 'background' | 'cursor' | 'camera' | 'captions' | 'transcript' | 'audio' | 'text' | 'shortcuts' | 'motion' | 'device' | 'chat' | 'review' | 'history';
 export type DrawerTab = 'transcript' | 'review' | 'history';
 
@@ -50,6 +62,8 @@ interface AppState {
   coalesce: { key: string; at: number } | null;
   save: { state: 'saved' | 'dirty' | 'saving' | 'error'; at: string | null; error: string | null };
   selection: Selection;
+  /** Blocks selected together with `selection` (⇧- or ⌘-click). Only counts while `selection` is a block too. */
+  also: ItemRef[];
   job: JobState | null;
   toasts: Toast[];
   /** Local-revision proposal awaiting accept/discard: before/after preview. */
@@ -87,6 +101,10 @@ interface AppState {
   redo(): void;
   setView(view: ProjectView): void;
   select(sel: Selection): void;
+  /** Select several blocks at once; the first is the one the inspector shows. */
+  selectMany(items: ItemRef[]): void;
+  /** ⇧- or ⌘-click: add a block to the selection, or take it out. */
+  toggleSelect(ref: ItemRef): void;
   setJob(job: JobState | null): void;
   toast(text: string, tone?: Toast['tone'], action?: Toast['action']): void;
   dismissToast(id: number): void;
@@ -128,6 +146,7 @@ export const useApp = create<AppState>((set, get) => ({
   coalesce: null,
   save: { state: 'saved', at: null, error: null },
   selection: null,
+  also: [],
   job: null,
   toasts: [],
   comparison: null,
@@ -270,7 +289,16 @@ export const useApp = create<AppState>((set, get) => ({
     set({ project: { ...project, ui: { ...project.ui, view, playhead: usePlayback.getState().time } }, save: { ...get().save, state: 'dirty' } });
   },
 
-  select: (selection) => set({ selection }),
+  select: (selection) => set({ selection, also: [] }),
+  selectMany: (items) => set({ selection: items[0] ?? null, also: items.slice(1) }),
+  toggleSelect: (ref) => {
+    const now = selectedItems(get());
+    // a click with ⇧ or ⌘ next to something that is not a block starts a new selection
+    if (!now.length) return set({ selection: ref, also: [] });
+    const rest = now.filter((r) => !sameRef(r, ref));
+    if (rest.length === now.length) return set({ selection: ref, also: now });
+    set({ selection: rest[0] ?? null, also: rest.slice(1) });
+  },
   setJob: (job) => set({ job }),
 
   toast: (text, tone = 'info', action) => {

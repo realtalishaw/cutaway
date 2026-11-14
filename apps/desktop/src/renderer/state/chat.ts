@@ -5,6 +5,7 @@
  * checkpoint that can be looked at or restored.
  */
 import { create } from 'zustand';
+import { applyMotionCard } from '../motion/chatCards';
 import { clipRange, clipsOf, appendChat, applyChatItems, fmtTime, historyOf, uid, updateChatItems, type ChatMessage, type ChatProposalItem, type CheckpointRef, type Project, type Range } from '@cutaway/core';
 import { answerChat } from '../jobs/chat';
 import { proposeRevision } from '../jobs/revision';
@@ -101,10 +102,11 @@ export async function applyChatCards(messageId: string, ids?: string[]): Promise
   const label = chosen.length === 1 && ids ? `Chat: ${clip(chosen[0]!.what, 40)} at ${fmtTime(chosen[0]!.range.start)}` : `Chat: ${clip(request || 'changes', 48)}`;
 
   const applied = new Map<string, CheckpointRef>();
+  const added = new Set<string>();
   const refused = new Map<string, string>();
   let next = project;
 
-  const edits = chosen.filter((i) => i.kind !== 'rules');
+  const edits = chosen.filter((i) => i.kind !== 'rules' && i.kind !== 'motion');
   if (edits.length) {
     const out = applyChatItems(next, edits, { label, scope: msg.scope, messageId });
     next = out.project;
@@ -131,14 +133,26 @@ export async function applyChatCards(messageId: string, ids?: string[]): Promise
 
   // One undo step for the edit; the thread itself is not part of undo.
   if (next !== project) app().replace(next, label);
+  // Animations: a template goes in now (its own undo step); one to be written opens the animation sheet.
+  let opened = 0;
+  for (const it of chosen.filter((i) => i.kind === 'motion' && i.motion)) {
+    try {
+      if ((await applyMotionCard(it)) === 'opened') opened++;
+      added.add(it.id);
+    } catch (e) {
+      refused.set(it.id, (e as Error).message);
+    }
+  }
   app().patch((p) =>
     updateChatItems(p, messageId, (i): ChatProposalItem => {
       if (applied.has(i.id)) return { ...i, status: 'applied', checkpoint: applied.get(i.id) };
+      if (added.has(i.id)) return { ...i, status: 'applied' };
       if (refused.has(i.id)) return { ...i, status: 'refused', note: refused.get(i.id) };
       return i;
     }),
   );
-  if (applied.size) app().toast(`${applied.size === 1 ? 'Change' : `${applied.size} changes`} applied and saved as a version. ⌘Z undoes ${applied.size === 1 ? 'it' : 'them'}.`);
+  if (added.size && !applied.size) app().toast(opened ? 'Your AI is writing the animation. Check it in the sheet, then add it.' : `${added.size === 1 ? 'Animation' : `${added.size} animations`} added. ⌘Z takes ${added.size === 1 ? 'it' : 'them'} out.`);
+  else if (applied.size) app().toast(`${applied.size === 1 ? 'Change' : `${applied.size} changes`} applied and saved as a version. ⌘Z undoes ${applied.size === 1 ? 'it' : 'them'}.`);
   else app().toast(refused.size === 1 ? `Not applied: ${[...refused.values()][0]}` : 'None of these could be applied to the edit as it is now.');
 }
 

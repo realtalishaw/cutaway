@@ -137,4 +137,38 @@ describe('answerChat', () => {
     await expect(answerChat(ctxOf(project()).ctx, 'fewer zooms', null)).rejects.toMatchObject({ code: 'cancelled' });
     await expect(answerChat(ctxOf(project()).ctx, '   ', null)).rejects.toBeInstanceOf(JobError);
   });
+
+  it('offers the animation templates, and turns proposed animations into animation cards', async () => {
+    const api = install(() => ok({ reply: 'A subscribe button there.', edits: [], remove: [], animations: [
+      { at: 12, template: 'subscribe', fields: { label: 'Join' }, request: 'subscribe button', reason: 'You ask viewers to subscribe.' },
+      { at: null, template: 'no-such-template', request: 'gold confetti burst', reason: '' },
+      { at: 5, template: null, request: '', reason: 'empty: dropped' },
+    ] }));
+    const { ctx, state } = ctxOf(project());
+    const before = state.project;
+    const m = await answerChat(ctx, 'add a subscribe animation at 0:12 and some confetti', null);
+    const req = api.ai.run.mock.calls[0]![0] as AiRequest;
+    expect(req.prompt).toContain('ANIMATION TEMPLATES');
+    expect(req.prompt).toMatch(/- subscribe: Subscribe\. .*Fields: label \(Button text\)/);
+    expect(req.prompt).toMatch(/- circle: Circle it \(boxed\)/);
+    expect(req.prompt).toMatch(/- subscribe: .*key moment comes 1\.3s in: to land it on a word, set "at" to that word's time minus 1\.3/);
+    expect(m.items!.map((i) => [i.kind, i.motion?.template, i.motion?.at])).toEqual([['motion', 'subscribe', 12], ['motion', null, null]]);
+    expect(m.items![0]!.motion!.fields).toEqual({ label: 'Join' });
+    expect(m.items![0]!.what).toMatch(/Subscribe animation at 0:12 with “Join”/);
+    expect(m.items![1]!.motion!.request).toBe('gold confetti burst');
+    expect(state.project).toBe(before);
+  });
+
+  it('without an AI, an animation request still gets a template card, placed where the word is said', async () => {
+    install(() => ok({}), false);
+    let p = project();
+    p = { ...p, transcript: { engine: 't', locale: 'en-US', onDevice: true, sourceId: 'src_screen', hasSpeech: true, generatedAt: '', words: ['so', 'please', 'subscribe', 'today'].map((w, i) => ({ id: `w${i}`, text: w, start: 10 + i, end: 10.5 + i, kind: 'word' as const })) } };
+    const { ctx } = ctxOf(p);
+    const m = await answerChat(ctx, 'Add a subscribe button animation saying "Join us" when I say subscribe', null);
+    expect(m.mode).toBe('local-rules');
+    expect(m.items).toHaveLength(1);
+    expect(m.items![0]).toMatchObject({ kind: 'motion', status: 'open', motion: { template: 'subscribe', fields: { label: 'Join us' }, at: 11 } });
+    const other = await answerChat(ctx, 'make an animation of a rocket launching', null);
+    expect(other.items![0]).toMatchObject({ kind: 'motion', motion: { template: null, request: 'make an animation of a rocket launching', at: null } });
+  });
 });

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { portableAppearance } from '@cutaway/core';
 import { saveNow, startAutosave, useApp, usePlayback, type InspectorTab, type ProjectView } from './state/store';
 import { commandForEvent } from './state/keymap';
-import { backToLibrary, newRecording, pickAndImport } from './state/actions';
+import { backToLibrary, newRecording, pickAndImport, useDemoTake } from './state/actions';
 import { Icon, Logo } from './ui/icons';
 import { Button, Modal, fmtAgo } from './ui/kit';
 import { Library } from './screens/Library';
@@ -276,6 +276,7 @@ function Workspace() {
 export function App() {
   const route = useApp((s) => s.route);
   const project = useApp((s) => s.project);
+  const demoTake = useDemoTake((s) => s.projectPath);
   const reduce = useApp((s) => s.settings?.reduceMotion ?? false);
   const isController = window.location.hash === '#controller';
   const isNotes = window.location.hash === '#notes';
@@ -391,7 +392,13 @@ export function App() {
     <div className="app">
       <Titlebar />
       <main className="main">
-        {route === 'settings' ? <Settings /> : route === 'record' && project ? <Record /> : route === 'project' && project ? <Workspace /> : <Library />}
+        {route === 'settings' ? <Settings /> : route === 'record' && (project || demoTake) ? null : route === 'project' && project ? <Workspace /> : <Library />}
+        {/* A demo take of Cutaway keeps its recorder alive while the creator moves around the app. */}
+        {(route === 'record' && project) || demoTake ? (
+          <div className="record-host" style={route === 'record' ? { display: 'contents' } : { display: 'none' }}>
+            <Record />
+          </div>
+        ) : null}
       </main>
       <Toasts />
       {palette ? <Palette onClose={() => setPalette(false)} /> : null}

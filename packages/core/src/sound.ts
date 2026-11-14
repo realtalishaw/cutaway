@@ -275,6 +275,18 @@ export function soundEvents(project: Pick<Project, 'edit' | 'sources'>, map: Tim
     const e = event(`${o.id}:in`, o.sound, entry, project.sources);
     if (e) out.push(e);
   }
+  // an animation's own sounds (a click, a pop), each at its moment while the block plays
+  for (const o of project.edit.overlays) {
+    if (o.kind !== 'motion' || !o.motion?.sounds.length) continue;
+    const entry = overlayEntry(o, map);
+    if (entry === null) continue;
+    const shown = map.rangeToOutput(o).reduce((n, r) => n + (r.end - r.start), 0);
+    o.motion.sounds.forEach((c, i) => {
+      if (c.t >= shown) return;
+      const e = event(`${o.id}:motion:${i}`, { builtin: c.sound, gain: c.gain ?? 0.7 }, entry + c.t, project.sources);
+      if (e) out.push(e);
+    });
+  }
   return out.filter((e) => e.at < map.outDuration).sort((a, b) => a.at - b.at);
 }
 

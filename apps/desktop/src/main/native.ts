@@ -104,7 +104,9 @@ function fullConfig(config: RecordConfig, outDir: string) {
   return {
     ...config,
     outDir,
-    screen: config.screen ? { ...config.screen, excludeBundleIds: [ownBundleId()] } : undefined,
+    // Cutaway's own windows are never in the picture, except, when recording a demo of Cutaway, its ordinary
+    // windows (the helper lets them back in and keeps the floating overlays out).
+    screen: config.screen ? { ...config.screen, excludeBundleIds: [ownBundleId()], ...(config.screen.includeCutaway ? { admitBundleId: ownBundleId() } : {}) } : undefined,
     microphone: config.microphone ?? undefined,
     checkpointSeconds: 2,
     minFreeBytes: 2_000_000_000,
@@ -525,6 +527,22 @@ export async function speak(projectPath: string, text: string, voiceId: string, 
   } finally {
     fsp.rm(txt, { force: true }).catch(() => {});
   }
+}
+
+/**
+ * Writes a voiceover recorded from the microphone (a WAV made in the editor) into the project's voiceover
+ * folder, named like the synthesised takes so it can be deleted the same way. Returns a project-relative path.
+ */
+export async function saveRecording(projectPath: string, wav: Uint8Array): Promise<{ path: string }> {
+  // a RIFF/WAVE header, and nothing absurdly large: only WAV audio is written here
+  const head = Buffer.from(wav.buffer, wav.byteOffset, Math.min(12, wav.byteLength));
+  if (wav.byteLength < 44 || head.toString('ascii', 0, 4) !== 'RIFF' || head.toString('ascii', 8, 12) !== 'WAVE') throw new Error('The recording is not a WAV file.');
+  if (wav.byteLength > 1024 * 1024 * 1024) throw new Error('The recording is too long to save.');
+  const dir = path.join(projectPath, 'media', 'voiceover');
+  await fsp.mkdir(dir, { recursive: true });
+  const out = path.join(dir, `voiceover-${Date.now().toString(36)}.wav`);
+  await fsp.writeFile(out, wav);
+  return { path: path.relative(projectPath, out) };
 }
 
 /** Deletes one synthesised narration file. Only files inside the project's own voiceover folder can be removed. */

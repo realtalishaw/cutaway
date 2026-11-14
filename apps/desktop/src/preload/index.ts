@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { MEDIA_SCHEME } from '../shared/api';
-import type { CutawayApi, RecordEvent } from '../shared/api';
+import type { AiProgress, CutawayApi, RecordEvent } from '../shared/api';
 
 /**
  * contextBridge drops custom properties from thrown errors, so machine-readable
@@ -37,21 +37,33 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: CutawayApi = {
   app: {
-    ...ns<CutawayApi['app']>('app', ['info', 'getSettings', 'setSettings', 'pickFiles', 'pickFolder', 'reveal', 'openPath', 'freeBytes', 'permission', 'requestPermission', 'openPrivacySettings', 'relaunch', 'captureThumbnails', 'recordingMode', 'countdown', 'countdownEnd', 'selfView', 'copyFile', 'saveCopyAs', 'notesWindow']),
+    ...ns<CutawayApi['app']>('app', ['info', 'getSettings', 'setSettings', 'pickFiles', 'pickFolder', 'reveal', 'openPath', 'freeBytes', 'permission', 'requestPermission', 'openPrivacySettings', 'relaunch', 'captureThumbnails', 'recordingMode', 'countdown', 'countdownEnd', 'selfView', 'copyFile', 'saveCopyAs', 'notesWindow', 'prompterPlace']),
     onMenu: (cb) => on<string>('menu', cb),
     onCountdown: (cb) => on('countdown:state', cb),
     onCountdownCancel: (cb) => on<void>('countdown:cancel', () => cb()),
     onSelfView: (cb) => on('selfview:state', cb),
+    onPrompter: (cb) => on('prompter:state', cb),
     pathForFile: (file) => webUtils.getPathForFile(file),
   },
   library: ns<CutawayApi['library']>('library', ['list', 'create', 'open', 'save', 'rename', 'trash', 'savePoster', 'importMedia', 'recoverable', 'recover', 'discardTake', 'cacheInfo', 'clearCache', 'exists', 'exportBundle']),
-  native: ns<CutawayApi['native']>('native', ['devices', 'preflight', 'probe', 'frames', 'activity', 'transcribe', 'analyzeVoice', 'correlate', 'readCursor', 'readKeys', 'faces', 'matte', 'resizeWindow', 'browserTabs', 'selectBrowserTab', 'browserContent', 'voices', 'speak', 'removeVoiceover', 'sensitive']),
+  native: ns<CutawayApi['native']>('native', ['devices', 'preflight', 'probe', 'frames', 'activity', 'transcribe', 'analyzeVoice', 'correlate', 'readCursor', 'readKeys', 'faces', 'matte', 'resizeWindow', 'browserTabs', 'selectBrowserTab', 'browserContent', 'voices', 'speak', 'removeVoiceover', 'saveRecording', 'sensitive']),
   record: {
     ...ns<CutawayApi['record']>('record', ['start', 'pause', 'resume', 'flag', 'stop', 'cancel']),
     onEvent: (cb) => on<RecordEvent>('record:event', cb),
     onPreview: (cb) => on('record:preview', cb),
   },
-  ai: ns<CutawayApi['ai']>('ai', ['status', 'providers', 'signIn', 'run', 'cancel', 'generateImage', 'removeImage']),
+  ai: {
+    ...ns<Omit<CutawayApi['ai'], 'onProgress'>>('ai', ['status', 'providers', 'signIn', 'run', 'cancel', 'generateImage', 'removeImage']),
+    onProgress: (cb) => on<AiProgress>('ai:progress', cb),
+  },
+  motion: {
+    ...ns<Omit<CutawayApi['motion'], 'onProgress'>>('motion', ['save', 'read', 'check', 'render', 'preview', 'templates', 'saveTemplate', 'removeTemplate']),
+    onProgress: (cb) => on<{ key: string; done: number; total: number }>('motion:progress', cb),
+  },
+  gen: {
+    ...ns<Omit<CutawayApi['gen'], 'onStatus'>>('gen', ['status', 'setKey', 'setModels', 'testKey', 'voices', 'generate', 'cancel', 'discard']),
+    onStatus: (cb) => on<{ jobId: string; text: string }>('gen:status', cb),
+  },
   export: ns<CutawayApi['export']>('export', ['existingFolders', 'begin', 'write', 'writeFile', 'mux', 'stat', 'gif', 'commit', 'abort', 'pickFile', 'freeFilePath', 'beginFile', 'commitFile']),
   looks: ns<CutawayApi['looks']>('looks', ['importLut', 'searchImages', 'useImage', 'openCredit']),
   media: { url: (absPath) => `${MEDIA_SCHEME}://local/${encodeURIComponent(absPath)}` },

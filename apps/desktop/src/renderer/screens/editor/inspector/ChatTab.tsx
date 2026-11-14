@@ -18,9 +18,11 @@ function Card({ messageId, item, busy }: { messageId: string; item: ChatProposal
     <div className={`chat-card ${item.status}`} data-testid="chat-card" data-status={item.status} data-kind={item.kind}>
       <div className="row between" style={{ gap: 8, alignItems: 'flex-start' }}>
         <div className="chat-card-what">{item.what}</div>
-        <button className="chat-jump mono" title="Go there on the timeline" onClick={() => jumpTo(item.range.start)} data-testid="chat-jump">
-          {span(item.range)}
-        </button>
+        {item.kind === 'motion' && item.motion?.at === null ? null : (
+          <button className="chat-jump mono" title="Go there on the timeline" onClick={() => jumpTo(item.range.start)} data-testid="chat-jump">
+            {item.kind === 'motion' ? fmtTime(item.range.start) : span(item.range)}
+          </button>
+        )}
       </div>
       {item.why ? <div className="tiny muted">{item.why}</div> : null}
       {item.note ? (
@@ -32,12 +34,12 @@ function Card({ messageId, item, busy }: { messageId: string; item: ChatProposal
       <div className="row" style={{ gap: 6, marginTop: 6 }}>
         {item.status === 'open' ? (
           <>
-            <Button size="sm" variant="primary" disabled={busy} onClick={() => void applyChatCards(messageId, [item.id])} data-testid="chat-apply">Apply</Button>
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => void applyChatCards(messageId, [item.id])} data-testid="chat-apply">{item.kind === 'motion' ? (item.motion?.template ? 'Add animation' : 'Write it…') : 'Apply'}</Button>
             <Button size="sm" variant="ghost" onClick={() => dismissChatCards(messageId, [item.id])} data-testid="chat-dismiss">Dismiss</Button>
           </>
         ) : item.status === 'applied' ? (
           <>
-            <span className="chat-state ok"><Icon name="check" size={11} /> Applied</span>
+            <span className="chat-state ok"><Icon name="check" size={11} /> {item.kind === 'motion' ? (item.motion?.template ? 'Added' : 'Opened') : 'Applied'}</span>
             {item.checkpoint ? (
               <Button size="sm" variant="ghost" onClick={() => useApp.getState().viewVersion(item.checkpoint!)} title="Look at the video as it was right after this change">View</Button>
             ) : null}

@@ -3,12 +3,14 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { MEDIA_SCHEME, type CountdownState, type Permission, type PermissionKind, type RecordConfig } from '../shared/api';
+import { MEDIA_SCHEME, type CountdownState, type GenModels, type GenProvider, type GenRequest, type MotionRenderRequest, type Permission, type PermissionKind, type PrompterPlace, type RecordConfig } from '../shared/api';
 import * as native from './native';
 import * as library from './library';
 import * as exporter from './exporter';
 import * as looks from './looks';
 import { registerAi } from './ai';
+import * as gen from './gen';
+import * as motion from './motion';
 import { bindingOf, toAccelerator } from '../shared/keymap';
 
 const DEV_URL = process.env.CUTAWAY_DEV_URL;
@@ -16,7 +18,11 @@ const DEV_URL = process.env.CUTAWAY_DEV_URL;
 if (process.env.CUTAWAY_USER_DATA) app.setPath('userData', process.env.CUTAWAY_USER_DATA);
 app.setName('Cutaway');
 
-protocol.registerSchemesAsPrivileged([{ scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, bypassCSP: true } }]);
+protocol.registerSchemesAsPrivileged([
+  { scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, bypassCSP: true } },
+  // live animation previews: their own origin, so they never inherit (or loosen) the editor's policy
+  { scheme: motion.PREVIEW_SCHEME, privileges: { standard: true, secure: true } },
+]);
 
 let mainWindow: BrowserWindow | null = null;
 let controller: BrowserWindow | null = null;
@@ -156,29 +162,91 @@ function showController() {
   // Belt and braces: the helper also excludes this app's windows from capture.
   controller.setContentProtection(true);
   controller.once('ready-to-show', () => controller?.showInactive());
-  controller.webContents.once('did-finish-load', () => pushSelfView());
+  controller.webContents.once('did-finish-load', () => (pushSelfView(), pushPrompter()));
   controller.on('closed', () => (controller = null));
   load(controller, 'controller');
 }
 
 let notes: BrowserWindow | null = null;
+let prompterSave: ReturnType<typeof setTimeout> | null = null;
 
-/** Speaker notes: a small always-on-top window that the recorder leaves out of the picture. */
+/** Tell the recording controller (and the app) whether the teleprompter is up. */
+function pushPrompter() {
+  const state = { visible: !!notes && !notes.isDestroyed() };
+  for (const w of [controller, mainWindow]) if (w && !w.isDestroyed()) w.webContents.send('prompter:state', state);
+}
+
+/** The bounds of one of the teleprompter's quick places, on the display it is on now. */
+function prompterBounds(place: PrompterPlace): Electron.Rectangle | null {
+  const ref = notes && !notes.isDestroyed() ? notes.getBounds() : null;
+  const area = (ref ? screen.getDisplayMatching(ref) : screen.getPrimaryDisplay()).workArea;
+  const w = Math.min(640, Math.round(area.width * 0.46));
+  switch (place) {
+    case 'top':
+      // just under the built-in camera, so the eyes stay near the lens while reading
+      return { x: Math.round(area.x + (area.width - w) / 2), y: area.y + 6, width: w, height: 230 };
+    case 'bottom':
+      return { x: Math.round(area.x + (area.width - w) / 2), y: area.y + area.height - 230 - 120, width: w, height: 230 };
+    case 'left':
+    case 'right': {
+      const sw = 400;
+      const h = Math.round(area.height * 0.62);
+      return { x: place === 'left' ? area.x + 16 : area.x + area.width - sw - 16, y: Math.round(area.y + (area.height - h) / 2), width: sw, height: h };
+    }
+    case 'camera': {
+      if (!selfViewWin || selfViewWin.isDestroyed()) return null;
+      const b = selfViewWin.getBounds();
+      // over the camera bubble, a little wider than it so a few words fit on a line
+      const width = Math.max(320, b.width + 120);
+      const height = Math.max(200, b.height);
+      return { x: Math.round(b.x + b.width / 2 - width / 2), y: b.y, width, height };
+    }
+  }
+}
+
+/** The teleprompter: an always-on-top window that the recorder leaves out of the picture. */
 function showNotes() {
   if (notes && !notes.isDestroyed()) return notes.show();
-  const d = screen.getPrimaryDisplay().workArea;
-  notes = new BrowserWindow({ width: 360, height: 300, x: d.x + d.width - 390, y: d.y + 40, frame: false, transparent: true, resizable: true, minWidth: 260, minHeight: 160, alwaysOnTop: true, skipTaskbar: true, hasShadow: true, show: false, fullscreenable: false, maximizable: false, webPreferences: webPreferences() });
-  notes.setAlwaysOnTop(true, 'screen-saver');
-  notes.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  notes.setContentProtection(true);
-  notes.once('ready-to-show', () => notes?.show());
-  notes.on('closed', () => (notes = null));
-  load(notes, 'notes');
+  const saved = library.getSettings().prompter;
+  const fits = saved && screen.getAllDisplays().some((d) => intersects(d.workArea, saved));
+  const b = fits ? saved! : prompterBounds('top')!;
+  const win = new BrowserWindow({ ...b, frame: false, transparent: true, resizable: true, minWidth: 260, minHeight: 140, alwaysOnTop: true, skipTaskbar: true, hasShadow: true, show: false, fullscreenable: false, maximizable: false, minimizable: false, webPreferences: webPreferences() });
+  notes = win;
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // Belt and braces: the recorder already leaves every Cutaway window out of the capture.
+  win.setContentProtection(true);
+  const remember = () => {
+    if (prompterSave) clearTimeout(prompterSave);
+    prompterSave = setTimeout(() => {
+      if (win.isDestroyed()) return;
+      void library.setSettings({ prompter: win.getBounds() }).catch(() => {});
+    }, 400);
+  };
+  win.on('moved', remember);
+  win.on('resized', remember);
+  // shown without taking focus while a take runs, so keystrokes keep going to what is being recorded
+  win.once('ready-to-show', () => (native.isRecording() ? win.showInactive() : win.show()));
+  win.on('closed', () => {
+    if (notes === win) notes = null;
+    pushPrompter();
+  });
+  load(win, 'notes');
+  pushPrompter();
 }
 
 function hideNotes() {
   if (notes && !notes.isDestroyed()) notes.close();
   notes = null;
+  pushPrompter();
+}
+
+function placePrompter(place: PrompterPlace): boolean {
+  if (!notes || notes.isDestroyed()) showNotes();
+  const b = prompterBounds(place);
+  if (!b || !notes) return false;
+  notes.setBounds(b, true);
+  return true;
 }
 
 function hideController() {
@@ -377,7 +445,7 @@ function buildMenu() {
   const template: MenuItemConstructorOptions[] = [
     { label: 'Cutaway', submenu: [{ role: 'about' }, { type: 'separator' }, item('Settings…', 'settings', 'Cmd+,'), { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'File', submenu: [item('New Recording', 'record', 'Cmd+N'), item('Import Media…', 'import', 'Cmd+I'), { type: 'separator' }, item('Project Library', 'library', 'Cmd+Shift+L'), item('Save', 'save', 'Cmd+S'), { type: 'separator' }, item('Export…', 'export', 'Shift+Cmd+E'), { type: 'separator' }, { role: 'close' }] },
-    { label: 'Edit', submenu: [item('Undo', 'undo', 'Cmd+Z'), item('Redo', 'redo', 'Shift+Cmd+Z'), { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' }, item('Split at Playhead', 'split', 'Cmd+B'), item('Lock Selection', 'lock', 'Cmd+L')] },
+    { label: 'Edit', submenu: [item('Undo', 'undo', 'Cmd+Z'), item('Redo', 'redo', 'Shift+Cmd+Z'), { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' }, item('Duplicate', 'duplicate', 'Cmd+D'), item('Split at Playhead', 'split', 'Cmd+B'), item('Lock Selection', 'lock', 'Cmd+L')] },
     {
       label: 'View',
       submenu: [
@@ -546,7 +614,8 @@ function registerIpc() {
       await fsp.copyFile(source, dest);
       return dest;
     },
-    notesWindow: (show: boolean) => (show ? showNotes() : hideNotes()),
+    notesWindow: (show: boolean | 'toggle') => ((show === 'toggle' ? !(notes && !notes.isDestroyed()) : show) ? showNotes() : hideNotes()),
+    prompterPlace: (place: PrompterPlace) => placePrompter(place),
     countdown: (state: CountdownState) => showCountdown(state),
     countdownEnd: (cancelled: boolean) => endCountdown(cancelled),
     selfView: async (show: boolean | 'toggle') => {
@@ -558,13 +627,14 @@ function registerIpc() {
       await library.setSettings({ selfView: { ...(library.getSettings().selfView ?? {}), hidden: !want } }).catch(() => {});
       return !!selfViewWin && !selfViewWin.isDestroyed();
     },
-    recordingMode: (on: boolean, opts?: { cameras?: string[] }) => {
+    recordingMode: (on: boolean, opts?: { cameras?: string[]; keepWindow?: boolean }) => {
       if (on) {
         selfViewCameras = (opts?.cameras ?? []).filter((c) => c === 'cameraA' || c === 'cameraB');
         showController();
         if (selfViewCameras.length && !library.getSettings().selfView?.hidden) showSelfView();
         else pushSelfView();
-        mainWindow?.minimize();
+        // a demo of Cutaway keeps its window up; otherwise it gets out of the way of what is being recorded
+        if (!opts?.keepWindow) mainWindow?.minimize();
       } else {
         selfViewCameras = [];
         hideSelfView();
@@ -616,6 +686,7 @@ function registerIpc() {
     voices: native.voices,
     speak: native.speak,
     removeVoiceover: native.removeVoiceover,
+    saveRecording: native.saveRecording,
     sensitive: native.sensitive,
   });
 
@@ -632,6 +703,29 @@ function registerIpc() {
     flag: native.flagRecording,
     stop: native.stopRecording,
     cancel: native.cancelRecording,
+  });
+
+  handle('motion', {
+    save: (projectPath: string, html: string, name: string) => motion.saveMotion(projectPath, html, name),
+    read: (projectPath: string, file: string) => motion.readMotion(projectPath, file),
+    check: (html: string, fields: Record<string, string> | null, width: number, height: number) => motion.checkMotion(html, fields, width, height),
+    preview: (html: string, fields: Record<string, string>, duration: number) => motion.previewUrl(html, fields, duration),
+    templates: () => motion.listTemplates(),
+    saveTemplate: (html: string, name: string) => motion.saveTemplate(html, name),
+    removeTemplate: (id: string) => motion.removeTemplate(id),
+    render: (projectPath: string, req: MotionRenderRequest) => motion.renderMotion(projectPath, req, (done, total, key) => mainWindow?.webContents.send('motion:progress', { key: req.tag ?? key, done, total })),
+  });
+
+  // media generation with the creator's own ElevenLabs or fal.ai key; the keys stay in this process
+  handle('gen', {
+    status: () => gen.keyStatus(),
+    setKey: (provider: GenProvider, key: string | null) => gen.setKey(provider, key),
+    setModels: (patch: Partial<GenModels>) => gen.setModels(patch),
+    testKey: (provider: GenProvider) => gen.testKey(provider),
+    voices: (provider: GenProvider) => gen.listVoices(provider),
+    generate: (projectPath: string, req: GenRequest) => gen.generate(projectPath, req, (text) => mainWindow?.webContents.send('gen:status', { jobId: req.jobId, text })),
+    cancel: (jobId: string) => gen.cancel(jobId),
+    discard: (projectPath: string, relPath: string) => gen.discard(projectPath, relPath),
   });
 
   handle('export', {
@@ -677,8 +771,11 @@ app.on('second-instance', () => {
   }
 });
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
+  await gen.initGen(app.getPath('userData'));
+  motion.initMotionTemplates(app.getPath('userData'));
   registerMediaProtocol();
+  motion.registerPreviewProtocol();
   registerIpc();
   buildMenu();
   // Camera and microphone previews in the recorder setup.

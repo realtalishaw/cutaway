@@ -262,7 +262,7 @@ try {
       results.notes = await notes.evaluate(() => ({ rendered: !!document.querySelector('.notes-window'), badge: document.querySelector('.notes-badge')?.textContent?.trim(), transparentBody: document.body.classList.contains('controller-body') })).catch((e) => ({ error: e.message }));
       if (results.notes.rendered) {
         await notes.fill('.notes-text', 'Intro: what we are building today.\nStep 1: open the export panel.\nStep 2: choose the format.\nDo not forget the frame rate.');
-        await notes.click('button[aria-label="Notes settings"]');
+        await notes.click('button[aria-label="Teleprompter settings"]');
         await notes.waitForTimeout(300);
         await notes.screenshot({ path: path.join(out, '14-speaker-notes.png'), omitBackground: true });
         console.log('shot', path.join(out, '14-speaker-notes.png'));

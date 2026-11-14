@@ -30,6 +30,8 @@ export function Controller() {
   const lastFrames = useRef<Record<string, number>>({});
   // The floating camera bubble: only offered when the take has a camera.
   const [selfView, setSelfView] = useState<{ visible: boolean; cameras: string[] }>({ visible: false, cameras: [] });
+  const [prompter, setPrompter] = useState(false);
+  useEffect(() => window.cutaway.app.onPrompter((s) => setPrompter(s.visible)), []);
   useEffect(() => window.cutaway.app.onSelfView(setSelfView), []);
 
   useEffect(() => {
@@ -143,6 +145,9 @@ export function Controller() {
             <Icon name={selfView.visible ? 'eye' : 'eyeOff'} size={16} />
           </button>
         ) : null}
+        <button className={`ctl${prompter ? '' : ' dim-off'}`} onClick={() => void window.cutaway.app.notesWindow('toggle').catch(() => {})} data-testid="controller-prompter" aria-pressed={prompter} title={prompter ? 'Hide the teleprompter (it keeps its place)' : 'Show the teleprompter. It is not recorded.'} aria-label={prompter ? 'Hide the teleprompter' : 'Show the teleprompter'}>
+          <Icon name="text" size={16} />
+        </button>
         <button className="ctl" onClick={togglePause} disabled={busy !== null} title={paused ? 'Resume' : 'Pause'} aria-label={paused ? 'Resume recording' : 'Pause recording'}>
           <Icon name={paused ? 'play' : 'pause'} size={17} />
         </button>

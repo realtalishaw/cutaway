@@ -1,3 +1,4 @@
+import { MotionEditor } from './MotionEditor';
 import { useState } from 'react';
 import { fmtTime, type DecisionMeta, type GraphicKind, type LayoutMode, type Project, type Range } from '@cutaway/core';
 import { resolveSourcePath } from '@shared/api';
@@ -79,7 +80,7 @@ function RangeActions({ project, range, pickTarget }: { project: Project; range:
   );
 }
 
-export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' | 'callout' | null) => void }) {
+export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' | 'callout' | 'motion-box' | null) => void }) {
   const project = useProject();
   const sel = useApp((s) => s.selection);
   const e = project.edit;
@@ -157,10 +158,11 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
     const o = e.overlays.find((x) => x.id === sel.id);
     if (!o) return null;
     if (o.kind === 'text') return <TextEditor project={project} overlay={o} />;
+    if (o.kind === 'motion' && o.motion) return <MotionEditor project={project} overlay={o} pickTarget={pickTarget} />;
     return (
       <Section title="Graphic" action={<div className="row gap-2">{lockBtn('overlays', o.meta)}{del}</div>}>
         <TimesRow project={project} range={o} />
-        <Segmented full value={o.kind} onChange={(k: GraphicKind) => patchItem('overlays', o.id, { kind: k }, 'Graphic type', false)} options={[{ value: 'callout', label: 'Callout' }, { value: 'section-card', label: 'Section' }, { value: 'lower-third', label: 'Lower third' }]} />
+        <Segmented full value={o.kind as GraphicKind} onChange={(k: GraphicKind) => patchItem('overlays', o.id, { kind: k }, 'Graphic type', false)} options={[{ value: 'callout', label: 'Callout' }, { value: 'section-card', label: 'Section' }, { value: 'lower-third', label: 'Lower third' }]} />
         <Field label="Text">
           <input className="input" value={o.text} maxLength={90} onChange={(ev) => patchItem('overlays', o.id, { text: ev.target.value }, 'Edit text')} />
         </Field>

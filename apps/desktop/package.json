@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "private": true,
   "description": "Record once, get the first cut.",
+  "license": "MIT",
+  "repository": "github:realtalishaw/cutaway",
   "author": "Cutaway",
   "main": "dist/main/index.cjs",
   "scripts": {
@@ -12,7 +14,7 @@
     "start": "electron .",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "e2e": "node e2e/journey.mjs && node e2e/firstcut.mjs && node e2e/package-ui.mjs && node e2e/capture-ui.mjs && node e2e/ux.mjs && node e2e/render-parity.mjs && node e2e/permissions.mjs && node e2e/codex-ui.mjs && node e2e/chat.mjs && node e2e/clips.mjs && node e2e/titles-sound.mjs && node e2e/transitions.mjs && node e2e/shorts.mjs",
+    "e2e": "node e2e/journey.mjs && node e2e/firstcut.mjs && node e2e/package-ui.mjs && node e2e/capture-ui.mjs && node e2e/teleprompter.mjs && node e2e/ux.mjs && node e2e/render-parity.mjs && node e2e/permissions.mjs && node e2e/codex-ui.mjs && node e2e/chat.mjs && node e2e/clips.mjs && node e2e/simple-timeline.mjs && node e2e/photo-clips.mjs && node e2e/record-voiceover.mjs && node e2e/generate.mjs && node e2e/motion.mjs && node e2e/motion-box.mjs && node e2e/motion-ideas.mjs && node e2e/titles-sound.mjs && node e2e/transitions.mjs && node e2e/shorts.mjs",
     "package": "electron-builder --mac dir && node scripts/sign.mjs",
     "icon": "node scripts/icon.mjs",
     "e2e:real": "node e2e/real-capture.mjs"

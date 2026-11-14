@@ -1,6 +1,7 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { cameraSourceAt, isMasterVoice, sourceAt, trackOf, buildCues, burnInCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorTrack, type FaceTrackSmooth, type FrameState, type MediaSource, type Project } from '@cutaway/core';
 import { timeMapOf, useApp, usePlayback, useShownProject } from '../state/store';
+import { motionFrameNow } from './motionFrames';
 import { drawFrame, drawableFromElement, type DrawEnv, type FrameResources } from './compositor';
 import { punchInOf } from '@cutaway/core';
 import { keysOnSession, loadCursorOnSession, sourceUrl, voiceGain } from './media';
@@ -124,6 +125,13 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
       return bgImage.img.complete && bgImage.img.naturalWidth > 0 ? bgImage.img : null;
     };
 
+    /** Shape of the screen picture after the crop. A photo imported without its size uses the loaded image's. */
+    const aspectOf = (s: MediaSource | undefined, p: Project): number | null => {
+      const img = s?.kind === 'image' && !(s.width && s.height) ? image(s) : null;
+      const w = s?.width || img?.naturalWidth;
+      const h = s?.height || img?.naturalHeight;
+      return w && h ? (w * p.edit.appearance.crop.w) / (h * p.edit.appearance.crop.h) : null;
+    };
     const image = (s: MediaSource): HTMLImageElement | null => {
       let img = images.get(s.id);
       if (!img) {
@@ -280,7 +288,7 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
           faces[slot] = peekFaces(pp, cam).value;
         }
       }
-      const ctxFrame = { project: p, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * p.edit.appearance.crop.w) / (screen.height * p.edit.appearance.crop.h) : null, keys: keysOnSession(peekKeys(pp, screen), screen), faces, quality: 'preview' as const, device: deviceOf(p.edit.appearance).frame ? deviceKindFor(screen) : null };
+      const ctxFrame = { project: p, map, cursor: cursorTrack, follow: followTrack, screenAspect: aspectOf(screen, p), keys: keysOnSession(peekKeys(pp, screen), screen), faces, quality: 'preview' as const, device: deviceOf(p.edit.appearance).frame ? deviceKindFor(screen) : null };
       const state = evaluateFrame(ctxFrame, out);
       lastState.current = state;
 
@@ -321,6 +329,13 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
       };
 
       const res: FrameResources = { screen: null, cameraA: null, cameraB: null, broll: null, backgroundImage: null };
+      // ── animations: their frames, rendered once at the output size (the export draws the same ones) ──
+      for (const o of state.overlays) {
+        if (o.overlay.kind !== 'motion') continue;
+        const out = p.edit.appearance.output;
+        const f = motionFrameNow(pp, o.overlay, o.sinceIn, { width: out.width, height: out.height, fps: out.fps });
+        if (f) (res.motion ??= new Map()).set(o.overlay.id, f);
+      }
       // ── a cross-dissolve between clips: the neighbouring clip's own pictures, taken just beyond its edge ──
       const tr = state.transition;
       const clipLevel = tr?.gain ?? 1;
@@ -334,6 +349,12 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
         for (const [s, key] of [[pScreen, 'screen'], [cameraSourceAt(p, 'A', ps), 'cameraA'], [cameraSourceAt(p, 'B', ps), 'cameraB']] as [MediaSource | undefined, 'screen' | 'cameraA' | 'cameraB'][]) {
           if (!s || !s.available || s.sync.status === 'unsynced') continue;
           if (key !== 'screen' && (faceOpt.zoom || faceOpt.follow || punchInOf(p.edit).enabled)) pFaces[key === 'cameraA' ? 'A' : 'B'] = peekFaces(pp, s).value;
+          // a photo clip's picture is the image itself
+          if (s.kind === 'image') {
+            const img = image(s);
+            pRes[key] = img && img.complete ? drawableFromElement(img) : null;
+            continue;
+          }
           const e = ensure(s);
           if (!e) continue;
           // The same file is already playing as this clip's own picture (two halves of a split): it is left alone.
@@ -356,7 +377,7 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
           }
           pRes[key] = drawableFromElement(e.el);
         }
-        const pState = evaluateFrame({ ...ctxFrame, cursor: null, follow: null, keys: [], faces: pFaces, screenAspect: pScreen?.width && pScreen.height ? (pScreen.width * p.edit.appearance.crop.w) / (pScreen.height * p.edit.appearance.crop.h) : null, device: deviceOf(p.edit.appearance).frame ? deviceKindFor(pScreen) : null }, tr.partner.edgeOut);
+        const pState = evaluateFrame({ ...ctxFrame, cursor: null, follow: null, keys: [], faces: pFaces, screenAspect: aspectOf(pScreen, p), device: deviceOf(p.edit.appearance).frame ? deviceKindFor(pScreen) : null }, tr.partner.edgeOut);
         partner = { state: pState, res: pRes, screen: pScreen, alpha: tr.partner.alpha };
       }
       for (const s of p.sources) {
@@ -367,6 +388,14 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
         if (!timeline && !audible) continue;
         if (s.sync.status === 'unsynced') continue;
         const covered = coverage(s).some((c) => src >= c.start && src < c.end);
+        // a photo clip: its picture is the image, shown for as long as the clip plays
+        if (s.kind === 'image') {
+          if (covered && s.role === 'screen') {
+            const img = image(s);
+            res.screen = img && img.complete ? drawableFromElement(img) : null;
+          }
+          continue;
+        }
         // A source of another clip is opened shortly before its clip begins and parked on its first
         // frame, so the change of clip does not wait for a seek. Further away it is left alone.
         if (!covered && s.window) {
@@ -433,8 +462,9 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
       const sounding = new Set<string>();
       for (const c of musicClipsOf(p.edit, p.sources)) {
         const file = p.sources.find((x) => x.id === c.sourceId);
-        const local = musicSourceTime(c, out);
-        if (!file || !file.available || out < c.start || out >= c.start + c.length || local >= file.duration - 0.02) continue;
+        if (!file) continue;
+        const local = musicSourceTime(c, out, file.duration);
+        if (!file.available || out < c.start || out >= c.start + c.length || (!c.loop && local >= file.duration - 0.02)) continue;
         sounding.add(c.id);
         const url = sourceUrl(pp, file);
         let m = musicEls.get(c.id);
@@ -451,7 +481,9 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
           m = { el, url };
           musicEls.set(c.id, m);
         }
-        const volume = Math.max(0, Math.min(1, musicGainAt(c, out) * (c.duck ? duck : 1) * pb.volume));
+        // a looping clip lets the element wrap by itself; the drift check below keeps it on the output clock
+        m.el.loop = !!c.loop;
+        const volume = Math.max(0, Math.min(1, musicGainAt(c, out, file.duration) * (c.duck ? duck : 1) * pb.volume));
         m.el.volume = volume;
         m.el.muted = volume <= 0;
         const drift = m.el.currentTime - local;

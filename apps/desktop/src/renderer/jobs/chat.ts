@@ -13,6 +13,7 @@ import { TimeMap, chatDigest, decisionHandles, flagsOf, proposeChatItems, source
 import type { PromptKeyframe } from '@cutaway/ai';
 import { JobError, type AiUse, type JobContext } from './types';
 import { LOCAL_REVISION_HELP, proposeRevision } from './revision';
+import { allTemplates, localMotionCard, motionCards, templatesForChat } from '../motion/chatCards';
 import { askClaude, claudeGate, clusterClicks, errorText, extractStills, promptAssets, promptSentences, promptSources, screenActivity, type FrameWant } from './shared';
 
 /** Stills are only worth their time when the request is about a short section. */
@@ -27,6 +28,9 @@ async function localAnswer(ctx: JobContext, text: string, scope: Range | null, a
   const p = ctx.get();
   const range: Range = scope ?? { start: 0, end: p.duration };
   const why = ai.reason ? `${ai.reason} ` : '';
+  // an animation request becomes an animation card, not a rules edit
+  const motion = localMotionCard(p, text, scope, await allTemplates());
+  if (motion) return assistant(scope, `${why}${motion.motion!.template ? 'Here is a ready-made animation for that.' : 'That needs an animation written for it; Apply opens it in the animation sheet.'}`, { mode: 'local-rules', modeReason: ai.reason, items: [motion] });
   try {
     const { outcome } = await proposeRevision({ ...ctx, useClaude: false }, range, text);
     if (!outcome.changed) return assistant(scope, `${why}${outcome.message || `The built-in rules cannot do that. ${LOCAL_REVISION_HELP}`}`, { mode: 'local-rules', modeReason: ai.reason });
@@ -78,7 +82,9 @@ export async function answerChat(ctx: JobContext, text: string, scope: Range | n
 
   const inScope = (r: Range) => !scope || (r.end > scope.start && r.start < scope.end);
   const { handles, decisions } = promptDecisions(p, scope);
+  const templates = await allTemplates();
   const prompt = buildChatPrompt({
+    animationTemplates: templatesForChat(templates),
     projectName: p.name,
     message,
     scope,
@@ -115,6 +121,6 @@ export async function answerChat(ctx: JobContext, text: string, scope: Range | n
   const q = ctx.get();
   const byHandle = new Map(handles.map((h) => [h.handle, h]));
   const remove = reply.remove.map((h) => byHandle.get(h)!).filter(Boolean).map((h) => ({ lane: h.lane as ChatLane, id: h.id }));
-  const items = proposeChatItems(q, { ops: reply.ops, remove }, scope);
+  const items = [...proposeChatItems(q, { ops: reply.ops, remove }, scope), ...motionCards(reply.animations, templates, scope, q.duration)];
   return assistant(scope, reply.reply, { mode: 'claude', modeReason: null, moments: reply.moments, items });
 }

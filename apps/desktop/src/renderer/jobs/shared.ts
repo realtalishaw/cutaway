@@ -164,12 +164,21 @@ export function clearReplyCache(): void {
 let seq = 0;
 
 /** One structured Claude call with cancellation and retry-safe caching. */
-export async function askClaude(ctx: JobContext, req: Omit<AiRequest, 'id'>): Promise<AiResult & { reused: boolean }> {
+/** `onProgress` hears how many characters of the answer have been written (Claude, streamed). */
+export async function askClaude(ctx: JobContext, req: Omit<AiRequest, 'id'>, onProgress?: (chars: number) => void): Promise<AiResult & { reused: boolean }> {
   const fake = fakeAi();
   if (fake) {
     fake.seen.push({ purpose: req.purpose, prompt: req.prompt, images: req.imagePaths?.length ?? 0 });
     const next = fake.replies.shift();
     const data = typeof next === 'function' ? (next as (r: typeof req) => unknown)(req) : next;
+    // the test provider "writes" its reply in a few steps, so progress can be seen
+    if (onProgress && data !== undefined) {
+      const total = JSON.stringify(data).length;
+      for (const f of [0.3, 0.7, 1]) {
+        onProgress(Math.round(total * f));
+        await new Promise((r) => setTimeout(r, Number((window as unknown as { __cutawayFakeAiDelay?: number }).__cutawayFakeAiDelay ?? 0)));
+      }
+    }
     if (data === undefined) return { ok: false, error: { code: 'failed', message: 'The test provider has no reply queued.' }, durationMs: 0, reused: false };
     if (data && typeof data === 'object' && 'error' in data) return { ok: false, error: { code: 'failed', message: String((data as { error: unknown }).error) }, durationMs: 0, reused: false };
     return { ok: true, data, durationMs: 1, reused: false };
@@ -179,13 +188,15 @@ export async function askClaude(ctx: JobContext, req: Omit<AiRequest, 'id'>): Pr
   const id = `ai_${Date.now().toString(36)}_${(seq++).toString(36)}`;
   const onAbort = () => void window.cutaway.ai.cancel(id).catch(() => undefined);
   ctx.signal.addEventListener('abort', onAbort, { once: true });
+  const stop = onProgress ? window.cutaway.ai.onProgress((p) => p.id === id && onProgress(p.chars)) : null;
   try {
-    const res = await window.cutaway.ai.run({ ...req, id });
+    const res = await window.cutaway.ai.run({ ...req, id, ...(onProgress ? { progress: true } : {}) });
     if (res.ok && res.data !== undefined) replyCache.set(key, res.data);
     return { ...res, reused: false };
   } catch (e) {
     return { ok: false, error: { code: 'failed', message: errorText(e) }, durationMs: 0, reused: false };
   } finally {
+    stop?.();
     ctx.signal.removeEventListener('abort', onAbort);
   }
 }

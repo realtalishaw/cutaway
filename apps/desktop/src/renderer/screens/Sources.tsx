@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { clipsOf, dropTake, isTimelineSource, putBackClip, takeOf, coverage, fmtTime, relinkMatch, setMasterVoice, withoutSoundSource, syncFromCalibration, toSessionTime, toSourceTime, withSources, type CorrelationResult, type MediaSource, type Project, type Range, type SourceRole, type SourceSync } from '@cutaway/core';
+import { clipsOf, musicClipsOf, dropTake, isTimelineSource, putBackClip, takeOf, coverage, fmtTime, relinkMatch, setMasterVoice, withoutSoundSource, syncFromCalibration, toSessionTime, toSourceTime, withSources, type CorrelationResult, type MediaSource, type Project, type Range, type SourceRole, type SourceSync } from '@cutaway/core';
 import { resolveSourcePath, type ProbeResult } from '@shared/api';
 import { useApp, useProject } from '../state/store';
-import { clearImportReport, droppedPaths, errorText, filePaths, getImportReport, importFiles, newRecording, recordImportReport, sourceToClip, subscribeImportReport, takeToBroll } from '../state/actions';
+import { clearImportReport, droppedPaths, errorText, filePaths, getImportReport, importFiles, newRecording, placeMusic, recordImportReport, sourceToClip, subscribeImportReport, takeToBroll } from '../state/actions';
 import '../state/recording';
 import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Empty, Modal, Segmented, Slider, Toggle, fmtBytes } from '../ui/kit';
@@ -441,7 +441,7 @@ function SourceRow({ source, project, lead, onSync, onRelink }: { source: MediaS
   const sync = source.sync;
   const review = needsReview(source, lead);
 
-  const changeRole = (role: SourceRole) =>
+  const changeRole = (role: SourceRole) => {
     patchSources((ss) =>
       ss.map((s) => {
         if (s.id !== source.id) return s;
@@ -450,6 +450,13 @@ function SourceRow({ source, project, lead, onSync, onRelink }: { source: MediaS
         return { ...s, role, sync: keep ? s.sync : nowTimeline ? { ...REVIEW } : { ...REFERENCE } };
       }),
     );
+    // music goes straight onto the audio row, so it is heard and can be seen and edited on the timeline
+    const p = useApp.getState().project;
+    if (role === 'music' && p && !musicClipsOf(p.edit, p.sources).some((c) => c.sourceId === source.id) && placeMusic(source.id)) {
+      useApp.getState().select(null);
+      useApp.getState().toast(`“${source.name}” is on the audio row of the timeline, from the start of the video.`);
+    }
+  };
 
   const remove = () => {
     useApp.getState().patch((p0) => {

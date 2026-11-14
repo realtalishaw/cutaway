@@ -1,6 +1,7 @@
-import { useApp, type InspectorTab } from '../../state/store';
+import { selectedItems, useApp, type InspectorTab } from '../../state/store';
+import { duplicateSelected, removeItems } from './itemOps';
 import { Icon, type IconName } from '../../ui/icons';
-import { Banner } from '../../ui/kit';
+import { Banner, Button } from '../../ui/kit';
 import { Transcript } from './Transcript';
 import { History, Review } from './Review';
 import { BackgroundTab } from './inspector/BackgroundTab';
@@ -30,13 +31,15 @@ const TABS: { id: InspectorTab; icon: IconName; label: string }[] = [
 const CLOSE_LABEL: Record<string, string> = { zoom: 'Zoom', layout: 'Layout', cut: 'Cut', overlay: 'Graphic', broll: 'B-roll', mask: 'Mask', lock: 'Lock', speed: 'Speed', range: 'Selection', words: 'Selection', suggestion: 'Suggestion', music: 'Music', sound: 'Sound' };
 
 /** Right sidebar: a rail of icon tabs beside one rounded card, like Screen Studio's. */
-export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' | 'callout' | null) => void }) {
+export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' | 'callout' | 'motion-box' | null) => void }) {
   const sel = useApp((s) => s.selection);
+  const many = useApp((s) => (s.also.length ? selectedItems(s).length : 0));
   const comparing = useApp((s) => !!s.comparison);
   const tab = useApp((s) => s.panels.tab);
   const openSuggestions = useApp((s) => s.project?.edit.suggestions.filter((x) => x.status === 'open').length ?? 0);
   const hasKeys = useApp((s) => !!s.project?.sources.some((x) => (x as { keysFile?: string }).keysFile));
   const setPanels = useApp((s) => s.setPanels);
+  const motionSelected = useApp((s) => s.selection?.kind === 'overlay' && !!s.project?.edit.overlays.some((o) => o.id === (s.selection as { id: string }).id && o.kind === 'motion'));
   const textSelected = useApp((s) => s.selection?.kind === 'overlay' && !!s.project?.edit.overlays.some((o) => o.id === (s.selection as { id: string }).id && o.kind === 'text'));
   // Text selections made in the transcript are acted on there, not in a separate editor.
   // …and a selected range is what a chat message is about, so the conversation stays open.
@@ -66,9 +69,20 @@ export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' |
           <>
             <div className="insp-back">
               <button className="btn block" onClick={() => app().select(null)}>
-                <Icon name="arrowLeft" size={15} /> Close {textSelected ? 'Text' : (CLOSE_LABEL[sel!.kind] ?? '')} editor
+                <Icon name="arrowLeft" size={15} /> Close {textSelected ? 'Text' : motionSelected ? 'Animation' : (CLOSE_LABEL[sel!.kind] ?? '')} editor
               </button>
             </div>
+            {many > 1 ? (
+              <div className="insp-section" data-testid="multi-selection">
+                <Banner icon="copy" title={`${many} blocks selected`}>
+                  Drag one to move them all, ⌥← ⌥→ to nudge them a frame (add ⇧ for a second), ⌘C ⌘V to copy and paste at the playhead, ⌘D to duplicate, ⌫ to remove. ⇧- or ⌘-click a block to add it or take it out. Below is the one you clicked last.
+                </Banner>
+                <div className="row" style={{ gap: 6 }}>
+                  <Button size="sm" onClick={() => duplicateSelected()}>Duplicate</Button>
+                  <Button size="sm" variant="ghost" icon="trash" onClick={() => removeItems(selectedItems(app()))}>Remove all</Button>
+                </div>
+              </div>
+            ) : null}
             <SelectionPanel pickTarget={pickTarget} />
           </>
         ) : tab === 'background' ? (

@@ -190,8 +190,45 @@ export interface Zoom extends Range {
 
 /** The three ready-made graphics. These are the only overlay kinds an AI proposal may use. */
 export type GraphicKind = 'callout' | 'section-card' | 'lower-third';
-/** 'text' is the free text tool: its look comes from `Overlay.style`. */
-export type OverlayKind = GraphicKind | 'text';
+/** 'text' is the free text tool: its look comes from `Overlay.style`. 'motion' is an animation (see `MotionSpec`). */
+export type OverlayKind = GraphicKind | 'text' | 'motion';
+
+/** One value an animation lets the creator change without touching its code: a word, a colour, a number. */
+export interface MotionField {
+  id: string;
+  label: string;
+  type: 'text' | 'color' | 'number';
+  value: string;
+}
+
+/** A sound the animation makes, `t` seconds after it appears: one of the built-in sounds (BUILTIN_SOUNDS). */
+export interface MotionCue {
+  t: Seconds;
+  sound: string;
+  gain?: number;
+}
+
+/**
+ * An animation: a small HTML page whose motion is CSS keyframes or the Web Animations API, plus an optional
+ * `__render(t)` drawing hook, so any moment of it can be drawn exactly. It is rendered once into transparent
+ * frames that the preview and the export both draw, on top of the picture and under the captions.
+ */
+export interface MotionSpec {
+  /** Project-relative path of the page (media/motion/…html). A change is saved as a new file, so undo brings the old one back. */
+  file: string;
+  name: string;
+  /** Its natural length. A shorter block cuts the end off; a longer one holds the last frame. */
+  duration: Seconds;
+  fields: MotionField[];
+  sounds: MotionCue[];
+  /**
+   * Where it is drawn, as a fraction of the output frame. Absent = the whole frame. A boxed animation (a circle
+   * around a button, a highlighter under words) is rendered at the box's size and drawn into it.
+   */
+  box?: Rect;
+  /** How it was made: from a built-in template, or described to Claude or Codex. */
+  origin: { kind: 'template'; template: string } | { kind: 'ai'; provider: string; prompt: string };
+}
 
 export type TextFont = 'inter' | 'anton' | 'serif' | 'grotesk' | 'mono';
 export type TextAnimation = 'none' | 'fade' | 'slide-up' | 'pop' | 'typewriter';
@@ -247,6 +284,8 @@ export interface Overlay extends Range {
   y: number;
   /** kind 'text' only. */
   style?: TextStyle;
+  /** kind 'motion' only. */
+  motion?: MotionSpec;
   /** Played as the overlay appears. */
   sound?: SoundCue;
   meta: DecisionMeta;
@@ -278,7 +317,19 @@ export interface MusicClip {
   fadeOut: Seconds;
   /** Lower the music while someone is speaking. */
   duck: boolean;
+  /** Start the file again from its beginning when it runs out, so a short piece can fill a long clip. */
+  loop?: boolean;
+  /**
+   * Volume points drawn on the clip: `t` seconds into the clip, `level` a multiple of `gain` (1 = the clip's level).
+   * Between points the level moves in a straight line; before the first and after the last it holds. Absent = flat.
+   */
+  volume?: VolumePoint[];
   meta: DecisionMeta;
+}
+
+export interface VolumePoint {
+  t: Seconds;
+  level: number;
 }
 
 export interface BrollInsert extends Range {
@@ -362,7 +413,7 @@ export interface RangeLock extends Range {
 
 export interface Suggestion extends Range {
   id: string;
-  kind: 'retake' | 'reorder' | 'hook' | 'cut' | 'broll' | 'note';
+  kind: 'retake' | 'reorder' | 'hook' | 'cut' | 'broll' | 'note' | 'animation';
   title: string;
   reason: string;
   confidence: Confidence;
@@ -370,6 +421,8 @@ export interface Suggestion extends Range {
   /** Operations applied if the creator accepts. Empty = informational. */
   apply: EditOp[];
   revision: number;
+  /** kind "animation": the built-in template and its words, added at `start` when accepted. */
+  motion?: { template: string; fields: Record<string, string> };
 }
 
 export interface AudioSettings {
@@ -693,11 +746,13 @@ export type ChatLane = 'cuts' | 'speeds' | 'layouts' | 'zooms' | 'overlays' | 'b
 export interface ChatProposalItem {
   id: string;
   /** add = one validated edit operation; remove = take an existing decision out; rules = a request the built-in rules can carry out. */
-  kind: 'add' | 'remove' | 'rules';
+  kind: 'add' | 'remove' | 'rules' | 'motion';
   op?: EditOp;
   remove?: { lane: ChatLane; id: string };
   /** For kind "rules": the request and section handed to the built-in rules when applied. */
   rules?: { instruction: string; scope: Range };
+  /** For kind "motion": an animation to add. A built-in template with its words, or (template null) one the AI writes from `request`. `at` is session time; null = at the playhead. */
+  motion?: { template: string | null; fields: Record<string, string>; request: string; at: number | null };
   /** Session range the change is about (for the jump link). */
   range: Range;
   /** What it does, in plain words. */
@@ -781,7 +836,7 @@ export interface Project {
   artConsent?: { provider: string; grantedAt: string } | null;
   /** Completed stage checkpoints so a retry resumes instead of restarting. */
   stages: Partial<Record<JobStage, { doneAt: string; inputKey: string }>>;
-  ui: { playhead: Seconds; view: 'sources' | 'brief' | 'edit' | 'package' | 'shorts' | 'export'; expandedTimeline: boolean };
+  ui: { playhead: Seconds; view: 'sources' | 'brief' | 'edit' | 'package' | 'shorts' | 'export'; expandedTimeline: boolean; /** Show every detailed lane (layouts, masks, speed, sound effects) instead of the three simple rows. */ advancedTimeline?: boolean };
   /** Moments the creator flagged while recording (session time). */
   flags?: Flag[];
   /** The "Ask AI" thread of this project. */

@@ -53,6 +53,8 @@ export interface CodexArgs {
   outFile: string;
   images?: string[];
   model?: string | null;
+  /** Low reasoning effort, for requests that are mostly writing. */
+  fast?: boolean;
 }
 
 /** Arguments for one structured, non-interactive call. The prompt is read from stdin. Exported for tests. */
@@ -62,6 +64,7 @@ export function buildCodexArgs(a: CodexArgs): string[] {
   for (const img of a.images ?? []) args.push('--image', img);
   args.push('--json', '--color', 'never', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--cd', a.cwd, '--output-schema', a.schemaFile, '--output-last-message', a.outFile);
   if (a.model && a.model.trim()) args.push('--model', a.model.trim());
+  if (a.fast) args.push('-c', 'model_reasoning_effort="low"');
   args.push('-');
   return args;
 }
@@ -151,14 +154,14 @@ interface RawRun {
   env: NodeJS.ProcessEnv;
 }
 
-async function execCodex(path: string, opts: { prompt: string; schema: unknown; cwd: string | null; images: string[]; model?: string | null; signal?: AbortSignal; timeoutMs: number }): Promise<RawRun | { stopped: 'cancelled' | 'timeout' | 'spawn'; message: string }> {
+async function execCodex(path: string, opts: { prompt: string; schema: unknown; cwd: string | null; images: string[]; model?: string | null; fast?: boolean; signal?: AbortSignal; timeoutMs: number }): Promise<RawRun | { stopped: 'cancelled' | 'timeout' | 'spawn'; message: string }> {
   const work = await mkdtemp(join(tmpdir(), 'cutaway-codex-'));
   try {
     const schemaFile = join(work, 'schema.json');
     const outFile = join(work, 'reply.json');
     await writeFile(schemaFile, JSON.stringify(toStrictSchema(opts.schema)));
     const env = await claudeEnv(path);
-    const run = await spawnClaude(path, buildCodexArgs({ cwd: opts.cwd ?? work, schemaFile, outFile, images: opts.images, model: opts.model }), opts.prompt, { cwd: opts.cwd ?? work, env, signal: opts.signal, timeoutMs: opts.timeoutMs });
+    const run = await spawnClaude(path, buildCodexArgs({ cwd: opts.cwd ?? work, schemaFile, outFile, images: opts.images, model: opts.model, fast: opts.fast }), opts.prompt, { cwd: opts.cwd ?? work, env, signal: opts.signal, timeoutMs: opts.timeoutMs });
     if (run.aborted) return { stopped: 'cancelled', message: 'Cancelled.' };
     if (run.timedOut) return { stopped: 'timeout', message: 'Codex did not answer in time. Nothing was changed.' };
     if (run.spawnError) return { stopped: 'spawn', message: `Could not start Codex: ${run.spawnError}` };
@@ -178,7 +181,7 @@ export async function runCodex(opts: ClaudeRunOptions): Promise<ClaudeRunResult>
   if (!imagesInsideDir(opts.imageDir, images)) return { ok: false, error: { code: 'failed', message: 'Still frames must be inside the project cache folder.' }, durationMs: elapsed() };
   const path = await findCodex(opts.claudePath);
   if (!path) return { ok: false, error: { code: 'not-found', message: 'Codex is not installed on this Mac (no "codex" command was found).' }, durationMs: elapsed() };
-  const r = await execCodex(path, { prompt: opts.prompt + attachmentNote(images.length), schema: opts.schema, cwd: images.length ? opts.imageDir! : null, images, model: opts.model, signal: opts.signal, timeoutMs: opts.timeoutMs ?? 12 * 60_000 });
+  const r = await execCodex(path, { prompt: opts.prompt + attachmentNote(images.length), schema: opts.schema, cwd: images.length ? opts.imageDir! : null, images, model: opts.model, fast: opts.fast, signal: opts.signal, timeoutMs: opts.timeoutMs ?? 12 * 60_000 });
   if ('stopped' in r) return { ok: false, error: { code: r.stopped === 'spawn' ? 'failed' : r.stopped, message: r.message }, durationMs: elapsed() };
   const { threadId: _thread, ...result } = r.result;
   return { ...result, durationMs: elapsed() };

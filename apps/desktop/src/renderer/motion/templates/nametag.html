@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Name tag</title>
+<script type="application/json" id="cutaway-motion">
+{
+  "name": "Name tag",
+  "description": "A lower third slides in at the bottom left with a name and a role, then slides away.",
+  "duration": 4.5,
+  "fields": [
+    { "id": "name", "label": "Name", "type": "text", "default": "Your Name" },
+    { "id": "role", "label": "Role", "type": "text", "default": "Creator" },
+    { "id": "accent", "label": "Accent colour", "type": "color", "default": "#7258ff" }
+  ],
+  "sounds": [{ "t": 0.1, "sound": "whoosh", "gain": 0.45 }]
+}
+</script>
+<style>
+  html, body { width: 100%; height: 100%; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: calc(min(100vw, 100vh) * 0.045); }
+  #tag { position: absolute; left: 6%; bottom: 13%; display: flex; align-items: stretch; filter: drop-shadow(0 0.25em 0.5em rgba(0, 0, 0, 0.35)); }
+  #bar { width: 0.35em; background: var(--accent); border-radius: 0.12em 0 0 0.12em; }
+  #card { background: #fff; padding: 0.45em 0.9em 0.5em 0.7em; border-radius: 0 0.2em 0.2em 0; overflow: hidden; }
+  #name { display: block; font-weight: 800; font-size: 1.15em; color: #111; white-space: nowrap; }
+  #role { display: block; margin-top: 0.2em; font-weight: 600; font-size: 0.7em; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); white-space: nowrap; }
+</style>
+</head>
+<body>
+  <div id="tag">
+    <div id="bar"></div>
+    <div id="card"><b id="name" data-field="name">Your Name</b><span id="role" data-field="role">Creator</span></div>
+  </div>
+  <script>
+    const D = 4500, at = (s) => s / 4.5;
+    const run = (id, frames) => document.getElementById(id).animate(frames, { duration: D, fill: 'both' });
+    run('bar', [{ offset: 0, transform: 'scaleY(0)' }, { offset: at(0.1), transform: 'scaleY(0)', easing: 'cubic-bezier(.2,.8,.2,1)' }, { offset: at(0.4), transform: 'scaleY(1)' }, { offset: at(3.95), transform: 'scaleY(1)' }, { offset: 1, transform: 'scaleY(0)' }]);
+    run('card', [{ offset: 0, clipPath: 'inset(0 100% 0 0)' }, { offset: at(0.3), clipPath: 'inset(0 100% 0 0)', easing: 'cubic-bezier(.2,.8,.2,1)' }, { offset: at(0.75), clipPath: 'inset(0 0% 0 0)' }, { offset: at(3.7), clipPath: 'inset(0 0% 0 0)', easing: 'cubic-bezier(.6,0,.8,.2)' }, { offset: at(4.1), clipPath: 'inset(0 100% 0 0)' }, { offset: 1, clipPath: 'inset(0 100% 0 0)' }]);
+    run('name', [{ offset: 0, transform: 'translateX(-0.6em)', opacity: 0 }, { offset: at(0.45), transform: 'translateX(-0.6em)', opacity: 0, easing: 'ease-out' }, { offset: at(0.85), transform: 'translateX(0)', opacity: 1 }, { offset: 1, transform: 'translateX(0)', opacity: 1 }]);
+    run('role', [{ offset: 0, transform: 'translateX(-0.6em)', opacity: 0 }, { offset: at(0.6), transform: 'translateX(-0.6em)', opacity: 0, easing: 'ease-out' }, { offset: at(1.0), transform: 'translateX(0)', opacity: 1 }, { offset: 1, transform: 'translateX(0)', opacity: 1 }]);
+  </script>
+</body>
+</html>

@@ -79,6 +79,10 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private var hidesDesktopIcons: Bool { wantsVideo && (config.sckScreen?.hideDesktopIcons ?? false) }
+    /// Recording a demo of an app: its ordinary windows are let in, its overlays are not.
+    private var admitted: String? { wantsVideo ? config.sckScreen?.admitBundleId : nil }
+    /// NSScreenSaverWindowLevel: the level of every floating overlay (controls, teleprompter, countdown, camera bubble).
+    static let overlayLayer = 1000
 
     private func excludedBundleIds() -> Set<String> {
         var ids = Set(config.sckScreen?.excludeBundleIds ?? [])
@@ -101,13 +105,22 @@ final class ScreenSource: NSObject, SCStreamOutput, SCStreamDelegate {
                 Out.log("hide-desktop-icons: \(hidden) Finder desktop-layer window(s) left out, \(keep.count) ordinary Finder window(s) kept")
             }
         }
+        if let app = admitted {
+            // Windows come and go (a menu opens, a dialog appears); the filter is refreshed several times a second.
+            let ordinary = content.windows.filter { $0.owningApplication?.bundleIdentifier == app && $0.windowLayer < Self.overlayLayer && $0.frame.width > 1 && $0.frame.height > 1 }
+            keep += ordinary
+            if lastRefresh == 0 {
+                let overlays = content.windows.filter { $0.owningApplication?.bundleIdentifier == app && $0.windowLayer >= Self.overlayLayer }.count
+                Out.log("demo capture: \(ordinary.count) window(s) of \(app) let in, \(overlays) overlay(s) kept out")
+            }
+        }
         let excluded = content.applications.filter { ids.contains($0.bundleIdentifier) }
         return (SCContentFilter(display: d, excludingApplications: excluded, exceptingWindows: keep), Set(keep.map(\.windowID)))
     }
 
     /// With desktop icons hidden, Finder windows opened during the take must be re-admitted.
     func refreshFilter(hostNow now: Double) {
-        guard hidesDesktopIcons, !stopped, !refreshing, now - lastRefresh >= 1.0, let stream, let d = filterDisplay else { return }
+        guard hidesDesktopIcons || admitted != nil, !stopped, !refreshing, now - lastRefresh >= (admitted != nil ? 0.25 : 1.0), let stream, let d = filterDisplay else { return }
         lastRefresh = now
         refreshing = true
         Task.detached { [weak self] in

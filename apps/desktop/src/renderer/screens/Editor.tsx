@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { flagsOf, fmtTime, type Overlay, type Project, type Range } from '@cutaway/core';
-import { readOnly, timeMapOf, useApp, usePlayback, useShownProject, viewedProject } from '../state/store';
+import { clipsOf as clipsOfProject, flagsOf, fmtTime, playingClips, type Overlay, type Project, type Range, type Rect } from '@cutaway/core';
+import { readOnly, selectedItems, timeMapOf, useApp, usePlayback, useShownProject, viewedProject } from '../state/store';
 import { acceptComparison, discardComparison, reviseSection } from '../state/jobs';
 import { Preview, type PreviewPoint } from '../engine/Preview';
 import { Icon } from '../ui/icons';
@@ -12,12 +12,15 @@ import { SensitiveSheet } from './editor/SensitiveSheet';
 import { commandForEvent } from '../state/keymap';
 import { stepVersion } from '../state/chat';
 import { addMask, addOverlay, addZoom, cutRange, lockRange, patchItem, playheadSource, removeSelected, seekSource, selectedRange, setLayout, splitSelected } from './editor/ops';
-import { splitClipAtPlayhead } from './editor/clipOps';
-import { addText } from './editor/titleSoundOps';
+import { moveClipTo, splitClipAtPlayhead } from './editor/clipOps';
+import { SelectionBar } from './editor/SelectionBar';
+import { setMotionBox } from '../motion/actions';
+import { addText, splitMusicAtPlayhead } from './editor/titleSoundOps';
+import { CLIPBOARD_TYPE, copyItems, duplicateSelected, hasCopied, nudgeSelected, pasteItems, removeItems, setCopied, type Copied } from './editor/itemOps';
 import { layoutText, measuringContext } from '../engine/textOverlay';
 import './editor/editor.css';
 
-type Pick = 'zoom' | 'mask' | 'callout' | null;
+type Pick = 'zoom' | 'mask' | 'callout' | 'motion-box' | null;
 
 function Timecode({ total }: { total?: boolean }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -117,9 +120,9 @@ function TopControls({ onCrop }: { onCrop(): void }) {
         <CropButton onOpen={onCrop} />
       </div>
       <div className="row" style={{ gap: 8 }}>
-        <button className={`btn${expanded ? ' on' : ''}`} onClick={() => useApp.getState().patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: !p.ui.expandedTimeline } }))} title="Show or hide the layout, graphics and mask timelines (⌘T)" aria-pressed={expanded}>
+        {project.ui.advancedTimeline ? <button className={`btn${expanded ? ' on' : ''}`} onClick={() => useApp.getState().patch((p) => ({ ...p, ui: { ...p.ui, expandedTimeline: !p.ui.expandedTimeline } }))} title="Show or hide the layout, graphics and mask timelines (⌘T)" aria-pressed={expanded}>
           {expanded ? '3 visible timelines' : '1 visible timeline'} <Icon name="chevronDown" size={13} style={{ color: 'var(--text-3)' }} />
-        </button>
+        </button> : null}
       </div>
     </div>
   );
@@ -192,6 +195,17 @@ function Transport({ zoom, onZoom, onScissors, cutting }: { zoom: number; onZoom
         <Timecode total />
       </div>
       <div className="row ed-controls-right">
+        <label className="tl-mode" title="Advanced shows every lane: views and layouts, masks, speed changes and sound effects. Simple shows text & effects, video and audio.">
+          <button
+            className="toggle"
+            role="switch"
+            aria-checked={!!project.ui.advancedTimeline}
+            aria-label="Advanced timeline"
+            data-testid="timeline-advanced"
+            onClick={() => useApp.getState().patch((q) => ({ ...q, ui: { ...q.ui, advancedTimeline: !q.ui.advancedTimeline } }))}
+          />
+          Advanced
+        </label>
         <Icon name="width" size={16} style={{ color: 'var(--text-3)' }} />
         <input className="slider grey" style={{ width: 110, ['--p' as string]: `${zoom * 100}%` }} type="range" min={0} max={1} step={0.01} value={zoom} onChange={(e) => onZoom(Number(e.target.value))} aria-label="Timeline zoom" title="Timeline zoom" />
       </div>
@@ -282,6 +296,16 @@ function settledAnchor(p: Project, o: Overlay): { x: number; y: number } {
 }
 
 /** The free text under a point of the preview at the playhead (the one drawn last wins). */
+/** A boxed animation showing at the playhead whose box holds the point (the selected one first). */
+function motionBoxAt(p: Project, pt: PreviewPoint, selectedId: string | null): Overlay | null {
+  const t = timeMapOf(p).toSource(usePlayback.getState().time);
+  const inside = p.edit.overlays.filter((o) => {
+    const b = o.motion?.box;
+    return !!b && t >= o.start && t < o.end && pt.x >= b.x - 0.01 && pt.x <= b.x + b.w + 0.01 && pt.y >= b.y - 0.01 && pt.y <= b.y + b.h + 0.01;
+  });
+  return inside.find((o) => o.id === selectedId) ?? inside[inside.length - 1] ?? null;
+}
+
 function textAt(p: Project, pt: PreviewPoint): Overlay | null {
   const { width: W, height: H } = p.edit.appearance.output;
   const t = playheadSource(p);
@@ -302,10 +326,12 @@ export function Editor() {
   const [zoom, setZoom] = useState(0);
   const [pick, setPick] = useState<Pick>(null);
   const textSelected = selection?.kind === 'overlay' && project.edit.overlays.some((o) => o.id === selection.id && o.kind === 'text');
+  const boxSelected = selection?.kind === 'overlay' && project.edit.overlays.some((o) => o.id === selection.id && !!o.motion?.box);
   const [revising, setRevising] = useState(false);
   const [mark, setMark] = useState<number | null>(null);
   const [sheet, setSheet] = useState<'crop' | 'sensitive' | null>(null);
   const dragStart = useRef<PreviewPoint | null>(null);
+  const boxDrag = useRef<{ id: string; from: PreviewPoint; box: Rect; resize: boolean } | null>(null);
   const textDrag = useRef<{ id: string; dx: number; dy: number } | null>(null);
 
   // Keep the library card's poster current: grab the preview when leaving the editor.
@@ -340,8 +366,9 @@ export function Editor() {
       if (cmd === 'split') {
         // a selected block is split; otherwise the clip under the playhead is
         const sel = useApp.getState().selection;
-        const block = !!sel && ['layout', 'zoom', 'broll', 'speed'].includes(sel.kind);
-        if (!splitSelected(p) && (block || !splitClipAtPlayhead(p))) useApp.getState().toast(block ? 'Move the playhead inside the selected block to split it there.' : 'Move the playhead inside a clip to split it there. To remove footage, mark a range with I and O, then press X.');
+        const block = !!sel && ['layout', 'zoom', 'broll', 'speed', 'music', 'overlay', 'mask'].includes(sel.kind);
+        const done = sel?.kind === 'music' ? splitMusicAtPlayhead(sel.id) : splitSelected(p);
+        if (!done && (block || !splitClipAtPlayhead(p))) useApp.getState().toast(block ? 'Move the playhead inside the selected block to split it there.' : 'Move the playhead inside a clip to split it there. To remove footage, mark a range with I and O, then press X.');
       } else if (cmd === 'lock') {
         const r = selectedRange(useApp.getState().selection);
         if (r) lockRange(r);
@@ -351,10 +378,51 @@ export function Editor() {
       else if (cmd === 'crop' && p.sources.some((x) => x.role === 'screen')) setSheet('crop');
       else if (cmd === 'find-sensitive' && p.sources.some((x) => x.role === 'screen')) setSheet('sensitive');
       else if (cmd === 'add-text') addText('plain');
+      else if (cmd === 'duplicate' && !readOnly(useApp.getState())) {
+        if (!duplicateSelected()) useApp.getState().toast('Select one or more blocks on the timeline to duplicate them.');
+      }
+    };
+    // Copy, cut and paste arrive from the Edit menu as the page's own clipboard events. While a text field
+    // has focus they are left to it; otherwise they act on the blocks selected on the timeline.
+    const typing = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+    };
+    const onCopy = (e: ClipboardEvent) => {
+      if (typing() || document.querySelector('.scrim, .qs')) return;
+      const st = useApp.getState();
+      const refs = selectedItems(st);
+      if (!refs.length) return;
+      const copied = copyItems(refs);
+      if (!copied.length) return;
+      e.preventDefault();
+      e.clipboardData?.setData(CLIPBOARD_TYPE, JSON.stringify(copied));
+      e.clipboardData?.setData('text/plain', `${copied.length} Cutaway ${copied.length === 1 ? 'block' : 'blocks'}`);
+      if (e.type === 'cut' && !readOnly(st)) removeItems(refs);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (typing() || document.querySelector('.scrim, .qs') || readOnly(useApp.getState())) return;
+      const raw = e.clipboardData?.getData(CLIPBOARD_TYPE);
+      let items: Copied[] | null = null;
+      try {
+        items = raw ? (JSON.parse(raw) as Copied[]) : null;
+      } catch {
+        items = null;
+      }
+      if (items?.length) setCopied(items);
+      else if (!hasCopied()) return;
+      e.preventDefault();
+      pasteItems();
     };
     window.addEventListener('cutaway-revise', onRevise);
     window.addEventListener('cutaway-command', onCommand);
+    document.addEventListener('copy', onCopy);
+    document.addEventListener('cut', onCopy);
+    document.addEventListener('paste', onPaste);
     return () => {
+      document.removeEventListener('copy', onCopy);
+      document.removeEventListener('cut', onCopy);
+      document.removeEventListener('paste', onPaste);
       window.removeEventListener('cutaway-revise', onRevise);
       window.removeEventListener('cutaway-command', onCommand);
     };
@@ -399,6 +467,25 @@ export function Editor() {
         case 'delete':
           if (app.selection) (e.preventDefault(), removeSelected());
           break;
+        case 'split-key':
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent('cutaway-command', { detail: 'split' }));
+          break;
+        case 'nudge-back':
+        case 'nudge-forward':
+        case 'nudge-back-more':
+        case 'nudge-forward-more': {
+          const dir = cmd.startsWith('nudge-back') ? -1 : 1;
+          // a selected clip moves one place in the playing order instead
+          if (app.selection?.kind === 'clip') {
+            const id = app.selection.id;
+            const index = playingClips(clipsOfProject(p)).findIndex((c) => c.id === id);
+            if (index >= 0) (e.preventDefault(), moveClipTo(id, index + dir));
+            break;
+          }
+          if (nudgeSelected(dir * (cmd.endsWith('-more') ? 1 : 1 / fps))) e.preventDefault();
+          break;
+        }
         case 'frame-back':
           step(-1 / fps);
           break;
@@ -463,6 +550,24 @@ export function Editor() {
       // Free text is moved by dragging it: press on a text to select it, keep dragging to place it.
       const p = useApp.getState().project;
       if (!p || comparing) return;
+      // a boxed animation: press inside its box to move it, near its bottom-right corner to resize it
+      if (phase === 'down') {
+        const box = motionBoxAt(p, pt, sel && 'id' in sel ? sel.id : null);
+        boxDrag.current = box ? { id: box.id, from: pt, box: box.motion!.box!, resize: Math.abs(pt.x - (box.motion!.box!.x + box.motion!.box!.w)) < 0.025 && Math.abs(pt.y - (box.motion!.box!.y + box.motion!.box!.h)) < 0.04 } : null;
+        if (box) {
+          textDrag.current = null;
+          if (!(sel && 'id' in sel && sel.id === box.id)) useApp.getState().select({ kind: 'overlay', id: box.id });
+          return;
+        }
+      }
+      const bd = boxDrag.current;
+      if (bd) {
+        const dx = pt.x - bd.from.x;
+        const dy = pt.y - bd.from.y;
+        if (Math.abs(dx) + Math.abs(dy) > 0.002) setMotionBox(bd.id, bd.resize ? { ...bd.box, w: bd.box.w + dx, h: bd.box.h + dy } : { ...bd.box, x: bd.box.x + dx, y: bd.box.y + dy }, bd.resize ? 'resize' : 'move');
+        if (phase === 'up') boxDrag.current = null;
+        return;
+      }
       if (phase === 'down') {
         const hit = textAt(p, pt);
         textDrag.current = hit ? { id: hit.id, dx: hit.x - pt.x, dy: hit.y - pt.y } : null;
@@ -485,6 +590,21 @@ export function Editor() {
     } else if (pick === 'callout' && sel.kind === 'overlay') {
       patchItem('overlays', sel.id, { x: pt.x, y: pt.y }, 'Place callout');
       if (phase === 'up') setPick(null);
+    } else if (pick === 'motion-box' && sel.kind === 'overlay') {
+      // draw the box the animation goes in, in frame coordinates
+      if (phase === 'down') dragStart.current = pt;
+      const a = dragStart.current;
+      if (a && phase !== 'down') {
+        const x = Math.min(a.x, pt.x);
+        const y = Math.min(a.y, pt.y);
+        const w = Math.abs(pt.x - a.x);
+        const h = Math.abs(pt.y - a.y);
+        if (w > 0.02 && h > 0.02) setMotionBox(sel.id, { x, y, w, h }, 'draw');
+      }
+      if (phase === 'up') {
+        dragStart.current = null;
+        setPick(null);
+      }
     } else if (pick === 'mask' && sel.kind === 'mask' && pt.screen) {
       if (phase === 'down') dragStart.current = pt;
       const a = dragStart.current?.screen;
@@ -509,7 +629,7 @@ export function Editor() {
     if (!p || readOnly(app)) return;
     const r = selectedRange(app.selection);
     if (r) return cutRange(r, app.selection?.kind === 'words' ? 'transcript' : 'manual');
-    if (splitSelected(p)) return;
+    if (app.selection?.kind === 'music' ? splitMusicAtPlayhead(app.selection.id) : splitSelected(p)) return;
     const t = playheadSource(p);
     if (mark === null) {
       setMark(t);
@@ -536,10 +656,11 @@ export function Editor() {
         <VersionBar />
         <div className="stage-preview">
           {!comparing ? <PreviewToolbar pickMask={() => setPick('mask')} findSensitive={() => setSheet('sensitive')} /> : null}
-          <Preview onPointer={pick || !comparing ? onPointer : undefined} cursorStyle={pick ? 'crosshair' : textSelected ? 'move' : undefined} selectedMaskId={selection?.kind === 'mask' ? selection.id : null} selectedOverlayId={textSelected ? selection!.id : null} />
+          {!comparing && !pick ? <SelectionBar /> : null}
+          <Preview onPointer={pick || !comparing ? onPointer : undefined} cursorStyle={pick ? 'crosshair' : textSelected ? 'move' : undefined} selectedMaskId={selection?.kind === 'mask' ? selection.id : null} selectedOverlayId={textSelected || boxSelected ? selection!.id : null} />
           {pick ? (
             <div className="pick-hint">
-              {pick === 'mask' ? 'Drag to select the area for the new mask' : pick === 'zoom' ? 'Click the point to zoom into' : 'Click where the callout should sit'}
+              {pick === 'motion-box' ? 'Drag on the preview where the animation goes' : pick === 'mask' ? 'Drag to select the area for the new mask' : pick === 'zoom' ? 'Click the point to zoom into' : 'Click where the callout should sit'}
               <button className="btn ghost sm" onClick={() => setPick(null)}>Done</button>
             </div>
           ) : null}

@@ -252,3 +252,12 @@ describe('thumbnail art through the fake CLI', () => {
     expect((await generateCodexImage({ codexPath: fake, prompt: 'p', outFile: 'relative.png' })).ok).toBe(false);
   });
 });
+
+describe('fast Codex calls', () => {
+  it('asks for low reasoning effort', () => {
+    const args = buildCodexArgs({ cwd: '/w', schemaFile: '/w/s.json', outFile: '/w/o.json', fast: true });
+    expect(args.slice(args.indexOf('-c'), args.indexOf('-c') + 2)).toEqual(['-c', 'model_reasoning_effort="low"']);
+    expect(args[args.length - 1]).toBe('-');
+    expect(buildCodexArgs({ cwd: '/w', schemaFile: '/w/s.json', outFile: '/w/o.json' })).not.toContain('-c');
+  });
+});

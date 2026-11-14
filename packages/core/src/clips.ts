@@ -432,6 +432,48 @@ export function trimClip(project: Ctx & Pick<Project, 'revision'>, id: string, s
   return { ...project.edit, cuts };
 }
 
+/** How long a photo plays when it is first put on the timeline. */
+export const PHOTO_SECONDS = 5;
+/** Longest a photo clip may play. */
+export const MAX_PHOTO_SECONDS = 600;
+
+/** A photo placed on the timeline as a clip of its own (its picture is an image, not a video). */
+export const isPhotoSource = (s: Pick<MediaSource, 'kind' | 'role'>): boolean => s.kind === 'image' && isTimelineSource(s);
+
+/** Is this clip a photo? */
+export function isPhotoClip(project: Pick<Project, 'sources'>, clip: Pick<Clip, 'take'>): boolean {
+  const mine = project.sources.filter((s) => !s.instanceOf && takeOf(s) === clip.take && isTimelineSource(s));
+  return mine.length > 0 && mine.every(isPhotoSource);
+}
+
+/**
+ * Make a clip play for `seconds`, from its in-point. Clips after it move to follow, with everything on
+ * them. Only meaningful for a photo, whose picture has no length of its own; its file must already be
+ * at least that long (see `photoSourcesLongEnough`).
+ */
+export function setClipLength(project: Ctx, id: string, seconds: Seconds): EditState {
+  const clips = clipsOf(project);
+  const c = clips.find((x) => x.id === id && !x.removed);
+  if (!c) return project.edit;
+  const len = Math.max(MIN_CLIP, Math.min(MAX_PHOTO_SECONDS, seconds));
+  if (Math.abs(c.in + len - c.out) < 1e-4) return project.edit;
+  return relay(project.edit, clips, clips.map((x) => (x.id === id ? { ...x, out: x.in + len } : x)));
+}
+
+/**
+ * The sources of a photo clip, made long enough to play for `seconds`. A photo's source only ever
+ * grows, so undoing a change of length can never leave part of the clip without a picture.
+ */
+export function photoSourcesLongEnough(sources: MediaSource[], take: string, seconds: Seconds): MediaSource[] {
+  let changed = false;
+  const next = sources.map((s) => {
+    if (takeOf(s) !== take || !isPhotoSource(s) || s.duration >= seconds) return s;
+    changed = true;
+    return { ...s, duration: Math.min(MAX_PHOTO_SECONDS, seconds) };
+  });
+  return changed ? next : sources;
+}
+
 /** Add clips after the last playing one (new footage). The clips' `start` is assigned here. */
 export function appendClips(project: Ctx, fresh: Omit<Clip, 'start'>[]): EditState {
   const clips = clipsOf(project);

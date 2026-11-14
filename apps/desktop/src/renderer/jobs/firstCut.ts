@@ -236,7 +236,8 @@ export async function runFirstCut(ctx: JobContext, opts: FirstCutOptions = {}): 
     await run('visual', 'Finding where things happen on screen…', async () => {
       const p = ctx.get();
       // Every clip's screen and voice, each written into its own stretch of the session timeline.
-      const screens = p.sources.filter((s) => s.role === 'screen' && s.available);
+      // photo clips have nothing to watch: only screen recordings are analysed
+      const screens = p.sources.filter((s) => s.role === 'screen' && s.available && s.kind === 'video');
       const screen = screens[0];
       const voices = p.sources.filter((s) => isMasterVoice(p.edit.audio, s) && s.hasAudio && s.available);
       // footage that is off the timeline sits after the end of the video and is analysed too, so it is ready when put back

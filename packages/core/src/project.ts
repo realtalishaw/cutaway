@@ -49,6 +49,8 @@ export interface ProbeLike {
   createdAt?: string | null;
   video?: { width: number; height: number; fps: number; variableFrameRate?: boolean; codec?: string } | null;
   audio?: { channels: number; sampleRate: number; codec?: string } | null;
+  /** Pixel size of a still image. */
+  image?: { width: number; height: number } | null;
 }
 
 export function suggestRole(probe: ProbeLike, existing: MediaSource[]): SourceRole {
@@ -82,8 +84,8 @@ export function sourceFromProbe(probe: ProbeLike, role: SourceRole, opts: { mana
     origin: opts.origin,
     kind: probe.kind ?? 'video',
     duration: probe.duration ?? 0,
-    width: probe.video?.width,
-    height: probe.video?.height,
+    width: probe.video?.width ?? probe.image?.width,
+    height: probe.video?.height ?? probe.image?.height,
     fps: probe.video?.fps,
     variableFrameRate: probe.video?.variableFrameRate,
     codec: probe.video?.codec ?? probe.audio?.codec,
@@ -115,7 +117,8 @@ export function withSources(project: Project, sources: MediaSource[]): Project {
   if (project.edit.clips) return withSourcesAndClips(project, sources);
   const audio = project.edit.audio;
   const fresh = defaultAudio(sources);
-  const masterStillThere = sources.some((s) => s.id === audio.masterVoiceId && s.hasAudio);
+  // a file whose role changed to music, B-roll or an image is no longer a voice, even though it still has sound
+  const masterStillThere = sources.some((s) => s.id === audio.masterVoiceId && s.hasAudio && isTimelineSource(s));
   const tracks = { ...fresh.tracks };
   if (masterStillThere) {
     for (const id of Object.keys(tracks)) {

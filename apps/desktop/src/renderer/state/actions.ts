@@ -1,6 +1,7 @@
-import { addTakeAsClip, defaultSync, dropTake, isTimelineSource, nextClipName, sourceFromProbe, suggestRole, takeOf, uid, withSources, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
+import { PHOTO_SECONDS, addTakeAsClip, clipsOf, defaultSync, isPhotoClip, photoSourcesLongEnough, setClipLength, dropTake, isTimelineSource, meta, musicClipsOf, newMusicClip, nextClipName, sourceFromProbe, suggestRole, takeOf, uid, withMusic, withSources, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
 import type { ProbeResult } from '@shared/api';
-import { saveNow, useApp } from './store';
+import { create } from 'zustand';
+import { saveNow, timeMapOf, useApp, usePlayback } from './store';
 
 const api = () => window.cutaway;
 
@@ -27,13 +28,20 @@ export function setRecordingActive(on: boolean) {
 }
 export const isRecordingActive = () => recordingActive;
 
+/**
+ * A take recording a demo of Cutaway itself: the creator moves around the app while it runs. `projectPath` is
+ * the project the take belongs to, whatever is open when it ends.
+ */
+export const useDemoTake = create<{ projectPath: string | null }>(() => ({ projectPath: null }));
+
 export async function backToLibrary() {
-  if (recordingActive) return useApp.getState().toast('Stop the recording first. It keeps running until you do.');
+  const demo = useDemoTake.getState().projectPath;
+  if (recordingActive && !demo) return useApp.getState().toast('Stop the recording first. It keeps running until you do.');
   await saveNow();
   const { project, projectPath } = useApp.getState();
   useApp.getState().closeProject();
-  // A project that never received any media is not worth keeping.
-  if (project && projectPath && project.sources.length === 0) await api().library.trash(projectPath).catch(() => {});
+  // A project that never received any media is not worth keeping (unless a demo take is being written into it).
+  if (project && projectPath && project.sources.length === 0 && projectPath !== demo) await api().library.trash(projectPath).catch(() => {});
 }
 
 /** New projects start from the creator's default style preset, when one is set. */
@@ -79,7 +87,8 @@ function clipRole(s: Pick<MediaSource, 'path' | 'duration' | 'width' | 'height' 
 
 /** A video as a source that can be a clip of its own: placed at the start of its own clock. */
 function asClipSource(s: MediaSource): MediaSource {
-  const fresh: MediaSource = { ...s, role: clipRole(s), sync: defaultSync('reference'), gaps: [] };
+  // a photo is the picture of its clip, shown for PHOTO_SECONDS until its length is changed
+  const fresh: MediaSource = s.kind === 'image' ? { ...s, role: 'screen', duration: Math.max(s.duration, PHOTO_SECONDS), hasAudio: false, cursorBaked: true, sync: defaultSync('reference'), gaps: [] } : { ...s, role: clipRole(s), sync: defaultSync('reference'), gaps: [] };
   delete fresh.shift;
   delete fresh.window;
   delete fresh.take;
@@ -94,17 +103,40 @@ export function sourceToClip(sourceId: string): string | null {
   let name: string | null = null;
   useApp.getState().patch((p: Project) => {
     const s = p.sources.find((x) => x.id === sourceId);
-    if (!s || s.kind !== 'video' || isTimelineSource(s) || !s.available) return p;
+    if (!s || (s.kind !== 'video' && s.kind !== 'image') || isTimelineSource(s) || !s.available) return p;
     const rest = p.sources.filter((x) => x.id !== sourceId);
     const base = withSources({ ...p, edit: { ...p.edit, broll: p.edit.broll.filter((b) => b.assetId !== sourceId) } }, rest);
     if (!hasFootage(rest)) {
-      name = 'Clip 1';
+      name = s.kind === 'image' ? photoName(s) : 'Clip 1';
       return withSources(base, [...rest, asClipSource(s)]);
     }
-    name = nextClipName(base);
+    name = s.kind === 'image' ? photoName(s) : nextClipName(base);
     return addTakeAsClip(base, { take: uid('take'), name, sources: [asClipSource(s)] });
   });
   return name;
+}
+
+const photoName = (s: MediaSource) => s.name.replace(/\.[^.]+$/, '') || 'Photo';
+
+/** Put pictures from the project's media on the timeline, each as a clip of its own after what is there. */
+export function photosToClips(sourceIds: string[]): number {
+  let n = 0;
+  for (const id of sourceIds) if (sourceToClip(id)) n++;
+  return n;
+}
+
+/**
+ * How long a photo clip plays. Changes made with the same `gesture` (one drag, one slider) are one undo
+ * step; the photo's picture is only ever made longer.
+ */
+export function setPhotoLength(clipId: string, seconds: number, gesture = 'set') {
+  const app = useApp.getState();
+  const p = app.project;
+  const clip = p ? clipsOf(p).find((c) => c.id === clipId) : undefined;
+  if (!p || !clip || !isPhotoClip(p, clip)) return;
+  const sources = photoSourcesLongEnough(p.sources, clip.take, clip.in + seconds);
+  if (sources !== p.sources) app.patch((q) => ({ ...q, sources: photoSourcesLongEnough(q.sources, clip.take, clip.in + seconds) }));
+  app.edit((_e, q) => setClipLength(q, clipId, seconds), 'Photo length', `photo-length:${clipId}:${gesture}`);
 }
 
 /** Take a clip's footage off the timeline for good and keep its video among the supporting media as B-roll. */
@@ -145,7 +177,14 @@ export function sourcesFromProbes(probes: ProbeResult[], existing: MediaSource[]
 }
 
 /** Add files to the open project. Returns what happened so the UI can show the inspection. */
-export async function importFiles(paths: string[]): Promise<ImportReport | null> {
+export interface ImportOptions {
+  /** Treat every audio file as music (Add audio on the timeline), whatever its length suggests. */
+  audioAsMusic?: boolean;
+  /** Treat every video as B-roll and every picture as an image over the video (Add photo / B-roll). */
+  asOverlay?: boolean;
+}
+
+export async function importFiles(paths: string[], opts: ImportOptions = {}): Promise<ImportReport | null> {
   const app = useApp.getState();
   const { projectPath, project, settings } = app;
   if (!projectPath || !project || paths.length === 0) return null;
@@ -153,6 +192,15 @@ export async function importFiles(paths: string[]): Promise<ImportReport | null>
   try {
     const probes = await api().library.importMedia(projectPath, paths, mode);
     const report = sourcesFromProbes(probes, project.sources, mode === 'copy');
+    for (const a of report.accepted) {
+      const role: SourceRole | null = opts.audioAsMusic && a.source.kind === 'audio' ? 'music' : opts.asOverlay ? (a.source.kind === 'video' ? 'broll' : a.source.kind === 'image' ? 'image' : null) : null;
+      if (role && a.source.role !== role) a.source = { ...a.source, role, sync: defaultSync('reference') };
+    }
+    if (opts.asOverlay) {
+      app.patch((p: Project) => withSources(p, [...p.sources, ...report.accepted.map((a) => a.source)]));
+      recordImportReport(report);
+      return report;
+    }
     // A project that already has footage on its timeline: each new video becomes a clip after it, unless
     // its name says it is B-roll. (It can be moved to the supporting media, or back, in Sources.)
     if (hasFootage(project.sources)) {
@@ -215,6 +263,74 @@ export async function pickAndImport(intoNew: boolean): Promise<ImportReport | nu
   const paths = await api().app.pickFiles({ title: 'Import media', kinds: ['video', 'audio', 'image'], multiple: true });
   if (paths.length === 0) return null;
   return intoNew ? importIntoNewProject(paths) : importFiles(paths);
+}
+
+/**
+ * Put a music file on the audio row at the playhead (or at the start of the video when it has no music
+ * yet) and select it. Returns the new clip's id.
+ */
+export function placeMusic(sourceId: string): string | null {
+  const app = useApp.getState();
+  const p0 = app.project;
+  const file = p0?.sources.find((s) => s.id === sourceId);
+  if (!p0 || !file) return null;
+  let id = '';
+  app.edit((e, p) => {
+    const clips = musicClipsOf(e, p.sources);
+    const map = timeMapOf(p);
+    const at = clips.length ? Math.min(usePlayback.getState().time, Math.max(0, map.outDuration - 0.5)) : 0;
+    const clip = newMusicClip(file, at, map.outDuration, meta('creator', p.revision + 1));
+    id = clip.id;
+    return withMusic(e, [...clips, clip]);
+  }, 'Add audio');
+  if (id) app.select({ kind: 'music', id });
+  return id || null;
+}
+
+/** Import audio files as music and place each on the audio row, one after another from the playhead. */
+export async function importAudioToTimeline(paths: string[]): Promise<number> {
+  const report = await importFiles(paths, { audioAsMusic: true });
+  const added = report?.accepted.filter((a) => a.source.role === 'music') ?? [];
+  let placed = 0;
+  for (const a of added) {
+    if (!placeMusic(a.source.id)) continue;
+    placed++;
+    // the next file starts where this one ends
+    const p = useApp.getState().project!;
+    const last = musicClipsOf(p.edit, p.sources).find((c) => c.sourceId === a.source.id);
+    if (last) usePlayback.getState().seek(Math.min(timeMapOf(p).outDuration, last.start + last.length));
+  }
+  if (added.length < (report?.accepted.length ?? 0)) useApp.getState().toast('Only sound files go on the audio row; the rest were added to your media.');
+  return placed;
+}
+
+export async function pickAudioToTimeline(): Promise<number> {
+  const paths = await api().app.pickFiles({ title: 'Add audio', kinds: ['audio'], multiple: true });
+  return paths.length ? importAudioToTimeline(paths) : 0;
+}
+
+/**
+ * Add files dropped on (or picked for) the video row: videos and photos become clips at the end of the
+ * timeline. Videos named as B-roll are returned for the caller to show over the footage.
+ */
+export async function importVideosToTimeline(paths: string[]): Promise<string[]> {
+  const report = await importFiles(paths);
+  // photos become clips of their own, like videos; a video named as B-roll still goes over the footage
+  photosToClips(report?.accepted.filter((a) => a.source.kind === 'image').map((a) => a.source.id) ?? []);
+  return report?.accepted.filter((a) => a.source.kind === 'video' && a.source.role === 'broll').map((a) => a.source.id) ?? [];
+}
+
+export async function pickVideosToTimeline(): Promise<string[]> {
+  const paths = await api().app.pickFiles({ title: 'Add video', kinds: ['video', 'image'], multiple: true });
+  return paths.length ? importVideosToTimeline(paths) : [];
+}
+
+/** Import pictures or videos and show them over the footage at the playhead. Returns the new source ids. */
+export async function pickOverlayMedia(): Promise<string[]> {
+  const paths = await api().app.pickFiles({ title: 'Add photo or B-roll', kinds: ['image', 'video'], multiple: true });
+  if (!paths.length) return [];
+  const report = await importFiles(paths, { asOverlay: true });
+  return report?.accepted.map((a) => a.source.id) ?? [];
 }
 
 export function droppedPaths(e: DragEvent | React.DragEvent): string[] {

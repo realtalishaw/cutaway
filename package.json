@@ -3,6 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "description": "Cutaway — record once, get the first cut. macOS recorder and AI editor for YouTube creators.",
+  "license": "MIT",
+  "repository": "github:realtalishaw/cutaway",
   "packageManager": "pnpm@9.4.0",
   "engines": { "node": ">=22" },
   "scripts": {

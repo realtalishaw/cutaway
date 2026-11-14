@@ -211,3 +211,30 @@ describe('the creator\'s terminal', () => {
     expect(s.split('\n').filter((l) => l.includes('claude')).every((l) => /auth (login|status)/.test(l) || l.startsWith('echo'))).toBe(true);
   });
 });
+
+import { buildArgs as buildArgsFast, streamProgress } from '../src/node';
+
+describe('fast, streamed calls (animations)', () => {
+  it('turns extended thinking off and streams the reply when asked', () => {
+    const plain = buildArgsFast({ schema: {} });
+    expect(plain).toContain('json');
+    expect(plain).not.toContain('--settings');
+    const fast = buildArgsFast({ schema: {}, fast: true, stream: true });
+    expect(fast.slice(fast.indexOf('--output-format'), fast.indexOf('--output-format') + 4)).toEqual(['--output-format', 'stream-json', '--verbose', '--include-partial-messages']);
+    expect(JSON.parse(fast[fast.indexOf('--settings') + 1]!)).toEqual({ alwaysThinkingEnabled: false });
+  });
+
+  it('counts the answer as it is written, not the thinking, across split chunks', async () => {
+    const seen: number[] = [];
+    const feed = streamProgress((p) => seen.push(p.chars));
+    const ev = (delta: object) => JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta } }) + '\n';
+    feed(ev({ type: 'thinking_delta', thinking: 'x'.repeat(500) }));
+    const line = ev({ type: 'input_json_delta', partial_json: '{"html":"<!doctype' });
+    feed(line.slice(0, 30));
+    feed(line.slice(30));
+    expect(seen).toEqual([18]);
+    await new Promise((r) => setTimeout(r, 260));
+    feed(ev({ type: 'text_delta', text: 'abc' }) + '{"type":"result"}\n');
+    expect(seen).toEqual([18, 21]);
+  });
+});

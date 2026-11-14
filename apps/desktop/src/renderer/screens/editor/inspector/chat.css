@@ -47,3 +47,4 @@
 .version-origin { font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 1px 6px; border-radius: 999px; background: var(--bg-2); border: 1px solid var(--line); color: var(--text-2); flex: none; }
 .version-origin.ai, .version-origin.chat { color: var(--ai); border-color: rgba(139, 125, 255, .35); }
 .version-bar { border-color: var(--accent-2); }
+.review-ideas { display: flex; align-items: center; gap: 8px; margin: 0 10px 10px; padding: 10px 12px; border-radius: 10px; background: rgba(114, 88, 255, .1); box-shadow: inset 0 0 0 1px rgba(114, 88, 255, .3); color: rgba(233, 237, 246, .9); }

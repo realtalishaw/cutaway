@@ -36,6 +36,10 @@ struct RecordConfig {
         var showCursor: Bool
         var excludeBundleIds: [String]
         var maxHeight: Int
+        /// For recording a demo of an app (Cutaway itself): this app stays in `excludeBundleIds`, but its
+        /// ordinary windows (main window, menus, sheets, tooltips: below the screen-saver level) are let back
+        /// in. Its floating overlays sit at the screen-saver level and stay out of the picture.
+        var admitBundleId: String? = nil
     }
     struct Camera {
         var slot: String            // "A" | "B"
@@ -104,7 +108,8 @@ struct RecordConfig {
                 rect: rect,
                 showCursor: (s["showCursor"] as? Bool) ?? false,
                 excludeBundleIds: (s["excludeBundleIds"] as? [String]) ?? [],
-                maxHeight: Int(num(s["maxHeight"]) ?? 2160))
+                maxHeight: Int(num(s["maxHeight"]) ?? 2160),
+                admitBundleId: s["admitBundleId"] as? String)
         }
         let cameras: [Camera] = ((json["cameras"] as? [[String: Any]]) ?? []).compactMap { c in
             guard let id = c["deviceId"] as? String else { return nil }

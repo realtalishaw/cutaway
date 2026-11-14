@@ -20,7 +20,7 @@ import { claudeStatus, findClaude, imagesInsideDir, resetShellContext, runClaude
 import type { AiImageRequest, AiImageResult, AiProviders, AiRequest, AiResult, AppSettings, ClaudeStatus } from '../shared/api';
 
 const STATUS_TTL_MS = 60_000;
-const TIMEOUTS: Partial<Record<string, number>> = { 'first-cut': 15 * 60_000, 'local-revision': 6 * 60_000, packaging: 8 * 60_000 };
+const TIMEOUTS: Partial<Record<string, number>> = { 'first-cut': 15 * 60_000, 'local-revision': 6 * 60_000, packaging: 8 * 60_000, motion: 6 * 60_000 };
 const MAX_PROMPT_CHARS = 1_500_000;
 const GENERATED_DIR = join('media', 'generated');
 
@@ -75,7 +75,7 @@ export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): vo
     return new Promise((done) => execFile('/usr/bin/open', ['-a', 'Terminal', file], (err) => done(err ? { ok: false, message: `Terminal could not be opened: ${err.message}` } : { ok: true, message: 'Terminal is open. Finish signing in there, then choose Check again.' })));
   });
 
-  ipcMain.handle('ai:run', async (_e, req: AiRequest): Promise<AiResult> => {
+  ipcMain.handle('ai:run', async (e, req: AiRequest): Promise<AiResult> => {
     const bad = (message: string): AiResult => ({ ok: false, error: { code: 'failed', message }, durationMs: 0 });
     if (!req || typeof req.id !== 'string' || typeof req.prompt !== 'string' || !req.prompt.trim()) return bad('Malformed AI request.');
     if (req.prompt.length > MAX_PROMPT_CHARS) return bad('The request is too large to send.');
@@ -91,7 +91,10 @@ export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): vo
     const controller = new AbortController();
     running.set(req.id, controller);
     try {
-      const opts = { claudePath: preferredPath(id), model: modelFor(id), prompt: req.prompt, schema: req.schema, imageDir, imagePaths, signal: controller.signal, timeoutMs: TIMEOUTS[req.purpose] ?? 10 * 60_000 };
+      // An animation is mostly writing: extended thinking made it take minutes, and the renderer check after the reply catches mistakes.
+      const fast = req.purpose === 'motion';
+      const onProgress = req.progress ? (p: { chars: number }) => !e.sender.isDestroyed() && e.sender.send('ai:progress', { id: req.id, chars: p.chars }) : undefined;
+      const opts = { claudePath: preferredPath(id), model: modelFor(id), prompt: req.prompt, schema: req.schema, imageDir, imagePaths, signal: controller.signal, timeoutMs: TIMEOUTS[req.purpose] ?? 10 * 60_000, fast, onProgress };
       const res = id === 'claude' ? await runClaude(opts) : await runCodex(opts);
       if (res.error?.code === 'not-signed-in' || res.error?.code === 'not-found') delete cached[id];
       return { ...res, provider: id };

@@ -14,7 +14,7 @@ import { TimeMap } from './timemap';
 import { sentences } from './analysis';
 import { displayText, keptWords, type Cue } from './captions';
 import { faceAt, type CameraCrop, type FaceTrackSmooth } from './parity';
-import { musicClipsOf, withMusic } from './music';
+import { musicClipsOf, sliceVolume, withMusic } from './music';
 import { cameraSourceAt, covers, sourceAt } from './sync';
 import { flagsOf } from './flags';
 
@@ -465,7 +465,8 @@ function musicForShort(project: Pick<Project, 'sources' | 'duration' | 'edit'>, 
     if (end <= 0.1 || start >= length - 0.1) continue;
     const head = Math.max(0, -start);
     const kept = Math.min(end, length) - Math.max(0, start);
-    out.push({ ...c, start: Math.max(0, start), sourceIn: c.sourceIn + head, length: kept, fadeIn: head > 0 ? Math.min(c.fadeIn, 0.3) : c.fadeIn, fadeOut: end > length ? Math.max(c.fadeOut, Math.min(1, kept / 4)) : c.fadeOut });
+    const volume = sliceVolume(c.volume, head, head + kept);
+    out.push({ ...c, start: Math.max(0, start), sourceIn: c.sourceIn + head, length: kept, fadeIn: head > 0 ? Math.min(c.fadeIn, 0.3) : c.fadeIn, fadeOut: end > length ? Math.max(c.fadeOut, Math.min(1, kept / 4)) : c.fadeOut, ...(volume ? { volume } : {}) });
   }
   return out;
 }

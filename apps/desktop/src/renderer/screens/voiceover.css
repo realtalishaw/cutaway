@@ -17,3 +17,20 @@
 .vo-takes li { display: flex; align-items: center; gap: 9px; padding: 6px 6px 6px 9px; border-radius: 7px; }
 .vo-takes li > svg { color: var(--text-3); flex: none; }
 .vo-take-name { font-size: 12.5px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── record a voiceover from the microphone ── */
+.rvo { display: flex; flex-direction: column; gap: 14px; min-width: 420px; }
+.rvo-meter { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.rvo-meter i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #3fd38a, #9be15d 70%, #f2b84b); transition: width .05s linear; }
+.rvo-meter i.hot { background: linear-gradient(90deg, #3fd38a, #f2b84b 60%, #ff6b6b); }
+.rvo-stage { min-height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+.rvo-btn { width: 72px; height: 72px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .08); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .25); cursor: pointer; }
+.rvo-btn span { width: 30px; height: 30px; border-radius: 50%; background: #ff4d4d; transition: border-radius .15s, transform .15s; }
+.rvo-btn:hover span { transform: scale(1.08); }
+.rvo-btn.stop span { width: 24px; height: 24px; border-radius: 5px; }
+.rvo-btn:disabled { opacity: .4; cursor: default; }
+.rvo-count { font: 700 56px/1 "Inter Variable", sans-serif; color: #fff; }
+.rvo-time { display: inline-flex; align-items: center; gap: 8px; font: 600 15px "Inter Variable", sans-serif; font-variant-numeric: tabular-nums; }
+.rvo-dot { width: 10px; height: 10px; border-radius: 50%; background: #ff4d4d; animation: rvo-pulse 1s infinite; }
+@keyframes rvo-pulse { 50% { opacity: .35; } }
+.rvo-listen { width: 100%; }

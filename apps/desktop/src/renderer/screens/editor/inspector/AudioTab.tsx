@@ -2,7 +2,7 @@ import { isMasterVoice, setMasterVoice, type EditState } from '@cutaway/core';
 import { useProject } from '../../../state/store';
 import { Button, Slider, Toggle } from '../../../ui/kit';
 import { useState } from 'react';
-import { VoiceoverSheet } from '../../Voiceover';
+import { GenerateSheet } from '../GenerateSheet';
 import { Section, app, pct } from './shared';
 import { MusicSection, SoundsSection } from './SoundEditors';
 
@@ -53,9 +53,9 @@ export function AudioTab() {
         <button className="btn block" onClick={() => setVoiceover(true)}>
           Add voiceover…
         </button>
-        <div className="tiny dim">Reads your script with a system voice, on this Mac. It is a synthetic voice, not a copy of yours.</div>
+        <div className="tiny dim">Reads your script with an ElevenLabs or fal.ai voice (your own API key, in Settings › AI generation), or free with a system voice on this Mac. It is a synthetic voice, not a copy of yours.</div>
       </Section>
-      {voiceover ? <VoiceoverSheet onClose={() => setVoiceover(false)} /> : null}
+      {voiceover ? <GenerateSheet kind="voice" onClose={() => setVoiceover(false)} /> : null}
     </>
   );
 }

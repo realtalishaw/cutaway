@@ -612,6 +612,10 @@ final class Recorder: CaptureSink {
                       "freeBytes": freeBytes(at: config.outDir), "paused": phase == .paused])
         }
 
+        // what is let into the picture (desktop icons hidden, or a demo of an app) follows windows as they come and go
+        if tickCount % 5 == 0 {
+            screen?.refreshFilter(hostNow: now)
+        }
         if tickCount % 10 == 0 {
             housekeeping(now: now, elapsed: elapsed)
         }
@@ -637,7 +641,6 @@ final class Recorder: CaptureSink {
 
     private func housekeeping(now: Double, elapsed: Double) {
         screen?.refreshWindowFrame()
-        screen?.refreshFilter(hostNow: now)
         if phase == .recording {
             screen?.keepAlive(hostNow: now, idleFor: 0.5)
             // Sources that stopped delivering without telling us.

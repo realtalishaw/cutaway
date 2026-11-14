@@ -63,6 +63,28 @@ export interface ChatInput {
   zoomLevel?: number;
   /** The creator's own notes for the editing playbook (Settings). */
   editingNotes?: string | null;
+  /** Animation templates the creator can have added (built in and their own). */
+  animationTemplates?: ChatAnimationTemplate[];
+}
+
+export interface ChatAnimationTemplate {
+  id: string;
+  name: string;
+  description: string;
+  fields: { id: string; label: string }[];
+  boxed: boolean;
+  /** Seconds into the animation of its key moment (a click, a pop), when it is not the start. */
+  beat?: number | null;
+}
+
+/** An animation the model proposes: a template with its words, or a description for one to be written. */
+export interface ChatAnimation {
+  /** Session seconds; null = at the playhead. */
+  at: number | null;
+  template: string | null;
+  fields: Record<string, string>;
+  request: string;
+  reason: string;
 }
 
 export const CHAT_SCHEMA = {
@@ -71,6 +93,21 @@ export const CHAT_SCHEMA = {
     reply: { type: 'string', description: 'What you would say to the creator: two to four plain sentences. No markdown.' },
     edits: { type: 'array', items: OP_SCHEMA, description: 'New decisions you propose. Empty when the creator only asked a question.' },
     remove: { type: 'array', items: { type: 'string' }, description: 'Handles (D1, D2, …) of existing decisions to take out.' },
+    animations: {
+      type: 'array',
+      description: 'Animated graphics (motion graphics) to add over the video. Empty unless the creator asks for an animation or graphic.',
+      items: {
+        type: 'object',
+        properties: {
+          at: { type: ['number', 'null'], description: 'Session seconds where it starts; null = wherever the playhead is.' },
+          template: { type: ['string', 'null'], description: 'Id of one of the ANIMATION TEMPLATES, or null when none fits and a new one must be written.' },
+          fields: { type: 'object', additionalProperties: { type: 'string' }, description: 'For a template: its field ids and the words or colours to use.' },
+          request: { type: 'string', description: 'For template null: what the new animation should look like and do, in one or two sentences. Otherwise a short description.' },
+          reason: { type: 'string' },
+        },
+        required: ['at', 'template', 'request', 'reason'],
+      },
+    },
     moments: {
       type: 'array',
       description: 'Places you are pointing at when answering a question. Session seconds.',
@@ -144,8 +181,10 @@ ${assetsBlock(input.assets)}
 KEYFRAMES
 ${keyframesBlock(input.keyframes)}
 
+${animationsBlock(input.animationTemplates)}
+
 WHAT TO RETURN
-{"reply": string, "edits": [operations], "remove": [handles], "moments": [{"start","end","note"}]}
+{"reply": string, "edits": [operations], "remove": [handles], "animations": [{"at","template","fields","request","reason"}], "moments": [{"start","end","note"}]}
 - The creator cannot see handles (D1), sentence numbers (S3) or any of the data above. In "reply", in every "reason" and in every moment "note", refer to things by what they are and when they happen in m:ss ("the zoom at 0:06", "where you choose the format, around 0:09"). Never mention handles, sentence numbers, keyframes or how you were given the information.
 - "reply": talk to the creator directly, in plain words, two to four sentences. Say what you propose and why, or answer the question. If you cannot do what they asked with the operations above, say so and say what you can do instead. Do not claim a change has been made: you are proposing it.
 - "edits": the new decisions. Each needs a short "reason" the creator will read on its card. Use session seconds from the transcript and activity data; do not invent moments.
@@ -153,12 +192,21 @@ WHAT TO RETURN
 - "moments": only when answering a question about the video ("where does it drag?"): the places you mean, each with a short note. Leave it empty when you propose edits.
 - A question gets an answer with empty "edits" and "remove" unless the creator also asked for a change.
 - Follow-ups refer to the conversation: "bring one back" means one of the things you or the creator removed earlier. Use the conversation digest and the current edit to work out which.
+- "animations": "at" is when the animation STARTS. Start it when its key moment should happen, minus the key-moment time given for its template (if any). Only when the creator asks for an animation, motion graphic, animated button, counter, name tag, title card, arrow, circle, highlight, confetti or similar. Prefer a template whenever one fits (it is ready instantly) and fill its fields from what the creator said; use template null with a clear "request" only for something no template does. Place each one where it belongs in the transcript ("when I say subscribe" = a moment before that word), or null when the creator did not say where. Animations are not "edits": never express them as text overlays.
 - Change as little as the request needs. Do not redo the whole edit.`;
+}
+
+function animationsBlock(templates: ChatAnimationTemplate[] | undefined): string {
+  if (!templates?.length) return 'ANIMATION TEMPLATES\n(none available: leave "animations" empty)';
+  return `ANIMATION TEMPLATES (animated graphics drawn over the video; "boxed" ones go in a box the creator places over something on screen)\n${templates
+    .map((t) => `- ${t.id}: ${t.name}${t.boxed ? ' (boxed)' : ''}. ${t.description} Fields: ${t.fields.map((f) => `${f.id} (${f.label})`).join(', ') || 'none'}.${t.beat ? ` Its key moment comes ${t.beat.toFixed(1)}s in: to land it on a word, set "at" to that word's time minus ${t.beat.toFixed(1)}.` : ''}`)
+    .join('\n')}`;
 }
 
 export interface ChatReply {
   reply: string;
   ops: unknown[];
+  animations: ChatAnimation[];
   /** Handles as written by the model, deduplicated, limited to ones that exist. */
   remove: string[];
   moments: (Range & { note: string })[];
@@ -183,6 +231,20 @@ export function parseChat(data: unknown, handles: string[], duration?: number): 
       if (note) moments.push({ start, end, note });
     }
   }
-  if (!reply && ops.length === 0 && remove.length === 0 && moments.length === 0) throw new AiParseError('The reply is empty.');
-  return { reply: reply || (ops.length || remove.length ? 'Here is what I would change.' : 'Here are the places I mean.'), ops, remove, moments: moments.sort((a, b) => a.start - b.start) };
+  const animations: ChatAnimation[] = [];
+  if (Array.isArray(o.animations)) {
+    for (const a of o.animations.slice(0, 8)) {
+      if (!a || typeof a !== 'object') continue;
+      const x = a as Record<string, unknown>;
+      const template = typeof x.template === 'string' && /^[a-z0-9-]{1,60}$/.test(x.template) ? x.template : null;
+      const request = clean(x.request, 600);
+      if (!template && !request) continue;
+      const fields: Record<string, string> = {};
+      if (x.fields && typeof x.fields === 'object') for (const [k, v] of Object.entries(x.fields as Record<string, unknown>).slice(0, 12)) if (/^[a-zA-Z0-9_-]{1,40}$/.test(k) && (typeof v === 'string' || isNum(v))) fields[k] = clean(String(v), 200);
+      const at = isNum(x.at) ? Math.max(0, duration !== undefined ? Math.min(x.at, duration) : x.at) : null;
+      animations.push({ at, template, fields, request, reason: clean(x.reason, 300) });
+    }
+  }
+  if (!reply && ops.length === 0 && remove.length === 0 && moments.length === 0 && animations.length === 0) throw new AiParseError('The reply is empty.');
+  return { reply: reply || (ops.length || remove.length || animations.length ? 'Here is what I would change.' : 'Here are the places I mean.'), ops, remove, animations, moments: moments.sort((a, b) => a.start - b.start) };
 }

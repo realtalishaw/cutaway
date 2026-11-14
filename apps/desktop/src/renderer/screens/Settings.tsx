@@ -8,13 +8,15 @@ import { AiSection } from './settings/AiSection';
 import { ImagesSection } from './settings/ImagesSection';
 import { PlaybooksSection } from './settings/PlaybooksSection';
 import { ShortcutsSection } from './settings/ShortcutsSection';
+import { GenerationSection } from './settings/GenerationSection';
 import './settings.css';
 
-type Tab = 'storage' | 'processing' | 'recording' | 'access' | 'shortcuts' | 'presets' | 'about';
+type Tab = 'storage' | 'processing' | 'generation' | 'recording' | 'access' | 'shortcuts' | 'presets' | 'about';
 
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'storage', label: 'Storage', icon: 'folder' },
   { id: 'processing', label: 'Processing', icon: 'shield' },
+  { id: 'generation', label: 'AI generation', icon: 'sparkle' },
   { id: 'recording', label: 'Recording', icon: 'record' },
   { id: 'access', label: 'Accessibility', icon: 'eye' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'command' },
@@ -314,6 +316,7 @@ export function Settings() {
             </>
           ) : null}
 
+          {tab === 'generation' ? <GenerationSection /> : null}
           {tab === 'shortcuts' ? <ShortcutsSection update={update} /> : null}
 
           {tab === 'presets' ? (

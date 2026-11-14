@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { BUILTIN_SOUNDS, builtinSound, fmtTime, musicClipsOf, musicFade, soundsOf, type MusicClip, type Project, type SoundCue, type SoundEffect } from '@cutaway/core';
+import { BUILTIN_SOUNDS, builtinSound, fmtTime, musicClipsOf, musicGainAt, soundsOf, type MusicClip, type Project, type SoundCue, type SoundEffect } from '@cutaway/core';
 import { timeMapOf, usePlayback } from '../../../state/store';
 import { Icon } from '../../../ui/icons';
 import { Button, Field, Slider, Toggle } from '../../../ui/kit';
 import { removeSelected, seekSource } from '../ops';
-import { addMusic, addSoundAtPlayhead, addSoundsEverywhere, defaultCue, fitMusicToVideo, patchMusic, patchSound, soundPlacementCounts, type SoundPlacement } from '../titleSoundOps';
+import { addMusic, addSoundAtPlayhead, addVolumePoint, clearVolumePoints, addSoundsEverywhere, defaultCue, fitMusicToVideo, patchMusic, patchSound, soundPlacementCounts, type SoundPlacement } from '../titleSoundOps';
 import { CueField, listen } from './CueField';
 import { Section, app, pct } from './shared';
 import './titles-sound.css';
@@ -17,7 +17,7 @@ export function cueName(cue: SoundCue, project: Project): string {
 }
 
 /** The clip's level over its length: fades at both ends, drawn the way the mixer applies them. */
-function Envelope({ clip }: { clip: MusicClip }) {
+function Envelope({ clip, fileLength }: { clip: MusicClip; fileLength?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current;
@@ -30,7 +30,7 @@ function Envelope({ clip }: { clip: MusicClip }) {
     const ctx = c.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    const y = (t: number) => h - 5 - musicFade(clip, t) * clip.gain * (h - 10);
+    const y = (t: number) => h - 5 - Math.min(1, musicGainAt(clip, clip.start + t, fileLength)) * (h - 10);
     ctx.beginPath();
     ctx.moveTo(0, h);
     for (let x = 0; x <= w; x++) ctx.lineTo(x, y(Math.min(clip.length - 1e-4, (x / w) * clip.length)));
@@ -46,7 +46,7 @@ function Envelope({ clip }: { clip: MusicClip }) {
     ctx.strokeStyle = '#6fe3b0';
     ctx.lineWidth = 1.5;
     ctx.stroke();
-  }, [clip.length, clip.fadeIn, clip.fadeOut, clip.gain]);
+  }, [clip, fileLength]);
   return <canvas ref={ref} className="mu-env" aria-hidden />;
 }
 
@@ -66,7 +66,7 @@ export function MusicEditor({ project, clip }: { project: Project; clip: MusicCl
         </span>
         <span title="Music is placed on the finished video, so cuts never chop it">in the finished video</span>
       </div>
-      <Envelope clip={clip} />
+      <Envelope clip={clip} fileLength={file?.duration} />
       <Field label="File">
         <select className="select" value={clip.sourceId} onChange={(e) => set({ sourceId: e.target.value, sourceIn: 0 }, 'Replace music')} aria-label="Music file">
           {files.map((f) => (
@@ -81,14 +81,27 @@ export function MusicEditor({ project, clip }: { project: Project; clip: MusicCl
       </div>
       <Toggle label="Lower under speech" hint="Drops the music while someone is talking, then brings it back." checked={clip.duck} onChange={(v) => set({ duck: v }, 'Music ducking')} />
       <Slider label="Starts at" min={0} max={Math.max(0.1, outDuration - 0.2)} step={0.05} value={Math.min(clip.start, Math.max(0.1, outDuration - 0.2))} format={(v) => fmtTime(v, true)} onChange={(v) => set({ start: v }, 'Move music', 'start')} />
-      <Slider label="Length" min={0.2} max={Math.max(0.3, fileLength - clip.sourceIn)} step={0.05} value={clip.length} format={(v) => fmtTime(v, true)} onChange={(v) => set({ length: v }, 'Trim music', 'length')} />
-      {fileLength - clip.length > 0.3 ? <Slider label="Begins inside the file at" min={0} max={Math.max(0.1, fileLength - clip.length)} step={0.05} value={Math.min(clip.sourceIn, Math.max(0, fileLength - clip.length))} format={(v) => fmtTime(v, true)} onChange={(v) => set({ sourceIn: v }, 'Slip music', 'sourceIn')} /> : null}
+      <Toggle label="Loop" hint="Starts the file again when it runs out, so a short piece can play under the whole video." checked={!!clip.loop} onChange={(v) => set(v ? { loop: true } : { loop: false, length: Math.min(clip.length, fileLength - clip.sourceIn) }, v ? 'Loop music' : 'Stop looping music')} />
+      <Slider label="Length" min={0.2} max={Math.max(0.3, clip.loop ? Math.max(outDuration - clip.start, clip.length) : fileLength - clip.sourceIn)} step={0.05} value={clip.length} format={(v) => fmtTime(v, true)} onChange={(v) => set({ length: v }, 'Trim music', 'length')} />
+      {clip.loop || fileLength - clip.length > 0.3 ? <Slider label="Begins inside the file at" min={0} max={Math.max(0.1, clip.loop ? fileLength - 0.2 : fileLength - clip.length)} step={0.05} value={Math.min(clip.sourceIn, Math.max(0, clip.loop ? fileLength - 0.2 : fileLength - clip.length))} format={(v) => fmtTime(v, true)} onChange={(v) => set({ sourceIn: v }, 'Slip music', 'sourceIn')} /> : null}
       {pastEnd ? (
         <Button icon="scissors" onClick={() => fitMusicToVideo(clip.id)}>
           End with the video and fade out
         </Button>
       ) : null}
-      <div className="tiny dim">Drag the clip on the music row to move it; drag its edges to trim. Cutting or moving footage leaves the music where it is.</div>
+      <Field label="Volume over time">
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <Button size="sm" icon="plus" data-testid="music-point-add" onClick={() => addVolumePoint(clip.id, usePlayback.getState().time - clip.start)} title="Adds a point where the playhead is, at the level the music has there">
+            Point at the playhead
+          </Button>
+          {clip.volume?.length ? (
+            <Button size="sm" variant="ghost" data-testid="music-point-clear" onClick={() => clearVolumePoints(clip.id)}>
+              Flatten ({clip.volume.length} {clip.volume.length === 1 ? 'point' : 'points'})
+            </Button>
+          ) : null}
+        </div>
+      </Field>
+      <div className="tiny dim">On the music row: double-click to add a volume point, drag a point up or down to make the music louder or quieter there, double-click a point to remove it. ⌘B or the playhead scissors split the selected music. Cutting or moving footage leaves the music where it is.</div>
     </Section>
   );
 }

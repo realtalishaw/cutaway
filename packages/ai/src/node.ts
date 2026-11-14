@@ -41,6 +41,13 @@ export interface ClaudeRunOptions {
   model?: string | null;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /**
+   * Skip extended thinking: for requests that are mostly writing (an animation page), where thinking multiplies
+   * the wait several times over and checks after the reply catch the mistakes.
+   */
+  fast?: boolean;
+  /** Hear the reply being written: characters of the answer so far. Streams the CLI's output (Claude only). */
+  onProgress?(p: { chars: number }): void;
 }
 
 export type ClaudeErrorCode = 'not-found' | 'not-signed-in' | 'cancelled' | 'timeout' | 'bad-output' | 'failed';
@@ -192,7 +199,7 @@ interface SpawnOutcome {
  * THE one place a Claude process is started. Everything else in this file is
  * argument building and parsing, which is covered by tests against a fake CLI.
  */
-export function spawnClaude(path: string, args: string[], input: string | null, opts: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal; timeoutMs: number }): Promise<SpawnOutcome> {
+export function spawnClaude(path: string, args: string[], input: string | null, opts: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal; timeoutMs: number; onData?(chunk: string): void }): Promise<SpawnOutcome> {
   return new Promise((done) => {
     let stdout = '';
     let stderr = '';
@@ -237,6 +244,7 @@ export function spawnClaude(path: string, args: string[], input: string | null, 
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout.setEncoding('utf8').on('data', (d: string) => {
       if (stdout.length < 20_000_000) stdout += d;
+      opts.onData?.(d);
     });
     child.stderr.setEncoding('utf8').on('data', (d: string) => {
       if (stderr.length < 200_000) stderr += d;
@@ -258,9 +266,12 @@ function signInMessage(): string {
 }
 
 /** Arguments for one structured, non-interactive call. Exported for tests. */
-export function buildArgs(opts: Pick<ClaudeRunOptions, 'schema' | 'imageDir' | 'imagePaths' | 'model'>): string[] {
+export function buildArgs(opts: Pick<ClaudeRunOptions, 'schema' | 'imageDir' | 'imagePaths' | 'model' | 'fast'> & { stream?: boolean }): string[] {
   const withImages = !!opts.imageDir && (opts.imagePaths?.length ?? 0) > 0;
-  const args = ['-p', '--output-format', 'json', '--json-schema', JSON.stringify(opts.schema), '--no-session-persistence', '--strict-mcp-config'];
+  // Streaming prints one event per line (the reply as it is written, then the same result envelope at the end).
+  const output = opts.stream ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'] : ['--output-format', 'json'];
+  const args = ['-p', ...output, '--json-schema', JSON.stringify(opts.schema), '--no-session-persistence', '--strict-mcp-config'];
+  if (opts.fast) args.push('--settings', JSON.stringify({ alwaysThinkingEnabled: false }));
   // Tool surface: nothing, or Read alone so the model can look at stills.
   args.push('--tools', withImages ? 'Read' : '');
   if (withImages) args.push('--add-dir', opts.imageDir!);
@@ -329,6 +340,38 @@ export function imagesInsideDir(imageDir: string | null | undefined, imagePaths:
   return imagePaths.every((p) => isAbsolute(p) && resolve(p).startsWith(root));
 }
 
+/**
+ * Count the answer's characters from the CLI's streamed events: text and the structured reply as it is typed
+ * (thinking is not counted). Calls back at most every 250 ms. Exported for tests.
+ */
+export function streamProgress(cb: (p: { chars: number }) => void): (chunk: string) => void {
+  let buf = '';
+  let chars = 0;
+  let last = 0;
+  return (chunk) => {
+    buf += chunk;
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    let grew = false;
+    for (const line of lines) {
+      if (!line.includes('"content_block_delta"')) continue;
+      try {
+        const ev = JSON.parse(line) as { type?: string; event?: { type?: string; delta?: { type?: string; text?: string; partial_json?: string } } };
+        const d = ev.type === 'stream_event' && ev.event?.type === 'content_block_delta' ? ev.event.delta : undefined;
+        const piece = d?.type === 'text_delta' ? d.text : d?.type === 'input_json_delta' ? d.partial_json : undefined;
+        if (piece) (chars += piece.length), (grew = true);
+      } catch {
+        /* a line that is not an event */
+      }
+    }
+    const now = Date.now();
+    if (grew && now - last >= 250) {
+      last = now;
+      cb({ chars });
+    }
+  };
+}
+
 /** Run one structured prompt through the local Claude Code CLI. */
 export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const started = Date.now();
@@ -337,11 +380,15 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
   if (!imagesInsideDir(opts.imageDir, opts.imagePaths)) return { ok: false, error: { code: 'failed', message: 'Still frames must be inside the project cache folder.' }, durationMs: elapsed() };
   const path = await findClaude(opts.claudePath);
   if (!path) return { ok: false, error: { code: 'not-found', message: 'Claude Code is not installed on this Mac (no "claude" command was found).' }, durationMs: elapsed() };
-  const out = await spawnClaude(path, buildArgs(opts), opts.prompt, {
+  const env = await claudeEnv(path);
+  if (opts.fast) env.MAX_THINKING_TOKENS = '0';
+  const progress = opts.onProgress ? streamProgress(opts.onProgress) : undefined;
+  const out = await spawnClaude(path, buildArgs({ ...opts, stream: !!opts.onProgress }), opts.prompt, {
     cwd: opts.imageDir && (opts.imagePaths?.length ?? 0) > 0 ? opts.imageDir : tmpdir(),
-    env: await claudeEnv(path),
+    env,
     signal: opts.signal,
     timeoutMs: opts.timeoutMs ?? 12 * 60_000,
+    onData: progress,
   });
   if (out.aborted) return { ok: false, error: { code: 'cancelled', message: 'Cancelled.' }, durationMs: elapsed() };
   if (out.timedOut) return { ok: false, error: { code: 'timeout', message: 'Claude Code did not answer in time. Nothing was changed.' }, durationMs: elapsed() };

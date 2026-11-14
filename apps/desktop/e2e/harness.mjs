@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-export async function launch({ profile, settings = {} } = {}) {
+/** `args`: extra command-line switches for the app (for example Chromium's fake microphone). */
+export async function launch({ profile, settings = {}, args = [] } = {}) {
   const dir = profile ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cutaway-e2e-'));
   const userData = path.join(dir, 'userData');
   const libraryDir = path.join(dir, 'Library');
@@ -19,7 +20,7 @@ export async function launch({ profile, settings = {} } = {}) {
   fs.writeFileSync(settingsFile, JSON.stringify({ ...prev, libraryDir, exportDir, ...settings }));
   const env = { ...process.env, CUTAWAY_USER_DATA: userData, CUTAWAY_E2E: '1', CUTAWAY_CLAUDE: process.env.CUTAWAY_CLAUDE ?? 'off', CUTAWAY_CODEX: process.env.CUTAWAY_CODEX ?? 'off' };
   delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({ args: [root], cwd: root, env });
+  const app = await electron.launch({ args: [root, ...args], cwd: root, env });
   app.process().stderr?.on('data', (d) => { const t = d.toString(); if (/gone|Error|error/.test(t)) process.stdout.write(`[main] ${t}`); });
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1480, height: 940 }).catch(() => {});

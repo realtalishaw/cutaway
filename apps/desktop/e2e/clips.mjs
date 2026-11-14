@@ -111,7 +111,23 @@ try {
     return { stored: p.edit.clips ?? null, sources: p.sources.map((s) => [s.role, s.take ?? null, s.window ?? null]), duration: p.duration };
   });
   check('a project with one file has no clip list and is untouched by the clip model', single.stored === null && single.sources.every((s) => s[1] === null && s[2] === null) && Math.abs(single.duration - 6) < 0.1, JSON.stringify(single));
-  check('and shows no clips row', (await page.locator('[data-testid="clip-track"]').count()) === 0);
+  check('and still shows its one clip, so there is something to click, split and trim', (await page.locator('[data-testid="clip-block"]').count()) === 1);
+  // a click on the footage picks the clip under it
+  // the footage row: the simple timeline's video row, or the clip row of the detailed lanes
+  await page.waitForTimeout(600); // let the timeline finish sizing itself before measuring
+  const lane = await page.locator('[data-testid="clip-block"]').first().boundingBox();
+  await page.mouse.click(lane.x + lane.width * 0.4, lane.y + lane.height / 2);
+  await page.waitForTimeout(150);
+  check('a click on the footage selects the clip under it', (await state(() => window.__cutaway.useApp.getState().selection?.kind)) === 'clip');
+  check('and puts the playhead where you clicked', Math.abs((await state(() => window.__cutaway.usePlayback.getState().time)) - 6 * 0.4) < 0.3, String(await state(() => window.__cutaway.usePlayback.getState().time)));
+  // the scissors on the playhead split it there; undo leaves the project as it was
+  await page.locator('[data-testid="playhead-split"]').click();
+  await page.waitForTimeout(250);
+  check('the scissors on the playhead split the clip in two', (await page.locator('[data-testid="clip-block"]').count()) === 2);
+  await state(() => window.__cutaway.useApp.getState().undo());
+  await page.waitForTimeout(150);
+  check('undo makes it one clip again', (await page.locator('[data-testid="clip-block"]').count()) === 1);
+  await state(() => window.__cutaway.useApp.getState().select(null));
 
   // ───────────── more footage arrives: clips at the end, not B-roll ─────────────
   const report = await state(async (files) => {

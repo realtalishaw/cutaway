@@ -44,6 +44,8 @@ export interface FrameResources {
   cameraB: Drawable | null;
   broll: Drawable | null;
   backgroundImage: Drawable | null;
+  /** Frames of the animations showing now, by overlay id: transparent, the size of the output. */
+  motion?: Map<string, CanvasImageSource>;
   /** Person mattes (white = person) for camera cutout, time-aligned with each camera. */
   matteA?: Drawable | null;
   matteB?: Drawable | null;
@@ -324,6 +326,21 @@ function wrapLines(ctx: Ctx, text: string, maxWidth: number, maxLines: number): 
 }
 
 /** Graphics are sized from the short side (U), so they hold up in portrait and square outputs. */
+/** The box of the selected animation, in the editor only: where it is drawn, and that it can be moved. */
+function drawBoxOutline(ctx: Ctx, b: Rect, W: number, H: number) {
+  ctx.save();
+  const u = Math.min(W, H) / 540;
+  ctx.lineWidth = 1.5 * u;
+  ctx.setLineDash([6 * u, 4 * u]);
+  ctx.strokeStyle = 'rgba(255, 246, 224, 0.95)';
+  ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#fff6e0';
+  const k = 5 * u;
+  for (const [x, y] of [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]] as const) ctx.fillRect(x * W - k / 2, y * H - k / 2, k, k);
+  ctx.restore();
+}
+
 function drawOverlay(ctx: Ctx, o: Overlay, enter: number, exit: number, W: number, H: number) {
   const a = Math.min(enter, exit);
   if (a <= 0) return;
@@ -911,7 +928,13 @@ export function drawFrame(ctx: Ctx, state: FrameState, sources: FrameResources, 
   }
 
   for (const o of state.overlays) {
-    if (o.overlay.kind === 'text') {
+    if (o.overlay.kind === 'motion') {
+      // rendered at its own size: the whole frame, or the box the creator placed
+      const f = res.motion?.get(o.overlay.id);
+      const b = o.overlay.motion?.box;
+      if (f) b ? ctx.drawImage(f, b.x * W, b.y * H, b.w * W, b.h * H) : ctx.drawImage(f, 0, 0, W, H);
+      if (b && env.editor?.selectedOverlayId === o.overlay.id) drawBoxOutline(ctx, b, W, H);
+    } else if (o.overlay.kind === 'text') {
       const laid = drawTextOverlay(ctx, o.overlay, o.sinceIn, o.untilOut, W, H);
       if (laid && env.editor?.selectedOverlayId === o.overlay.id) drawTextSelection(ctx, laid.block, Math.min(W, H));
     } else drawOverlay(ctx, o.overlay, o.enter, o.exit, W, H);

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { flagsOf, fmtTime, historyOf, type DecisionMeta, type Project, type Range } from '@cutaway/core';
+import { flagsOf, fmtTime, historyOf, motionSuggestions, type DecisionMeta, type Project, type Range } from '@cutaway/core';
+import { acceptMotionSuggestion } from '../../motion/chatCards';
 import { checkpointNow, timeMapOf, useApp, useShownProject, type Selection } from '../../state/store';
 import './inspector/chat.css';
 import { Icon, type IconName } from '../../ui/icons';
@@ -59,6 +60,24 @@ function Flags({ project }: { project: Project }) {
   );
 }
 
+/** Animation ideas from what the creator says, offered when there are any; they become "Your call" cards. */
+function MotionIdeas({ project }: { project: Project }) {
+  const ideas = useMemo(() => (project.transcript?.hasSpeech ? motionSuggestions(project) : []), [project.transcript, project.edit.suggestions, project.edit.overlays, project.edit.cuts]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!ideas.length) return null;
+  const show = () => {
+    useApp.getState().edit((e, p) => ({ ...e, suggestions: [...e.suggestions, ...motionSuggestions(p)] }), 'Suggest animations');
+  };
+  return (
+    <div className="review-ideas" data-testid="motion-ideas">
+      <Icon name="sparkle" size={13} />
+      <span className="grow small">
+        {ideas.length === 1 ? 'An animation would fit one moment' : `Animations would fit ${ideas.length} moments`} in what you say ({[...new Set(ideas.map((i) => i.title.split(':')[0]!.toLowerCase()))].slice(0, 3).join(', ')}).
+      </span>
+      <Button size="sm" variant="ai" onClick={show} data-testid="motion-ideas-show">Show {ideas.length === 1 ? 'it' : 'them'}</Button>
+    </div>
+  );
+}
+
 /** What the editor did, most consequential first, each linked to its source and output time. */
 export function Review() {
   const project = useShownProject();
@@ -73,7 +92,7 @@ export function Review() {
     for (const c of e.cuts) out.push({ key: c.id, icon: 'scissors', title: `${c.kind === 'filler' ? 'Filler removed' : c.kind === 'silence' ? 'Pause shortened' : c.kind === 'trim' ? 'Trimmed' : c.kind === 'retake' ? 'Retake removed' : 'Cut'} · ${(c.end - c.start).toFixed(1)}s`, detail: c.meta.reason, range: c, meta: c.meta, sel: { kind: 'cut', id: c.id }, removed: true, action: { label: 'Restore', run: () => restoreOne(c.id) } });
     for (const l of e.layouts) out.push({ key: l.id, icon: l.mode === 'split' ? 'split' : l.mode === 'camera' ? 'camera' : l.mode === 'screen' ? 'screen' : 'layout', title: `${l.mode === 'overlay' ? 'Screen + camera' : l.mode === 'camera' ? `Camera ${l.camera}` : l.mode === 'split' ? `Split with camera ${l.camera}` : l.mode === 'presenter' ? `Camera ${l.camera} with screen inset` : 'Screen only'}`, detail: l.meta.reason, range: l, meta: l.meta, sel: { kind: 'layout', id: l.id } });
     for (const z of e.zooms) out.push({ key: z.id, icon: 'zoom', title: `Zoom ${z.scale.toFixed(1)}×`, detail: z.meta.reason, range: z, meta: z.meta, sel: { kind: 'zoom', id: z.id } });
-    for (const o of e.overlays) out.push({ key: o.id, icon: 'text', title: `“${o.text}”`, detail: o.meta.reason ?? o.kind, range: o, meta: o.meta, sel: { kind: 'overlay', id: o.id } });
+    for (const o of e.overlays) out.push({ key: o.id, icon: o.motion ? 'sparkle' : 'text', title: o.motion ? `Animation · ${o.motion.name}` : `“${o.text}”`, detail: o.meta.reason ?? (o.motion ? undefined : o.kind), range: o, meta: o.meta, sel: { kind: 'overlay', id: o.id } });
     for (const b of e.broll) out.push({ key: b.id, icon: 'broll', title: `B-roll · ${assetName(b.assetId)}`, detail: b.meta.reason, range: b, meta: b.meta, sel: { kind: 'broll', id: b.id } });
     for (const s of e.speeds) out.push({ key: s.id, icon: 'speed', title: `${s.speed}× speed`, detail: s.meta.reason, range: s, meta: s.meta, sel: { kind: 'speed', id: s.id } });
     return out.sort((a, b) => a.range.start - b.range.start);
@@ -109,6 +128,7 @@ export function Review() {
   if (!project.firstCut && rows.length === 0 && open.length === 0) {
     return (
       <div className="review">
+        <MotionIdeas project={project} />
         <Flags project={project} />
         <Empty icon="sparkle" title="No first cut yet" action={<Button variant="ai" icon="sparkle" onClick={() => useApp.getState().setView('brief')}>Create first cut</Button>}>
           This is the raw recording. You can edit by hand right away, or let Cutaway assemble a first cut for you to review.
@@ -132,12 +152,13 @@ export function Review() {
       ) : null}
 
       <Flags project={project} />
+      <MotionIdeas project={project} />
 
       {open.length ? (
         <section>
           <div className="eyebrow review-head">Your call · {open.length}</div>
           {open.map((s) => (
-            <div key={s.id} className="suggestion">
+            <div key={s.id} className="suggestion" data-testid="suggestion" data-kind={s.kind}>
               <div className="row between">
                 <span className="review-title">{s.title}</span>
                 <Times project={project} range={s} />
@@ -146,8 +167,14 @@ export function Review() {
               <div className="row">
                 <Button size="sm" variant="ghost" icon="play" onClick={() => seekSource(project, Math.max(0, s.start - 0.5))}>Play it</Button>
                 <div className="grow" />
-                <Button size="sm" onClick={() => dismiss(s.id)}>{s.apply.length ? 'Keep both' : 'Dismiss'}</Button>
-                {s.apply.length ? <Button size="sm" variant="ai" icon="check" onClick={() => accept(s.id)}>{s.kind === 'retake' ? 'Remove retake' : 'Apply'}</Button> : null}
+                <Button size="sm" onClick={() => dismiss(s.id)} data-testid="suggestion-dismiss">{s.apply.length ? 'Keep both' : 'Dismiss'}</Button>
+                {s.kind === 'animation' && s.motion ? (
+                  <Button size="sm" variant="ai" icon="sparkle" data-testid="suggestion-add-motion" onClick={() => void acceptMotionSuggestion(s.id, project).catch((err: unknown) => useApp.getState().toast((err as Error).message, 'error'))}>
+                    Add animation
+                  </Button>
+                ) : s.apply.length ? (
+                  <Button size="sm" variant="ai" icon="check" onClick={() => accept(s.id)}>{s.kind === 'retake' ? 'Remove retake' : 'Apply'}</Button>
+                ) : null}
               </div>
             </div>
           ))}

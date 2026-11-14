@@ -1,5 +1,9 @@
 /** Creator actions for free text, music clips and sound effects. Every one is a single undoable step through the store. */
 import {
+  MAX_POINT_LEVEL,
+  splitMusicClip,
+  fitMusicClip,
+  volumeAt,
   DEFAULT_SOUND_GAIN,
   addSounds,
   cleanCue,
@@ -20,6 +24,7 @@ import {
   viewChangeMoments,
   withMusic,
   type MusicClip,
+  type VolumePoint,
   type Overlay,
   type Project,
   type SoundCue,
@@ -137,6 +142,66 @@ export function retimeMusic(id: string, mode: 'move' | 'l' | 'r', start: number,
     const patch = mode === 'move' ? { start: Math.max(0, start) } : mode === 'l' ? trimMusicStart(clip, start) : { length: end - clip.start };
     return updateMusicClip(e, p.sources, id, patch, p.revision + 1);
   }, mode === 'move' ? 'Move music' : 'Trim music', `music:${id}:${mode}`);
+}
+
+/** Split the music clip at the playhead (output time). The new second part is selected. False when the playhead is not inside it, or too near an edge. */
+export function splitMusicAtPlayhead(id: string): boolean {
+  const at = usePlayback.getState().time;
+  let right = '';
+  app().edit((e, p) => {
+    const clips = musicClipsOf(e, p.sources);
+    const clip = clips.find((c) => c.id === id);
+    const parts = clip ? splitMusicClip(clip, at) : null;
+    if (!clip || !parts) return e;
+    const file = p.sources.find((s) => s.id === clip.sourceId);
+    const [a, b] = parts.map((x) => fitMusicClip({ ...x, meta: { ...x.meta, origin: 'creator', revision: p.revision + 1 } }, file));
+    right = b!.id;
+    return withMusic(e, clips.flatMap((c) => (c.id === id ? [a!, b!] : [c])));
+  }, 'Split music');
+  if (right) app().select({ kind: 'music', id: right });
+  return !!right;
+}
+
+/** Volume points of a clip, changed through `fn`. Points are seconds into the clip; levels are multiples of the clip's level. */
+function editVolume(id: string, fn: (points: VolumePoint[], clip: MusicClip) => VolumePoint[], label: string, coalesceKey?: string) {
+  app().edit((e, p) => {
+    const clip = musicClipsOf(e, p.sources).find((c) => c.id === id);
+    if (!clip) return e;
+    const next = fn([...(clip.volume ?? [])], clip);
+    return updateMusicClip(e, p.sources, id, { volume: next.length ? next : undefined }, p.revision + 1);
+  }, label, coalesceKey ? `music:${id}:${coalesceKey}` : undefined);
+}
+
+/** Adds a volume point `t` seconds into the clip, at the level the music already has there unless one is given. Returns its index. */
+export function addVolumePoint(id: string, t: number, level?: number): number {
+  let index = -1;
+  editVolume(id, (points, clip) => {
+    const at = Math.max(0, Math.min(clip.length, t));
+    if (points.some((v) => Math.abs(v.t - at) < 0.02)) return points;
+    const next = [...points, { t: at, level: level ?? volumeAt(points, at) }].sort((a, b) => a.t - b.t);
+    index = next.findIndex((v) => v.t === at);
+    return next;
+  }, 'Add volume point');
+  return index;
+}
+
+/** Drag of one volume point: keeps it between its neighbours. Drags coalesce into one undo step. */
+export function moveVolumePoint(id: string, index: number, t: number, level: number) {
+  editVolume(id, (points, clip) => {
+    if (!points[index]) return points;
+    const lo = index > 0 ? points[index - 1]!.t + 0.01 : 0;
+    const hi = index < points.length - 1 ? points[index + 1]!.t - 0.01 : clip.length;
+    points[index] = { t: Math.max(lo, Math.min(hi, t)), level: Math.max(0, Math.min(MAX_POINT_LEVEL, level)) };
+    return points;
+  }, 'Move volume point', `volume:${index}`);
+}
+
+export function removeVolumePoint(id: string, index: number) {
+  editVolume(id, (points) => points.filter((_, i) => i !== index), 'Remove volume point');
+}
+
+export function clearVolumePoints(id: string) {
+  editVolume(id, () => [], 'Flatten music volume');
 }
 
 /** Ends the clip with the video and fades it out there. */

@@ -141,3 +141,6 @@
 .controller-pill .ctl.flag { position: relative; }
 .controller-pill .ctl.flag.hit { background: rgba(242, 184, 75, 0.28); color: #f2b84b; }
 .controller-pill .ctl.flag .count { position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: #f2b84b; color: #1b1300; font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; }
+.btn.rec-prompter { margin-top: 2px; gap: 6px; color: var(--text-2); }
+.btn.rec-prompter.on { color: var(--accent-2); background: rgba(114, 88, 255, .12); }
+.rec-demo-note { display: inline-flex; align-items: center; gap: 5px; margin-top: 2px; padding: 3px 9px; border-radius: 999px; background: rgba(114, 88, 255, .14); color: #c8bdff; }

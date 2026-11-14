@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { fmtTime } from '@cutaway/core';
 import type { BrowserTabTarget, CameraInfo, CountdownState, DeviceList, DisplayInfo, ExtraPermission, Permission, PermissionKind, PreflightResult, RecordConfig, RecordEvent, TakeManifest, WindowInsets } from '@shared/api';
 import { useApp } from '../state/store';
-import { backToLibrary, errorText, pickAndImport, setRecordingActive } from '../state/actions';
+import { backToLibrary, errorText, openProjectAt, pickAndImport, setRecordingActive, useDemoTake } from '../state/actions';
 import { addTakeToProject, describeTake } from '../state/recording';
 import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Meter, Segmented, Toggle, fmtBytes } from '../ui/kit';
@@ -314,6 +314,8 @@ export function Record() {
   const [audioApps, setAudioApps] = useState<string[]>([]);
   const [prefs, setPrefsState] = useState<Prefs>(loadPrefs);
   const [notesOpen, setNotesOpen] = useState(() => localStorage.getItem(NOTES_OPEN_KEY) === '1');
+  // Recording a demo of Cutaway: only for this session, so an ordinary recording never shows Cutaway by surprise.
+  const [demo, setDemo] = useState(false);
   const [resizeNote, setResizeNote] = useState<{ tone: 'info' | 'warn'; text: string } | null>(null);
   const [resizing, setResizing] = useState(false);
   const initialised = useRef(false);
@@ -404,22 +406,25 @@ export function Record() {
     } catch {
       /* ignore */
     }
-    void api().app.notesWindow(on).catch((e) => useApp.getState().toast(`Speaker notes could not be opened: ${errorText(e)}`, 'error'));
+    void api().app.notesWindow(on).catch((e) => useApp.getState().toast(`The teleprompter could not be opened: ${errorText(e)}`, 'error'));
   }, []);
   useEffect(() => {
     if (localStorage.getItem(NOTES_OPEN_KEY) === '1') void api().app.notesWindow(true).catch(() => {});
     // the notes window closing itself updates this flag
     const onStorage = (e: StorageEvent) => e.key === NOTES_OPEN_KEY && setNotesOpen(e.newValue === '1');
     window.addEventListener('storage', onStorage);
+    // closed from its own window or from the recording controls
+    const off = api().app.onPrompter((s) => setNotesOpen(s.visible));
     return () => {
+      off();
       window.removeEventListener('storage', onStorage);
       void api().app.notesWindow(false).catch(() => {});
     };
   }, []);
 
   const display = devices?.displays.find((d) => d.id === displayId) ?? devices?.displays[0] ?? null;
-  // Cutaway's own windows are left out of every capture, so they are not offered as targets.
-  const windows = useMemo(() => (devices?.windows ?? []).filter((w) => w.bundleId !== 'studio.cutaway.app' && w.bundleId !== 'com.github.Electron'), [devices]);
+  // Cutaway's own windows are left out of every capture, so they are not offered as targets (unless recording a demo of it).
+  const windows = useMemo(() => (devices?.windows ?? []).filter((w) => demo || (w.bundleId !== 'studio.cutaway.app' && w.bundleId !== 'com.github.Electron')), [devices, demo]);
   const win = windows.find((w) => w.id === windowId) ?? null;
   const externals = devices?.externalDevices ?? [];
   const ext = externals.find((d) => d.id === extId) ?? null;
@@ -494,9 +499,9 @@ export function Record() {
     let screen: RecordConfig['screen'] = null;
     if (screenReady) {
       const showCursor = cursor === 'baked';
-      const hide = { hideDesktopIcons: prefs.hideIcons || undefined, hideNotifications: prefs.hideNotifs || undefined };
+      const hide = { hideDesktopIcons: prefs.hideIcons || undefined, hideNotifications: prefs.hideNotifs || undefined, ...(demo ? { includeCutaway: true } : {}) };
       if (mode === 'display' && display) screen = { type: 'display', displayId: display.id, showCursor, ...hide };
-      else if (mode === 'window' && win) screen = { type: 'window', windowId: win.id, showCursor };
+      else if (mode === 'window' && win) screen = { type: 'window', windowId: win.id, showCursor, ...(demo ? { includeCutaway: true } : {}) };
       // A tab is its browser window with the tab strip and toolbar left out.
       else if (mode === 'tab' && tabTarget) screen = { type: 'window', windowId: tabTarget.windowId, crop: pageCrop(tabTarget, trimTop), showCursor };
       else if (mode === 'region' && region && display) screen = { type: 'region', displayId: display.id, rect: { x: display.x + region.x, y: display.y + region.y, width: region.width, height: region.height }, showCursor, ...hide };
@@ -515,7 +520,7 @@ export function Record() {
       // Stills of the camera for the floating self-view; the recorder skips them while nobody is looking.
       cameraPreview: { fps: 12, width: 480 },
     };
-  }, [devices, cameraA, cameraB, cameraBlocked, camerasOn, screenReady, display, win, ext, region, tabTarget, trimTop, mode, cursor, fps, microphone, micBlocked, audioMode, audioApps, perms.screen, prefs.hideIcons, prefs.hideNotifs, prefs.captureKeys]);
+  }, [devices, cameraA, cameraB, cameraBlocked, camerasOn, screenReady, display, win, ext, region, tabTarget, trimTop, mode, cursor, fps, microphone, micBlocked, audioMode, audioApps, perms.screen, prefs.hideIcons, prefs.hideNotifs, prefs.captureKeys, demo]);
 
   const sourceCount = config ? (config.screen ? 1 : 0) + config.cameras.length + (config.microphone ? 1 : 0) + (config.systemAudio ? 1 : 0) : 0;
   const hasPicture = !!config && (!!config.screen || config.cameras.length > 0);
@@ -546,6 +551,13 @@ export function Record() {
     setPhase('finishing');
     setRecordingActive(false);
     await api().app.recordingMode(false).catch(() => {});
+    // a demo take may end anywhere in the app: the take goes into the project it was recorded for
+    const demoPath = useDemoTake.getState().projectPath;
+    useDemoTake.setState({ projectPath: null });
+    if (demoPath) {
+      if (useApp.getState().projectPath !== demoPath) await openProjectAt(demoPath);
+      useApp.getState().go('record');
+    }
     try {
       const r = await run();
       const app = useApp.getState();
@@ -674,11 +686,15 @@ export function Record() {
       takeDirRef.current = takeDir;
       setRecordingActive(true);
       setPhase('recording');
-      await api().app.recordingMode(true, { cameras: takeCameras.current.length ? takeCameras.current : cfg.cameras.map((c) => `camera${c.slot}`) });
+      const isDemo = !!cfg.screen?.includeCutaway;
+      if (isDemo) useDemoTake.setState({ projectPath });
+      await api().app.recordingMode(true, { cameras: takeCameras.current.length ? takeCameras.current : cfg.cameras.map((c) => `camera${c.slot}`), keepWindow: isDemo });
+      if (isDemo) useApp.getState().toast('Recording Cutaway. Go anywhere in the app; stop from the recording controls when you are done.');
     } catch (e) {
       const code = (e as { code?: string }).code;
       setStartError(code === 'permission-denied' ? `${errorText(e)} Check the permissions, or record with the remaining sources.` : `${errorText(e)} Nothing was recorded. Press Start recording to try again.`);
       setPhase('setup');
+      useDemoTake.setState({ projectPath: null });
       // Bring Cutaway back in front, with the reason on screen.
       void api().app.recordingMode(false).catch(() => {});
       void refresh();
@@ -973,7 +989,11 @@ export function Record() {
         </div>
       ) : null}
       {startButton}
+      <button className={`btn ghost sm rec-prompter${notesOpen ? ' on' : ''}`} onClick={() => toggleNotes(!notesOpen)} aria-pressed={notesOpen} data-testid="record-prompter" title="Your script scrolls in a floating window over your screen or camera. It is never recorded.">
+        <Icon name="text" size={13} /> {notesOpen ? 'Hide teleprompter' : 'Teleprompter'}
+      </button>
       <div className="tiny target-note">{cannotStart && !loading ? cannotStart : parts.length ? parts.join(' · ') : ''}</div>
+      {demo && !cannotStart ? <div className="tiny rec-demo-note" data-testid="record-demo-note"><Icon name="eye" size={11} /> Cutaway will be in this recording. It stays open so you can demo it.</div> : null}
     </div>
   );
 
@@ -1337,7 +1357,13 @@ export function Record() {
                 checked={prefs.captureKeys}
                 onChange={(v) => setPrefs({ captureKeys: v })}
               />
-              <Toggle label="Show speaker notes" hint="A floating notepad that is not recorded." checked={notesOpen} onChange={toggleNotes} />
+              <Toggle
+                label="Record Cutaway too (for demos)"
+                hint="Cutaway stays open and is in the recording, menus and dialogs included, so you can show how it works. The recording controls, teleprompter, countdown and camera bubble are still left out. Only for this session."
+                checked={demo}
+                onChange={setDemo}
+              />
+              <Toggle label="Teleprompter" hint="Your script scrolls in a floating window you can put anywhere. It is never recorded, and it starts with the take." checked={notesOpen} onChange={toggleNotes} />
               <Toggle
                 label="Show my camera while recording"
                 hint="A floating bubble only you can see. The camera is its own track, so the bubble is never in the screen recording."
