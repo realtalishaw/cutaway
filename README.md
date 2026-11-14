@@ -13,7 +13,9 @@ export the video with its captions, thumbnail, title and chapters.
   **your own** ElevenLabs or fal.ai key. Cutaway has no account and no server.
 - MIT licensed. See [LICENSE](LICENSE).
 
-A short list of everything it does is in **[docs/features](docs/features/README.md)**.
+**New to video editing?** Start with the beginner guides and short video tutorials at
+**[cutaway-docs.mintlify.site](https://cutaway-docs.mintlify.site)**. A short list of everything Cutaway does is in
+**[docs/features](docs/features/README.md)**.
 
 ---
 
@@ -113,7 +115,8 @@ video here from a text request ("cut this down, add a title and captions, and
 export it"). Open **Settings → AI tools** and click **Connect** next to Claude
 Code or Codex. You watch every change happen in Cutaway, and you can keep
 editing by hand afterwards. Details and the full tool list:
-**[docs/mcp.md](docs/mcp.md)**.
+**[docs/mcp.md](docs/mcp.md)**, or the step-by-step guide in the
+[docs](https://cutaway-docs.mintlify.site/ai/make-videos-from-claude-or-codex).
 
 ### Where your work lives
 
@@ -155,6 +158,7 @@ packages/ai       prompts, playbooks, schemas, and the Claude Code and Codex run
 native            Swift helper `cutaway-native`: capture, probe, stills, on-device speech, mux
 fixtures          script that generates test footage (nothing is checked in)
 docs              features, engineering report, native protocol, product docs
+docs-site         the user docs and tutorials (Mintlify), published on every push to main
 ```
 
 [docs/ENGINEERING_REPORT.md](docs/ENGINEERING_REPORT.md) explains how it is

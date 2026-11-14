@@ -1,7 +1,8 @@
 # Make videos from Claude Code or Codex
 
 Cutaway includes an [MCP](https://modelcontextprotocol.io) server, `cutaway-mcp`, so the AI tool you already use
-can make videos in Cutaway from a text request:
+can make videos in Cutaway from a text request (a beginner-friendly version of this page is in the
+[Cutaway docs](https://cutaway-docs.mintlify.site/ai/make-videos-from-claude-or-codex)):
 
 > Make a finished clip from ~/Movies/settings-tour.mov: cut anything slow, add a title, a subscribe button near the
 > end, bold captions, and export it.
