@@ -1,11 +1,20 @@
 import { useState } from 'react';
-import { fmtTime, type DecisionMeta, type LayoutMode, type OverlayKind, type Project, type Range } from '@cutaway/core';
+import { fmtTime, type DecisionMeta, type GraphicKind, type LayoutMode, type Project, type Range } from '@cutaway/core';
 import { resolveSourcePath } from '@shared/api';
 import { useApp, useProject } from '../../../state/store';
 import { Icon } from '../../../ui/icons';
 import { Button, Field, Segmented, Slider, Toggle } from '../../../ui/kit';
-import { addBroll, addMask, addOverlay, addZoom, camerasFor, cutRange, lockRange, patchItem, removeSelected, restore, restoreOne, setLayout, setSpeed, toggleItemLock } from '../ops';
+import { addBroll, addMask, addOverlay, addZoom, camerasFor, cutRange, lockRange, patchItem, removeSelected, restore, restoreOne, seekSource, setLayout, setSpeed, toggleItemLock } from '../ops';
 import { Section, TimesRow, Why, app, pct } from './shared';
+import { musicClipsOf, soundsOf } from '@cutaway/core';
+import { addText, setOverlaySound } from '../titleSoundOps';
+import { CueField } from './CueField';
+import { MusicEditor, SoundEditor } from './SoundEditors';
+import { TextEditor } from './TextEditor';
+import { ClipEditor } from './ClipEditor';
+import { BROLL_FADE, punchInOf, punchJoins } from '@cutaway/core';
+import { timeMapOf } from '../../../state/store';
+import { setCutPunchSkipped } from '../transitionOps';
 
 function RangeActions({ project, range, pickTarget }: { project: Project; range: Range; pickTarget: (what: 'mask') => void }) {
   const [instruction, setInstruction] = useState('');
@@ -40,7 +49,8 @@ function RangeActions({ project, range, pickTarget }: { project: Project; range:
       <Section title="Add">
         <div className="grid-2">
           {hasScreen ? <Button icon="zoom" onClick={() => addZoom(range)}>Zoom</Button> : null}
-          <Button icon="text" onClick={() => addOverlay(range, 'callout', 'Callout')}>Callout</Button>
+          <Button icon="text" onClick={() => (seekSource(project, range.start), addText('plain'))}>Text</Button>
+          <Button icon="chat" onClick={() => addOverlay(range, 'callout', 'Callout')}>Callout</Button>
           <Button icon="film" onClick={() => addOverlay(range, 'section-card', 'Section title')}>Section card</Button>
           <Button icon="user" onClick={() => addOverlay(range, 'lower-third', 'Name')}>Lower third</Button>
           <Button icon="mask" onClick={() => (addMask(range, hasScreen ? 'screen' : 'cameraA'), pickTarget('mask'))}>Mask</Button>
@@ -75,6 +85,7 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
   const e = project.edit;
   if (!sel) return null;
   if (sel.kind === 'range' || sel.kind === 'words') return <RangeActions project={project} range={sel.range} pickTarget={pickTarget} />;
+  if (sel.kind === 'clip') return <ClipEditor id={sel.id} />;
   const del = (
     <Button variant="ghost" size="sm" icon="trash" onClick={removeSelected} aria-label="Remove" title="Remove (⌫)" />
   );
@@ -91,6 +102,14 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
         <Why meta={c.meta} />
         <Button icon="undo" onClick={() => restoreOne(c.id)}>Restore this footage</Button>
         <div className="tiny dim">Restored footage is protected from later AI cleanup.</div>
+        {(() => {
+          // Punch-in on jump cuts: say what happens at this cut and let the creator leave it out.
+          if (!punchInOf(e).enabled) return null;
+          const j = punchJoins(project, timeMapOf(project)).find((x) => x.cutIds.includes(c.id));
+          if (!j) return null;
+          if (!j.qualifies) return <div className="tiny dim" data-testid="cut-punch-why">No punch-in here: {j.why === 'clip' ? 'this cut is on a clip change.' : j.why === 'zoom' ? 'a zoom is active at this cut.' : 'the picture is not one full-frame camera shot on both sides.'}</div>;
+          return <Toggle label="Punch in at this cut" hint={j.skipped ? 'Left out: the framing stays as it was.' : j.punched ? 'The shot after this cut is punched in.' : 'The shot after this cut returns to normal framing.'} checked={!j.skipped} onChange={(v) => setCutPunchSkipped(j.cutIds, !v)} />;
+        })()}
       </Section>
     );
   }
@@ -137,10 +156,11 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
   if (sel.kind === 'overlay') {
     const o = e.overlays.find((x) => x.id === sel.id);
     if (!o) return null;
+    if (o.kind === 'text') return <TextEditor project={project} overlay={o} />;
     return (
       <Section title="Graphic" action={<div className="row gap-2">{lockBtn('overlays', o.meta)}{del}</div>}>
         <TimesRow project={project} range={o} />
-        <Segmented full value={o.kind} onChange={(k: OverlayKind) => patchItem('overlays', o.id, { kind: k }, 'Graphic type', false)} options={[{ value: 'callout', label: 'Callout' }, { value: 'section-card', label: 'Section' }, { value: 'lower-third', label: 'Lower third' }]} />
+        <Segmented full value={o.kind} onChange={(k: GraphicKind) => patchItem('overlays', o.id, { kind: k }, 'Graphic type', false)} options={[{ value: 'callout', label: 'Callout' }, { value: 'section-card', label: 'Section' }, { value: 'lower-third', label: 'Lower third' }]} />
         <Field label="Text">
           <input className="input" value={o.text} maxLength={90} onChange={(ev) => patchItem('overlays', o.id, { text: ev.target.value }, 'Edit text')} />
         </Field>
@@ -151,9 +171,20 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
         ) : (
           <Button icon="cursor" onClick={() => pickTarget('callout')}>Click the preview to place it</Button>
         )}
+        <Field label="Sound as it appears">
+          <CueField value={o.sound ?? null} sources={project.sources} onChange={(cue, coalesce) => setOverlaySound(o.id, cue, coalesce)} />
+        </Field>
         <Why meta={o.meta} />
       </Section>
     );
+  }
+  if (sel.kind === 'music') {
+    const clip = musicClipsOf(e, project.sources).find((x) => x.id === sel.id);
+    return clip ? <MusicEditor project={project} clip={clip} /> : null;
+  }
+  if (sel.kind === 'sound') {
+    const sound = soundsOf(e).find((x) => x.id === sel.id);
+    return sound ? <SoundEditor project={project} sound={sound} /> : null;
   }
   if (sel.kind === 'broll') {
     const b = e.broll.find((x) => x.id === sel.id);
@@ -175,6 +206,8 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
           <Segmented full value={b.fit} onChange={(f) => patchItem('broll', b.id, { fit: f }, 'B-roll fit', false)} options={[{ value: 'cover', label: 'Fill frame' }, { value: 'contain', label: 'Show all' }]} />
         </Field>
         <Toggle label="Use this clip's sound" hint="Off keeps your narration only." checked={b.useAssetAudio} onChange={(v) => patchItem('broll', b.id, { useAssetAudio: v }, 'B-roll audio', false)} />
+        <Slider label="Fade in" min={0} max={BROLL_FADE.max} step={0.05} value={b.fadeIn ?? BROLL_FADE.standard} format={(v) => (v < 0.01 ? 'Hard cut' : `${v.toFixed(2)}s`)} onChange={(v) => patchItem('broll', b.id, { fadeIn: v }, 'B-roll fade in')} />
+        <Slider label="Fade out" min={0} max={BROLL_FADE.max} step={0.05} value={b.fadeOut ?? BROLL_FADE.standard} format={(v) => (v < 0.01 ? 'Hard cut' : `${v.toFixed(2)}s`)} onChange={(v) => patchItem('broll', b.id, { fadeOut: v }, 'B-roll fade out')} />
         <div className="why">
           <div className="eyebrow" style={{ marginBottom: 6 }}>Where it came from</div>
           <div className="small">{asset?.name ?? 'Missing asset'}</div>

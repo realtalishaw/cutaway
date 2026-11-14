@@ -9,6 +9,8 @@ import {
   manualCut,
   meta,
   removeById,
+  removeMusicClip,
+  soundsOf,
   restoreCut,
   restoreRange,
   uid,
@@ -19,14 +21,15 @@ import {
   type EditState,
   type LayoutMode,
   type Mask,
-  type OverlayKind,
+  type GraphicKind,
   type Project,
   type Range,
 } from '@cutaway/core';
 import { timeMapOf, useApp, usePlayback, type Selection } from '../../state/store';
+import { removeClipById } from './clipOps';
 
 type Lane = 'cuts' | 'speeds' | 'layouts' | 'zooms' | 'overlays' | 'broll' | 'masks' | 'locks' | 'suggestions';
-export const LANE_OF: Record<NonNullable<Selection>['kind'], Lane | null> = { cut: 'cuts', speed: 'speeds', layout: 'layouts', zoom: 'zooms', overlay: 'overlays', broll: 'broll', mask: 'masks', lock: 'locks', suggestion: 'suggestions', range: null, words: null };
+export const LANE_OF: Record<NonNullable<Selection>['kind'], Lane | null> = { cut: 'cuts', speed: 'speeds', layout: 'layouts', zoom: 'zooms', overlay: 'overlays', broll: 'broll', mask: 'masks', lock: 'locks', suggestion: 'suggestions', music: null, sound: null, clip: null, range: null, words: null };
 
 const app = () => useApp.getState();
 
@@ -117,7 +120,7 @@ export function setLayout(range: Range, mode: LayoutMode, camera?: CameraSlot) {
   if (id) app().select({ kind: 'layout', id });
 }
 
-export function addOverlay(range: Range, kind: OverlayKind, text: string) {
+export function addOverlay(range: Range, kind: GraphicKind, text: string) {
   let id = '';
   app().edit((e, p) => {
     const next = applyOps(e, [{ op: 'overlay', kind, start: range.start, end: Math.min(range.end, range.start + (kind === 'section-card' ? 3 : 6)), text }], 'creator', p.revision + 1);
@@ -165,6 +168,11 @@ export function removeSelected() {
   if (!sel) return;
   if (sel.kind === 'range' || sel.kind === 'words') return cutRange(sel.range, sel.kind === 'words' ? 'transcript' : 'manual');
   if (sel.kind === 'cut') return restoreOne(sel.id);
+  if (sel.kind === 'clip') return void removeClipById(sel.id);
+  if (sel.kind === 'music' || sel.kind === 'sound') {
+    app().edit((e, p) => (sel.kind === 'music' ? removeMusicClip(e, p.sources, sel.id) : { ...e, sounds: soundsOf(e).filter((x) => x.id !== sel.id) }), sel.kind === 'music' ? 'Remove music' : 'Remove sound');
+    return app().select(null);
+  }
   const lane = LANE_OF[sel.kind];
   if (!lane) return;
   if (sel.kind === 'suggestion') app().edit((e) => dismissSuggestion(e, sel.id), 'Dismiss suggestion');

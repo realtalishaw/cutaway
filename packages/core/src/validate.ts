@@ -1,6 +1,7 @@
 import type { CameraSlot, Confidence, EditOp, LayoutMode, Project, Range, RejectedOp, ValidationResult, Word } from './types';
 import { clamp, intersectAll, subtractAll } from './ranges';
-import { cameraSource, coverage, sourceByRole } from './sync';
+import { cameraSource, roleCoverage, sourceByRole } from './sync';
+import { clipsOf, playingClips, splitAtClips, withinOneClip } from './clips';
 
 const CUT_KINDS = ['trim', 'silence', 'filler', 'retake', 'transcript', 'manual', 'pacing'] as const;
 const LAYOUTS: LayoutMode[] = ['screen', 'camera', 'overlay', 'split', 'presenter'];
@@ -55,15 +56,41 @@ export function validateOps(project: P, raw: unknown, opts: ValidateOptions): Va
     return result;
   }
   for (const item of raw.slice(0, 2000)) {
-    for (const outcome of validateOne(project, item, opts)) {
-      if ('code' in outcome) result.rejected.push(outcome);
-      else {
-        result.accepted.push(outcome.op);
-        if (outcome.note) result.adjusted.push({ op: outcome.op, note: outcome.note });
+    for (const piece of atClipBoundaries(project, item)) {
+      for (const outcome of validateOne(project, piece.item, opts)) {
+        if ('code' in outcome) result.rejected.push(outcome);
+        else {
+          result.accepted.push(outcome.op);
+          const note = outcome.note ?? piece.note;
+          if (note) result.adjusted.push({ op: outcome.op, note });
+        }
       }
     }
   }
   return result;
+}
+
+/**
+ * No decision may straddle two clips: the clips can be moved apart at any time. Removals, speed
+ * changes and views are split at the boundary (one piece per clip); a zoom, graphic, B-roll insert
+ * or suggestion stays whole inside the clip that holds most of it.
+ */
+function atClipBoundaries(project: P, item: unknown): { item: unknown; note?: string }[] {
+  if (!project.edit.clips || !item || typeof item !== 'object') return [{ item }];
+  const clips = clipsOf(project);
+  if (playingClips(clips).length < 2) return [{ item }];
+  const o = item as Record<string, unknown>;
+  if (!num(o.start) || !num(o.end) || o.end <= o.start) return [{ item }];
+  const range = { start: clamp(o.start, 0, project.duration), end: clamp(o.end, 0, project.duration) };
+  if (o.op === 'cut' || o.op === 'speed' || o.op === 'layout') {
+    const pieces = splitAtClips(clips, range);
+    if (pieces.length < 2) return [{ item }];
+    return pieces.map((p) => ({ item: { ...o, start: p.start, end: p.end }, note: 'Split where one clip ends and the next begins.' }));
+  }
+  const fit = withinOneClip(clips, range);
+  if (!fit.clipped) return [{ item }];
+  const nested = Array.isArray(o.apply) ? { apply: o.apply.flatMap((n) => atClipBoundaries(project, n).map((x) => x.item)) } : {};
+  return [{ item: { ...o, ...nested, start: fit.range.start, end: fit.range.end }, note: 'Kept inside one clip.' }];
 }
 
 type Outcome = RejectedOp | { op: EditOp; note?: string };
@@ -154,13 +181,15 @@ function validateOne(project: P, item: unknown, opts: ValidateOptions): Outcome[
       if (!LAYOUTS.includes(o.mode as LayoutMode)) return reject(item, 'bad-value', 'Unknown layout.');
       const mode = o.mode as LayoutMode;
       const screen = sourceByRole(project, 'screen');
+      const several = !!project.edit.clips;
       const needsScreen = mode !== 'camera';
       const needsCam = mode !== 'screen';
       let allowed: Range[] = free(range, 0.5);
       let note = lockedNote(allowed, range);
       if (needsScreen) {
         if (!screen) return reject(item, 'no-coverage', 'This project has no screen source.');
-        allowed = intersectAll(allowed, coverage(screen));
+        allowed = intersectAll(allowed, roleCoverage(project, 'screen'));
+        if (several && allowed.every((p) => p.end - p.start < 0.5)) return reject(item, 'no-coverage', 'The clip here has no screen recording.');
       }
       let camera: CameraSlot = o.camera === 'B' ? 'B' : 'A';
       if (needsCam) {
@@ -173,7 +202,7 @@ function validateOne(project: P, item: unknown, opts: ValidateOptions): Outcome[
           note = `Camera ${camera === 'A' ? 'B' : 'A'} does not exist; used camera ${camera}.`;
         }
         const before = allowed;
-        allowed = intersectAll(allowed, coverage(cam));
+        allowed = intersectAll(allowed, roleCoverage(project, cam.role));
         if (JSON.stringify(before) !== JSON.stringify(allowed)) note = `Clipped to where camera ${camera} has footage.`;
       }
       allowed = allowed.filter((p) => p.end - p.start >= 0.5);
@@ -186,8 +215,9 @@ function validateOne(project: P, item: unknown, opts: ValidateOptions): Outcome[
       if (!sourceByRole(project, 'screen')) return reject(item, 'no-coverage', 'Zooms need a screen source.');
       if (!num(o.scale)) return reject(item, 'bad-shape', 'Zoom needs a scale.');
       const scale = clamp(o.scale, 1.1, 4);
-      const pieces = free(range, 0.6);
-      if (pieces.length === 0) return reject(item, 'too-short', 'Zoom is too short or locked.');
+      // a zoom only means something where there is a screen picture (a clip may be camera only)
+      const pieces = (project.edit.clips ? intersectAll(free(range, 0.6), roleCoverage(project, 'screen')) : free(range, 0.6)).filter((p) => p.end - p.start >= 0.6);
+      if (pieces.length === 0) return reject(item, project.edit.clips && free(range, 0.6).length ? 'no-coverage' : 'too-short', project.edit.clips && free(range, 0.6).length ? 'The clip here has no screen recording to zoom into.' : 'Zoom is too short or locked.');
       const x = num(o.x) ? clamp(o.x, 0, 1) : undefined;
       const y = num(o.y) ? clamp(o.y, 0, 1) : undefined;
       const follow = typeof o.follow === 'boolean' ? o.follow : x === undefined;

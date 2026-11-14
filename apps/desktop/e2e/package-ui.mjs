@@ -386,7 +386,7 @@ try {
     await shot('09f-voiceover');
     await page.getByRole('button', { name: 'Add to project' }).click();
     await page.waitForSelector('.vo', { state: 'detached', timeout: 60000 }).catch(() => {});
-    const readVo = () => page.evaluate(() => { const p = window.__cutaway.useApp.getState().project; const s = p.sources.find((x) => x.name.startsWith('Voiceover')); return s ? { role: s.role, path: s.path, duration: s.duration, music: p.edit.audio.music?.sourceId === s.id, master: p.edit.audio.masterVoiceId === s.id } : null; });
+    const readVo = () => page.evaluate(() => { const p = window.__cutaway.useApp.getState().project; const s = p.sources.find((x) => x.name.startsWith('Voiceover')); return s ? { role: s.role, path: s.path, duration: s.duration, music: window.__cutaway.core.musicClipsOf(p.edit, p.sources).some((c) => c.sourceId === s.id && c.start === 0 && c.gain === 1 && !c.duck), master: p.edit.audio.masterVoiceId === s.id } : null; });
     const vo = await readVo();
     const voFile = vo ? path.join(projectDir, vo.path) : '';
     check('voiceover is synthesised on this Mac and added as a supporting track', !!vo && vo.role === 'music' && vo.music && !vo.master && vo.duration > 1 && fs.existsSync(voFile), vo ? `${vo.path} · ${vo.duration.toFixed(2)}s · ${fs.existsSync(voFile) ? fs.statSync(voFile).size : 0} bytes` : 'no voiceover source');
@@ -401,8 +401,8 @@ try {
     await del.click();
     await page.waitForSelector('[data-testid="vo-take"]', { state: 'detached', timeout: 10000 });
     await page.waitForTimeout(400);
-    const after = await page.evaluate(() => { const p = window.__cutaway.useApp.getState().project; return { sources: p.sources.filter((x) => x.path.startsWith('media/voiceover/')).length, music: p.edit.audio.music }; });
-    check('deleting a voiceover take asks first, then removes it from the project and deletes the WAV', /Delete the file\?/.test(asks) && after.sources === 0 && after.music === null && !fs.existsSync(voFile) && voFiles().length === 0, `asked “${asks}” · ${after.sources} voiceover source(s) · music ${JSON.stringify(after.music)} · ${voFiles().length} wav file(s)`);
+    const after = await page.evaluate(() => { const p = window.__cutaway.useApp.getState().project; return { sources: p.sources.filter((x) => x.path.startsWith('media/voiceover/')).length, music: window.__cutaway.core.musicClipsOf(p.edit, p.sources).length }; });
+    check('deleting a voiceover take asks first, then removes it from the project and deletes the WAV', /Delete the file\?/.test(asks) && after.sources === 0 && after.music === 0 && !fs.existsSync(voFile) && voFiles().length === 0, `asked “${asks}” · ${after.sources} voiceover source(s) · music ${JSON.stringify(after.music)} · ${voFiles().length} wav file(s)`);
     const refused = await page.evaluate(async () => { const st = window.__cutaway.useApp.getState(); try { await window.cutaway.native.removeVoiceover(st.projectPath, 'media/imports/screen.mp4'); return 'deleted'; } catch (e) { return e.message; } });
     check('only voiceover takes can be deleted through that call', /Only voiceover takes/.test(refused) && fs.existsSync(screenFile), refused);
     await page.getByRole('button', { name: 'Cancel' }).click();

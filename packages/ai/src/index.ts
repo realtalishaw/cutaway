@@ -145,6 +145,8 @@ export interface PromptSource {
   hasAudio: boolean;
   /** true when the app recorded cursor telemetry (clicks are real events). */
   cursorTelemetry: boolean;
+  /** Set when the video is made of several clips: the clip this source belongs to. */
+  clip?: { index: number; name: string; start: Seconds; end: Seconds };
 }
 
 export interface PromptAsset {
@@ -218,15 +220,21 @@ function describeOp(o: EditOp): string {
   }
 }
 
+/** Told to the model whenever the video is more than one clip. */
+export const CLIPS_RULE =
+  'This video is several clips played one after another. Each clip is separate footage with its own sources; all times are on the one timeline of the whole video. No operation may run from one clip into the next: end it at the boundary and, if needed, start another in the next clip. A "screen", "overlay", "split" or "presenter" layout and a zoom only work in a clip that has a screen source; a clip with only a camera can only be shown as "camera". The creator chose the order of the clips: never suggest cutting a whole clip.';
+
 export function sourcesBlock(sources: PromptSource[]): string {
   if (sources.length === 0) return '(none)';
-  return sources
-    .map((s) => {
-      const cov = s.coverage.length ? s.coverage.map(span).join(', ') : 'NO USABLE COVERAGE';
-      const extra = [s.hasAudio ? 'has audio' : 'no audio', s.role === 'screen' ? (s.cursorTelemetry ? 'cursor telemetry recorded' : 'flattened import: cursor is baked in, clicks unknown') : ''].filter(Boolean).join('; ');
-      return `- ${s.role} "${s.name}" — coverage ${cov} (${extra})`;
-    })
-    .join('\n');
+  const line = (s: PromptSource) => {
+    const cov = s.coverage.length ? s.coverage.map(span).join(', ') : 'NO USABLE COVERAGE';
+    const extra = [s.hasAudio ? 'has audio' : 'no audio', s.role === 'screen' ? (s.cursorTelemetry ? 'cursor telemetry recorded' : 'flattened import: cursor is baked in, clicks unknown') : ''].filter(Boolean).join('; ');
+    return `- ${s.role} "${s.name}" — coverage ${cov} (${extra})`;
+  };
+  if (!sources.some((s) => s.clip)) return sources.map(line).join('\n');
+  const clips = [...new Map(sources.filter((s) => s.clip).map((s) => [s.clip!.index, s.clip!])).values()].sort((a, b) => a.index - b.index);
+  const blocks = clips.map((c) => [`CLIP ${c.index} "${c.name}" — ${span(c)}`, ...sources.filter((s) => s.clip?.index === c.index).map(line)].join('\n'));
+  return `${CLIPS_RULE}\n${blocks.join('\n')}`;
 }
 
 export function sentencesBlock(sentences: PromptSentence[]): string {

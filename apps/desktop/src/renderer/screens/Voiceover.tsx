@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { displayText, fmtTime, keptWords, sourceFromProbe, withSources, type MediaSource } from '@cutaway/core';
+import { displayText, fmtTime, keptWords, musicClipsOf, sourceFromProbe, uid, withMusic, withSources, withoutSoundSource, type MediaSource } from '@cutaway/core';
 import type { VoiceInfo } from '@shared/api';
 import { timeMapOf, useApp, useProject } from '../state/store';
 import { Icon } from '../ui/icons';
@@ -45,7 +45,7 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
 
   /** Narration this project already holds. */
   const takes = project.sources.filter((s) => s.path.startsWith('media/voiceover/'));
-  const useOf = (s: MediaSource) => (project.edit.audio.masterVoiceId === s.id ? 'This project’s voice' : project.edit.audio.music?.sourceId === s.id ? 'Plays under the video' : 'Not in use');
+  const useOf = (s: MediaSource) => (project.edit.audio.masterVoiceId === s.id ? 'This project’s voice' : musicClipsOf(project.edit, project.sources).some((c) => c.sourceId === s.id) ? 'Plays under the video' : 'Not in use');
 
   const deleteTake = async (s: MediaSource) => {
     if (confirming !== s.id) {
@@ -57,7 +57,7 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
     useApp.getState().patch((p) => {
       const next = withSources(p, p.sources.filter((x) => x.id !== s.id));
       // Decisions that pointed at this take go with it.
-      return { ...next, edit: { ...next.edit, broll: next.edit.broll.filter((b) => b.assetId !== s.id), audio: { ...next.edit.audio, music: next.edit.audio.music?.sourceId === s.id ? null : next.edit.audio.music } } };
+      return { ...next, edit: withoutSoundSource({ ...next.edit, broll: next.edit.broll.filter((b) => b.assetId !== s.id) }, p.sources, s.id) };
     });
     try {
       await removeFile(s.path);
@@ -84,7 +84,6 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
   const map = timeMapOf(project);
   const transcriptText = useMemo(() => keptWords(project.transcript, map).map((k) => displayText(k.word, project.edit)).join(' '), [project.transcript, project.edit, map]);
   const hasVoice = !!project.edit.audio.masterVoiceId;
-  const hasMusic = !!project.edit.audio.music;
   const key = `${voiceId}|${rate}|${script.trim()}`;
   const current = made?.key === key ? made : null;
   const words = script.trim() ? script.trim().split(/\s+/).length : 0;
@@ -134,12 +133,10 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
       const app = useApp.getState();
       pending.current = null; // the project owns this file now
       app.patch((p) => withSources(p, [...p.sources, source]));
-      if (hasVoice && !hasMusic) {
-        // Plays straight through the finished video, on top of the recorded voice.
-        app.edit((e) => ({ ...e, audio: { ...e.audio, music: { sourceId: source.id, gain: 1, duck: false } } }), 'Add voiceover');
-        app.toast('Voiceover added. It plays from the start of the finished video; adjust or remove it in the Audio tab.');
-      } else if (hasVoice) {
-        app.toast('Voiceover added to Sources. A music track is already playing, so choose the voiceover in the Audio tab to use it instead.');
+      if (hasVoice) {
+        // Plays straight through the finished video, on top of the recorded voice: a clip on the music row.
+        app.edit((e, p) => withMusic(e, [...musicClipsOf(e, p.sources), { id: uid('mus'), sourceId: source.id, start: 0, sourceIn: 0, length: Math.max(0.2, source.duration), gain: 1, fadeIn: 0, fadeOut: 0, duck: false, meta: { origin: 'creator', revision: p.revision + 1 } }]), 'Add voiceover');
+        app.toast('Voiceover added. It plays from the start of the finished video; move, trim or remove it on the music row of the timeline.');
       } else {
         app.toast('Voiceover added as this project’s voice. Create the first cut to transcribe and caption it.');
       }
@@ -248,9 +245,7 @@ export function VoiceoverSheet({ onClose }: { onClose(): void }) {
             <span>
               A synthetic macOS system voice, generated on this Mac. It is not your voice and Cutaway does not clone voices.{' '}
               {hasVoice
-                ? hasMusic
-                  ? 'This project already has a voice and a music track, so the voiceover is added to Sources and you choose it in the Audio tab.'
-                  : 'This project already has a recorded voice, so the voiceover is added as a supporting track that plays from the start of the finished video. It does not follow cuts.'
+                ? 'This project already has a recorded voice, so the voiceover is added as a clip on the music row that plays from the start of the finished video. It does not follow cuts.'
                 : 'This project has no voice track, so the voiceover becomes its voice: it is transcribed, captioned and follows your cuts.'}
             </span>
           </div>

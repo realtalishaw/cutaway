@@ -66,6 +66,32 @@ app, and the terminal or editor you ran `pnpm dev` from in development.
   menus labelled "iPhone". Pick the Mac's camera for A and the iPhone for B to
   record two angles.
 
+### Editing without a screen recording
+
+Cutaway also works as an ordinary editor for camera or imported footage.
+
+* **Clips.** A project holds several clips in sequence. A new take or an
+  imported video becomes a clip at the end (or B-roll, your choice). In the
+  clips row: drag to reorder, drag an end to trim, ⌘B to split at the
+  playhead, Backspace to remove; removed clips can be put back.
+* **Transitions.** Cross-dissolve, dip to black or dip to white on any clip
+  change, 0.2–2 s, without changing the video's length. B-roll inserts fade in
+  and out.
+* **Text and titles.** A free text tool (`T`): five bundled fonts, size,
+  weight, colour, panel, outline, shadow, position by dragging on the preview,
+  and fade, slide, pop or typewriter animation. Eleven title templates.
+* **Music and sound.** Music clips placed on the timeline with fades and
+  lowering under speech; they may overlap. Seven built-in sound effects
+  (synthesised, nothing downloaded) or your own files, with one-step commands
+  to add a sound on every cut, view change or text entry.
+* **Punch-in on jump cuts.** For talking-head footage: alternate framing at
+  each cut inside a camera shot so the jump reads as a deliberate change.
+  Camera tab → Jump cuts.
+* **Shorts.** The Shorts tab proposes 30–60 second ranges, reframes them to
+  vertical or square (follow the face, stack screen over camera, follow the
+  pointer), burns in captions with the spoken word highlighted, and exports
+  each as its own file. The long video's edit is not changed.
+
 ### AI features use your own Claude Code or Codex
 
 Cutaway has no API key and no server. The editorial pass, the "Ask AI" chat
@@ -128,7 +154,7 @@ still yours.
 ## Tests
 
 ```bash
-pnpm test                               # 211 unit tests (core, AI layer, desktop)
+pnpm test                               # 314 unit tests (core, AI layer, desktop)
 ./fixtures/make.sh                      # generate test footage (needs ffmpeg + say)
 pnpm --filter @cutaway/desktop build
 pnpm --filter @cutaway/desktop e2e      # journeys through the real app and helper

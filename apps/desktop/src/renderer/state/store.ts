@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { TimeMap, checkpoint, commitEdit, findCheckpoint, projectAtCheckpoint, restoreRevision, type EditState, type Packaging, type Project, type Range } from '@cutaway/core';
+import { clipsOf, mapTime, sessionMap, TimeMap, checkpoint, commitEdit, findCheckpoint, projectAtCheckpoint, restoreRevision, type EditState, type Packaging, type Project, type Range } from '@cutaway/core';
 import type { AppSettings, ClaudeStatus } from '@shared/api';
 import type { StageState } from '../jobs/types';
 
@@ -7,12 +7,12 @@ export type Route = 'library' | 'record' | 'project' | 'settings';
 export type ProjectView = Project['ui']['view'];
 
 export type Selection =
-  | { kind: 'cut' | 'speed' | 'layout' | 'zoom' | 'overlay' | 'broll' | 'mask' | 'lock' | 'suggestion'; id: string }
+  | { kind: 'cut' | 'speed' | 'layout' | 'zoom' | 'overlay' | 'broll' | 'mask' | 'lock' | 'suggestion' | 'music' | 'sound' | 'clip'; id: string }
   | { kind: 'range'; range: Range }
   | { kind: 'words'; ids: string[]; range: Range }
   | null;
 
-export type InspectorTab = 'background' | 'cursor' | 'camera' | 'captions' | 'transcript' | 'audio' | 'shortcuts' | 'motion' | 'device' | 'chat' | 'review' | 'history';
+export type InspectorTab = 'background' | 'cursor' | 'camera' | 'captions' | 'transcript' | 'audio' | 'text' | 'shortcuts' | 'motion' | 'device' | 'chat' | 'review' | 'history';
 export type DrawerTab = 'transcript' | 'review' | 'history';
 
 export interface Toast {
@@ -111,7 +111,9 @@ function keepMoment(from: Project | null, to: Project | null) {
   const play = usePlayback.getState();
   play.setPlaying(false);
   const src = TimeMap.fromEdit(from.duration, from.edit).toSource(play.time);
-  play.seek(TimeMap.fromEdit(to.duration, to.edit).toOutput(src));
+  // the two edits may play the clips in a different order: follow the footage, not the number
+  const there = from.edit.clips !== to.edit.clips ? (mapTime(sessionMap(clipsOf(from), clipsOf(to)), src) ?? src) : src;
+  play.seek(TimeMap.fromEdit(to.duration, to.edit).toOutput(Math.min(there, to.duration)));
 }
 
 export const useApp = create<AppState>((set, get) => ({

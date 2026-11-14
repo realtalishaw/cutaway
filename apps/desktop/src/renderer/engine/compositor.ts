@@ -7,6 +7,8 @@
 import { DEVICE_BEZEL, DEVICE_COLORS, WALLPAPERS, cameraLookOf, cutoutOf, deviceOf, easeOutBack, gradeActive, gradeOf, lookFilter, lookWarmth, shortcutsOf, type Appearance, type Lut, type CameraCrop, type CameraSlot, type Cue, type CursorKind, type FrameState, type LensState, type Mask, type Overlay, type Placement, type Rect, type ShownShortcut, type ZoomPose } from '@cutaway/core';
 
 import { gradeDrawable } from './glGrade';
+import { drawTextOverlay, drawTextSelection } from './textOverlay';
+import { drawShortCaption } from './shortCaption';
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -56,9 +58,14 @@ export interface DrawEnv {
   /** Generic bezel to draw around the screen picture, when the creator switched it on and the source suits it. */
   device?: 'phone' | 'tablet' | null;
   /** Editor-only decorations (mask outlines). Never set during export. */
-  editor?: { selectedMaskId: string | null };
+  editor?: { selectedMaskId: string | null; selectedOverlayId?: string | null };
   /** Parsed colour LUTs for appearance.grade (null while a file is loading or when none is set). */
   luts?: { screen: Lut | null; camera: Lut | null };
+  /**
+   * A transition between clips: laid over the finished picture (graphics included) and under the captions.
+   * `image` is the neighbouring clip's frame, already drawn at the output size by the caller; `color` is a dip.
+   */
+  blend?: { alpha: number; image?: CanvasImageSource | null; color?: string } | null;
 }
 
 const FONT_SERIF = "'Inter Variable', 'Inter', -apple-system, sans-serif";
@@ -146,10 +153,11 @@ function shadow(ctx: Ctx, r: Rect, radius: number, strength: number, H: number, 
 }
 
 /** Visible window of the source after crop and zoom, in source-normalised units. */
-function viewport(ap: Appearance, zoom: { scale: number; cx: number; cy: number }): Rect {
+function viewport(ap: Appearance, zoom: { scale: number; cx: number; cy: number; ax?: number; ay?: number }): Rect {
   const c = ap.crop;
-  const w = c.w / zoom.scale;
-  const h = c.h / zoom.scale;
+  // ax/ay narrow the window on one axis so a wide screen can fill a tall frame (shorts).
+  const w = (c.w / zoom.scale) * (zoom.ax ?? 1);
+  const h = (c.h / zoom.scale) * (zoom.ay ?? 1);
   return { x: c.x + zoom.cx * c.w - w / 2, y: c.y + zoom.cy * c.h - h / 2, w, h };
 }
 
@@ -902,9 +910,26 @@ export function drawFrame(ctx: Ctx, state: FrameState, sources: FrameResources, 
     ctx.restore();
   }
 
-  for (const o of state.overlays) drawOverlay(ctx, o.overlay, o.enter, o.exit, W, H);
+  for (const o of state.overlays) {
+    if (o.overlay.kind === 'text') {
+      const laid = drawTextOverlay(ctx, o.overlay, o.sinceIn, o.untilOut, W, H);
+      if (laid && env.editor?.selectedOverlayId === o.overlay.id) drawTextSelection(ctx, laid.block, Math.min(W, H));
+    } else drawOverlay(ctx, o.overlay, o.enter, o.exit, W, H);
+  }
+  if (env.blend && env.blend.alpha > 0.001) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, env.blend.alpha);
+    ctx.filter = 'none';
+    if (env.blend.image) ctx.drawImage(env.blend.image, 0, 0, W, H);
+    else if (env.blend.color) {
+      ctx.fillStyle = env.blend.color;
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+  }
   const captionShown = !!env.cue && ap.captions.burnIn;
-  if (captionShown) drawCaption(ctx, env.cue!, ap, W, H);
+  if (captionShown && ap.captions.short) drawShortCaption(ctx, env.cue!, state.out, ap.captions.short, W, H);
+  else if (captionShown) drawCaption(ctx, env.cue!, ap, W, H);
   if (state.shortcuts.length) drawShortcuts(ctx, state.shortcuts, ap, W, H, captionShown);
   ctx.restore();
 }

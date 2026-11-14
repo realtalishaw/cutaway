@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { exportPreflight, fmtTime, packageFolderName, slugify, type ExportRecord, type PreflightCheck } from '@cutaway/core';
+import { exportPreflight, fmtTime, musicClipsOf, packageFolderName, slugify, soundFilesUsed, type ExportRecord, type PreflightCheck } from '@cutaway/core';
 import { saveNow, timeMapOf, useApp, useProject } from '../state/store';
 import {
   BITRATE_SUPPORTED,
@@ -489,7 +489,7 @@ export function ExportScreen() {
               ? project.packaging.chapters.length > 0
               : f === 'captions.srt'
                 ? !!project.transcript?.hasSpeech
-                : project.edit.broll.length > 0 || !!project.edit.audio.music,
+                : project.edit.broll.length > 0 || musicClipsOf(project.edit, project.sources).length > 0 || soundFilesUsed(project).length > 0,
   }));
 
   const primaryLabel = target === 'package' ? (needsDraft ? 'Export draft package' : 'Export YouTube package') : target === 'clipboard' ? 'Export to clipboard' : 'Export to file';

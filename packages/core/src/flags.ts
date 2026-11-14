@@ -10,6 +10,7 @@ import { uid } from './ranges';
 export function flagsOf(project: Pick<Project, 'flags'>): Flag[] {
   const out: Flag[] = [];
   for (const f of [...(project.flags ?? [])].sort((a, b) => a.t - b.t)) {
+    if (f.parked) continue; // in a clip that is off the timeline
     if (!out.length || f.t - out[out.length - 1]!.t > 0.05) out.push(f);
   }
   return out;

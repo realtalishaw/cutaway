@@ -5,7 +5,7 @@
  * 'cutaway-recovered-take' event the Library dispatches after recovering an
  * interrupted recording, so no wiring is needed elsewhere.
  */
-import { uid, withSources, withTakeFlags, type LayoutMode, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
+import { addTakeAsClip, dropTake, isTimelineSource, nextClipName, uid, withSources, withTakeFlags, type LayoutMode, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
 import type { ProbeResult, TakeManifest, TakeSource } from '@shared/api';
 import { useApp } from './store';
 
@@ -83,10 +83,15 @@ export async function takeToSources(manifest: TakeManifest, takeDir: string, pro
 
 export interface AddTakeResult {
   added: MediaSource[];
-  /** Sources that were demoted because the project already had that role. */
+  /** Sources that were added as supporting media (B-roll, music) instead of going on the timeline. */
   demoted: string[];
   alreadyPresent: boolean;
+  /** Name of the clip the take became, when it went on the timeline after footage that was already there. */
+  clip?: string;
 }
+
+/** Where a take goes when the project already has footage: after it on the timeline, or among the supporting media. */
+export type TakeUse = 'clip' | 'broll';
 
 const SINGLE: SourceRole[] = ['screen', 'cameraA', 'cameraB'];
 
@@ -104,18 +109,29 @@ export function baseLayoutFor(layout: LayoutMode | undefined, roles: SourceRole[
   return screen && camera ? layout : undefined;
 }
 
-export async function addTakeToProject(manifest: TakeManifest, takeDir: string, opts: { layout?: LayoutMode } = {}): Promise<AddTakeResult> {
+export async function addTakeToProject(manifest: TakeManifest, takeDir: string, opts: { layout?: LayoutMode; as?: TakeUse } = {}): Promise<AddTakeResult> {
   const app = useApp.getState();
   const { projectPath, project } = app;
   if (!projectPath || !project) throw new Error('No project is open.');
   if (project.sources.some((s) => s.takeId === manifest.takeId && s.origin === 'recording')) return { added: [], demoted: [], alreadyPresent: true };
   const fresh = await takeToSources(manifest, takeDir, projectPath);
   if (fresh.length === 0) throw new Error('The take contains no usable media.');
+  // A project that already has footage on its timeline gets the take as a new clip after it (or, if
+  // asked, as supporting media). Nothing is quietly turned into B-roll any more.
+  const hasFootage = project.sources.some((s) => isTimelineSource(s) && s.kind === 'video');
+  if (hasFootage && opts.as !== 'broll' && fresh.some((s) => s.kind === 'video')) {
+    let clip: string | undefined;
+    useApp.getState().patch((p: Project) => {
+      if (p.sources.some((s) => s.takeId === manifest.takeId && s.origin === 'recording')) return p;
+      clip = nextClipName(p);
+      return addTakeAsClip(p, { take: manifest.takeId, name: clip, sources: fresh, baseLayout: baseLayoutFor(opts.layout, fresh.map((s) => s.role)), flags: (manifest.flags ?? []).filter((t) => t <= manifest.duration + 0.001) });
+    });
+    return { added: fresh, demoted: [], alreadyPresent: false, clip };
+  }
   const demoted: string[] = [];
   const taken = new Set(project.sources.map((s) => s.role));
   const added = fresh.map((s) => {
-    // A project has one screen and one camera per slot. A later take keeps its footage but as supporting media.
-    if ((SINGLE.includes(s.role) || s.role === 'voice') && taken.has(s.role)) {
+    if (hasFootage || ((SINGLE.includes(s.role) || s.role === 'voice') && taken.has(s.role))) {
       demoted.push(s.name);
       const role: SourceRole = s.kind === 'video' ? 'broll' : 'music';
       return { ...s, role };
@@ -131,6 +147,21 @@ export async function addTakeToProject(manifest: TakeManifest, takeDir: string, 
     return base ? { ...next, edit: { ...next.edit, baseLayout: base } } : next;
   });
   return { added, demoted, alreadyPresent: false };
+}
+
+/**
+ * Change your mind about a take that was just added: move it from the timeline to the supporting
+ * media, or from there onto the timeline as a clip. The files are not touched.
+ */
+export async function setTakeUse(manifest: TakeManifest, takeDir: string, use: TakeUse, opts: { layout?: LayoutMode } = {}): Promise<AddTakeResult> {
+  useApp.getState().patch((p: Project) => {
+    const mine = (s: MediaSource) => s.takeId === manifest.takeId && s.origin === 'recording';
+    if (!p.sources.some(mine)) return p;
+    const dropped = dropTake(p, manifest.takeId);
+    const kept = dropped.sources.filter((s) => !mine(s));
+    return { ...withSources({ ...dropped, sources: kept }, kept), flags: (dropped.flags ?? []).filter((f) => f.takeId !== manifest.takeId) };
+  });
+  return addTakeToProject(manifest, takeDir, { ...opts, as: use });
 }
 
 export function describeTake(manifest: TakeManifest): string {

@@ -27,7 +27,7 @@ before it can touch a project.
 
 ## 2. What was verified, with numbers
 
-Unit tests: 211 passing (core 87, AI layer 75, desktop 49).
+Unit tests: 314 passing (core 180, AI layer 79, desktop 55).
 
 | Journey (real app + real helper) | Result |
 | --- | --- |
@@ -44,6 +44,10 @@ Unit tests: 211 passing (core 87, AI layer 75, desktop 49).
 | Recorder (`e2e/recorder.mjs`) | 57/57. Five layouts and what each records; countdown overlay covers the target's display, takes no focus and is gone before the recorder starts; self-view bubble fed by the recorder's own frames (synthetic camera), hide and restore; Tab mode states; **a real window recorded with a crop**: the first rows are page, not toolbar, also after the window is resized mid-take; an overlay left on screen is absent from the recorded frames. |
 | **Codex** (`e2e/codex-ui.mjs` canned, `e2e/codex-real.mjs` real, CLI 0.160.0) | 37/37 canned. Real, run once: 10/10. First cut 34 s, section revision 10 s, three concepts 16 s, one generated picture 38 s (1672×941 PNG) placed in a thumbnail. |
 | **Ask AI chat and versions** (`e2e/chat.mjs` canned, `e2e/chat-real.mjs` real Claude Code) | 53/53 canned: cards, refusals, apply one/all, undo, follow-up digest, section scope, moments, history rows, viewing a version read-only (nothing is saved while viewing), compare, restore, fallback, consent, persistence. Real, run once: "Remove the zooms in the first ten seconds" returned exactly the two removals in 7 s; a follow-up returned one zoom plus the removal that makes room for it in 47 s. |
+| **Clips** (`e2e/clips.mjs`, generated colour-and-tone footage) | 55/55. Reorder by drag and keyboard, trim by drag, split, remove, undo, view an old version, one canned chat request; the exported file shows the right colour and tone at every sampled moment, with the removed clip and the trimmed second absent. A second synthetic take lands as a clip, switches to B-roll and back; a rules first cut runs over four clips; the project reopens. |
+| **Text, titles, music, sound** (`e2e/titles-sound.mjs`) | 44/44 from exported files. Text in its exact colour and place, absent outside its range; slide, fade, typewriter and pill panel behave; preview matches export; vertical export stays inside the margin. Music starts at 2.0 s, fade-in follows its curve, a footage cut does not dip it, ducking lands at about 0.22 of the plateau, an overlapping clip is not ducked; effects land within 12 ms; a cut moment drops its sound; peak under 1. |
+| **Transitions and punch-in** (`e2e/transitions.mjs`) | 48/48 from exported files. Mid-dissolve pixel 128,45,132 against an expected 125,30,125; dip is black at the change; length equals the hard-cut export; both tones at about 0.67 of full level mid-dissolve; B-roll half-way in after half of a one-second fade; punch-in measured at ×1.121, back to normal after the next cut, unchanged at an excluded cut. |
+| **Shorts** (`e2e/shorts.mjs`, canned provider and rules) | 41/41 from exported files. 1080×1920 H.264 with sound, 20.83 s against 20.82 s through the time map; with a seeded face track the frame follows the face; a caption is lit on the spoken word and stays in the clear area; square screen-follow export is 1080×1080; the long project's edit is byte-identical before and after. |
 | Helper lifetime (direct runs of the helper) | A 2 s display take and a 2 s window take start and stop cleanly. A helper whose parent exits mid-take ends by itself 0.3 s later and leaves a recoverable manifest. |
 | Packaged `Cutaway.app` (`e2e/packaged.mjs`) | Boots, finds its bundled helper, probes, analyses and imports media. |
 
@@ -66,6 +70,12 @@ complete export.
 | **iPhone as a camera (Continuity Camera)** | Discovery, labels and the Info.plist key are in place. No iPhone was attached, so nothing was recorded from one. |
 | **Self-view with a real camera** | Verified with the helper's synthetic camera only: Camera permission on this Mac is undetermined. |
 | **Browser tab listing and selection** | The permission states and the window crop are verified. Listing real tabs needs the Automation prompt for each browser, which is the owner's to answer; Safari, Arc, Edge and Brave scripts are untested and Arc's is the least certain. The measured page area needs Accessibility, which is not granted here, so only the per-browser estimate ran. |
+| **Listening.** | Nobody has listened to any audio: music fades, ducking, crossfades and the seven synthesised sound effects were measured from exported files only. Sound in the live preview (music, ducking, effects, the neighbour clip during a dissolve) is unmeasured. |
+| **Real models on the new features** | The clips block and the no-crossing rule in the prompts, and the "Find shorts" request, ran only against the canned provider. |
+| **Real footage on the new features** | Clip fixtures were flat colours and tones: no real speech across clips, no clips of different size or frame rate side by side, no real face for punch-in or shorts framing, no real pointer for "Screen follow". |
+| **Preview smoothness** at a clip change and during a dissolve | Export is frame-checked; playback smoothness in the preview was not measured. |
+| Shorts: Stack and "As edited" framings, three of four caption presets, text and music inside a short | Coded and unit-tested; not rendered and looked at. |
+| Fonts in export other than Inter | Seen in preview screenshots only. |
 | Chat through Codex; chat stills with a real model; long threads | The chat uses the same provider gate as the first cut. Only Claude and the canned provider were exercised. |
 | Chat wording rule added after the real run | Real replies named internal handles ("D1"). A prompt rule now asks for times and descriptions instead; it has a unit test but no second real run. |
 | Generated-picture rules | Prompt-only. One sample showed a generic play triangle on a document. |
@@ -105,8 +115,19 @@ complete export.
   says which tool made it.
 * **A read-only version does not grey out the inspector controls.** Changes
   are refused at the store with one explanatory message.
-* **Reordering and opening hooks** are offered as notes only; the edit model
-  is chronological.
+* **Reordering within a clip** and opening hooks are offered as notes only.
+  Clips can be reordered; footage inside one clip stays chronological.
+* **Crop, the sensitive-data scan and voiceover** work on the first clip's
+  screen and voice only. Voice level and cleanup use one measured level for
+  all clips.
+* **Transitions:** footage beyond a clip's edge plays at 1× in a dissolve even
+  if that stretch has a speed change; thumbnails and stills taken
+  mid-transition show the playing clip without the blend.
+* **Shorts are not in undo or versions.** They sit beside the edit, like
+  export history. A short whose take is later deleted cannot be exported and
+  says why.
+* **Text designed for landscape** is carried into a vertical short unchanged;
+  it stays inside the safe margin but may need restyling.
 * **Retry after a failed export** starts a fresh export rather than resuming.
 * **Remote deletion.** Cutaway cannot delete what Claude Code sent; the
   consent sheet says so.
@@ -167,6 +188,16 @@ new "Camera + screen" (`presenter`); iPhone cameras labelled in the camera
 menus; a browser Tab target that leaves the toolbar out; signing with a local
 certificate.
 
+**Added for ordinary editing (November 13, second pass):** several clips in
+sequence with reorder, trim, split and remove; transitions between clips and
+B-roll fades; a free text tool with eleven title templates; music clips with
+fades and several at once; synthesised sound effects; punch-in on jump cuts;
+and shorts with face reframing and burned-in captions. Design: session time
+stays the playing order and clips sit end to end on it, so captions, the
+transcript and the AI prompts needed no new time axis; music lives in output
+time so it does not jump when footage moves; a short is a derived project that
+is never saved.
+
 **Failures found and fixed on November 13.**
 
 * *"The take could not be added to the project."* The recorder failed to start
@@ -218,3 +249,5 @@ preferences file on this Mac.
    was about ten times faster; whose cuts you prefer is yours to judge.
 8. **Pictures always through Codex**, with separate consent, even when Claude
    edits. Say so if you would rather have no generated pictures at all.
+9. **⌘B with nothing selected now splits the clip under the playhead.**
+10. **Listen before publishing.** The sound work was measured, not heard.

@@ -5,7 +5,7 @@
  * checkpoint that can be looked at or restored.
  */
 import { create } from 'zustand';
-import { appendChat, applyChatItems, fmtTime, historyOf, uid, updateChatItems, type ChatMessage, type ChatProposalItem, type CheckpointRef, type Project, type Range } from '@cutaway/core';
+import { clipRange, clipsOf, appendChat, applyChatItems, fmtTime, historyOf, uid, updateChatItems, type ChatMessage, type ChatProposalItem, type CheckpointRef, type Project, type Range } from '@cutaway/core';
 import { answerChat } from '../jobs/chat';
 import { proposeRevision } from '../jobs/revision';
 import { JobError } from '../jobs/types';
@@ -31,6 +31,13 @@ const clip = (s: string, n: number) => {
 export function chatScope(project: Project | null, sel: Selection): Range | null {
   if (!project || !sel) return null;
   if (sel.kind === 'range' || sel.kind === 'words') return sel.range;
+  // music lives on the finished video's clock and a sound is a single moment: neither is a section of footage
+  if (sel.kind === 'music' || sel.kind === 'sound') return null;
+  // a selected clip is a section: a request made with it selected is about that clip
+  if (sel.kind === 'clip') {
+    const c = clipsOf(project).find((x) => x.id === sel.id && !x.removed);
+    return c ? clipRange(c) : null;
+  }
   const lane = ({ cut: 'cuts', speed: 'speeds', layout: 'layouts', zoom: 'zooms', overlay: 'overlays', broll: 'broll', mask: 'masks', lock: 'locks', suggestion: 'suggestions' } as const)[sel.kind];
   const item = (project.edit[lane] as (Range & { id: string })[]).find((x) => x.id === sel.id);
   return item ? { start: item.start, end: item.end } : null;

@@ -1,9 +1,10 @@
-import type { Brief, DecisionMeta, EditOp, EditState, MediaSource, Project, Range, RevisionRecord, SourceRole } from './types';
-import { uid } from './ranges';
+import type { Brief, Clip, DecisionMeta, EditOp, EditState, LayoutMode, MediaSource, Project, Range, RevisionRecord, Seconds, SourceRole } from './types';
+import { EPS, uid } from './ranges';
 import { defaultSync, sessionDuration } from './sync';
-import { applyOps, clearAiInRange, defaultAudio, emptyEdit, materialChange, revisionSummary } from './edit';
+import { applyOps, clearAiInRange, defaultAudio, emptyEdit, materialChange, pickMasterVoice, revisionSummary } from './edit';
 import { emptyPackaging } from './packaging';
 import { validateOps } from './validate';
+import { MAIN_TAKE, appendClips, clipLength, clipsDuration, clipsOf, playingClips, removeClip, isTimelineSource, layoutClips, placeSources, projectWithEdit, sessionMap, remapEdit, takeDuration, takeOf } from './clips';
 
 export const DEFAULT_BRIEF: Brief = {
   audience: 'People learning this for the first time',
@@ -111,6 +112,7 @@ export function relinkMatch(source: MediaSource, probe: ProbeLike): { match: 'ex
 
 /** Recompute the timeline length and audio defaults after sources change. */
 export function withSources(project: Project, sources: MediaSource[]): Project {
+  if (project.edit.clips) return withSourcesAndClips(project, sources);
   const audio = project.edit.audio;
   const fresh = defaultAudio(sources);
   const masterStillThere = sources.some((s) => s.id === audio.masterVoiceId && s.hasAudio);
@@ -130,16 +132,187 @@ export function withSources(project: Project, sources: MediaSource[]): Project {
   };
 }
 
+/**
+ * The audible voice of every footage group, and a track entry for every source with sound. Each group
+ * has its own voice: in a group, that voice and the system audio are heard and the rest starts muted.
+ */
+export function audioForTakes(audio: EditState['audio'], sources: MediaSource[]): EditState['audio'] {
+  const records = sources.filter((s) => !s.instanceOf);
+  const takes = [...new Set(records.filter(isTimelineSource).map(takeOf))];
+  let masterVoiceId = audio.masterVoiceId;
+  const takeVoices: Record<string, string> = {};
+  const tracks: EditState['audio']['tracks'] = {};
+  const has = (id: string | null | undefined) => !!id && records.some((s) => s.id === id && s.hasAudio);
+  for (const take of takes) {
+    const mine = records.filter((s) => isTimelineSource(s) && takeOf(s) === take);
+    const chosen = take === MAIN_TAKE ? masterVoiceId : audio.takeVoices?.[take];
+    const voice = has(chosen) && mine.some((s) => s.id === chosen) ? chosen! : (pickMasterVoice(mine)?.id ?? null);
+    if (take === MAIN_TAKE) masterVoiceId = voice;
+    else if (voice) takeVoices[take] = voice;
+    for (const s of mine) {
+      if (!s.hasAudio) continue;
+      const isSystem = s.role === 'systemAudio';
+      tracks[s.id] = audio.tracks[s.id] ?? { gain: isSystem ? 0.6 : 1, muted: !(s.id === voice || isSystem) };
+    }
+  }
+  // A project whose first footage came in as a later group still needs one voice for level and cleanup.
+  if (!has(masterVoiceId)) masterVoiceId = takes.includes(MAIN_TAKE) ? masterVoiceId : (Object.values(takeVoices)[0] ?? null);
+  for (const s of records) {
+    if (!s.hasAudio || isTimelineSource(s)) continue;
+    tracks[s.id] = audio.tracks[s.id] ?? { gain: 1, muted: true };
+  }
+  const next: EditState['audio'] = { ...audio, masterVoiceId, tracks };
+  if (Object.keys(takeVoices).length) next.takeVoices = takeVoices;
+  else delete next.takeVoices;
+  return next;
+}
+
+/** Is this source the audible voice of its footage group? (Voice cleanup and level apply to these.) */
+export function isMasterVoice(audio: Pick<EditState['audio'], 'masterVoiceId' | 'takeVoices'>, source: Pick<MediaSource, 'id' | 'instanceOf'>): boolean {
+  const id = source.instanceOf ?? source.id;
+  if (id === audio.masterVoiceId) return true;
+  return !!audio.takeVoices && Object.values(audio.takeVoices).includes(id);
+}
+
+/** Level and mute of a source. A second placement of a file follows the file's own entry. */
+export function trackOf(audio: Pick<EditState['audio'], 'tracks'>, source: Pick<MediaSource, 'id' | 'instanceOf'>): { gain: number; muted: boolean } | undefined {
+  return audio.tracks[source.id] ?? (source.instanceOf ? audio.tracks[source.instanceOf] : undefined);
+}
+
+/**
+ * After the source list changed in a project that has clips: a take whose length changed stretches or
+ * shrinks its last clip (and everything after it moves), second placements are re-derived, and each
+ * footage group keeps its own audible voice.
+ */
+function withSourcesAndClips(project: Project, sources: MediaSource[]): Project {
+  const records = sources.filter((s) => !s.instanceOf);
+  let clips = project.edit.clips!;
+  const fitted = clips.map((c) => ({ ...c }));
+  let changed = false;
+  for (const take of new Set(fitted.map((c) => c.take))) {
+    const length = takeDuration(records, take);
+    if (length <= 0) continue;
+    const last = fitted.filter((c) => c.take === take).reduce((a, b) => (b.out > a.out ? b : a));
+    if (Math.abs(last.out - length) > 1e-3 && length - last.in > 0.05) {
+      last.out = length;
+      changed = true;
+    }
+  }
+  let edit = project.edit;
+  if (changed) {
+    const to = layoutClips(fitted);
+    edit = { ...remapEdit(edit, sessionMap(clips, to)), clips: to };
+    clips = to;
+  }
+  edit = { ...edit, audio: audioForTakes(edit.audio, records) };
+  const base: Project = { ...project, sources: records };
+  const next = changed ? projectWithEdit(base, edit) : { ...base, edit, sources: placeSources(records, clips), duration: clipsDuration(clips) };
+  return { ...next, updatedAt: new Date().toISOString() };
+}
+
 /** Choose the single audible voice; every other voice-bearing source is muted. */
 export function setMasterVoice(edit: EditState, sources: MediaSource[], id: string): EditState {
   const tracks: EditState['audio']['tracks'] = {};
+  const chosen = sources.find((s) => s.id === id);
+  const take = chosen ? takeOf(chosen) : MAIN_TAKE;
   for (const s of sources) {
-    if (!s.hasAudio) continue;
+    if (!s.hasAudio || s.instanceOf) continue;
     const prev = edit.audio.tracks[s.id] ?? { gain: 1, muted: true };
     const voiceLike = s.role === 'voice' || s.role === 'cameraA' || s.role === 'cameraB' || s.role === 'screen';
-    tracks[s.id] = voiceLike ? { ...prev, muted: s.id !== id } : prev;
+    // Each footage group has its own voice: choosing one leaves the other groups as they are.
+    tracks[s.id] = voiceLike && takeOf(s) === take ? { ...prev, muted: s.id !== id } : prev;
   }
+  if (take !== MAIN_TAKE) return { ...edit, audio: { ...edit.audio, takeVoices: { ...edit.audio.takeVoices, [take]: id }, tracks } };
   return { ...edit, audio: { ...edit.audio, masterVoiceId: id, tracks } };
+}
+
+// ───────────────────────────── adding footage as a clip ─────────────────────────────
+
+export interface NewTake {
+  /** Group key for the new sources (a recorder take id, or a fresh id for an import). */
+  take: string;
+  name: string;
+  /** Timeline sources of the take, on the take's own clock (as recorded or as imported). */
+  sources: MediaSource[];
+  baseLayout?: LayoutMode;
+  /** Flags dropped while recording, in take seconds. */
+  flags?: Seconds[];
+}
+
+/**
+ * Add footage as a new clip at the end of the timeline. Not an undoable edit (like any other change
+ * to the source list); removing the clip afterwards is.
+ */
+export function addTakeAsClip(project: Project, take: NewTake): Project {
+  const sources = take.sources.map((s) => ({ ...s, take: take.take }));
+  const length = takeDuration(sources, take.take);
+  if (length <= EPS) return project;
+  // An empty project's placeholder clip has no length and is not carried along.
+  const clips = clipsOf(project).filter((c) => clipLength(c) > EPS);
+  if (clips.some((c) => c.take === take.take)) return project;
+  const withAll: Project = { ...project, sources: [...project.sources, ...sources] };
+  const clip: Omit<Clip, 'start'> = { id: take.take, take: take.take, name: take.name, in: 0, out: length, ...(take.baseLayout ? { baseLayout: take.baseLayout } : {}) };
+  const edit = appendClips({ edit: { ...project.edit, clips }, duration: project.duration }, [clip]);
+  const next = projectWithEdit({ ...withAll, edit: { ...project.edit, clips } }, edit);
+  const at = next.edit.clips!.find((c) => c.id === take.take)!.start;
+  const flags = (take.flags ?? []).filter((t) => Number.isFinite(t) && t >= 0 && t <= length + 1e-3).map((t) => ({ id: uid('flag'), t: t + at, takeId: take.take }));
+  // the new group gets its own audible voice; the groups already there keep theirs
+  const audio = audioForTakes(next.edit.audio, next.sources);
+  return { ...next, edit: { ...next.edit, audio }, ...(flags.length ? { flags: [...(next.flags ?? []), ...flags].sort((a, b) => a.t - b.t) } : {}), updatedAt: new Date().toISOString() };
+}
+
+/**
+ * The project with only one footage group on its timeline: every other clip is taken off, as if it
+ * had been removed. For showing or rendering one take by itself; the result is never saved.
+ */
+export function projectOfTake(project: Project, take: string): Project {
+  const clips = clipsOf(project);
+  if (!project.edit.clips || !clips.some((c) => c.take === take && !c.removed)) return project;
+  let p = project;
+  for (const c of clips) {
+    if (c.removed || c.take === take) continue;
+    if (playingClips(clipsOf(p)).length < 2) break;
+    p = projectWithEdit(p, removeClip(p, c.id));
+  }
+  return p;
+}
+
+/**
+ * Take a footage group out of the project altogether: its clips, its sources, and what was written
+ * about it (words, flags). Not an undoable edit. Used when a take is deleted, or kept as B-roll instead.
+ */
+export function dropTake(project: Project, take: string): Project {
+  const mine = (s: MediaSource) => isTimelineSource(s) && takeOf(s) === take;
+  if (!project.edit.clips || !project.edit.clips.some((c) => c.take === take)) return project;
+  // first off the timeline (this moves the rest together and parks the clip's decisions), then out of the list
+  let p = project;
+  for (const c of clipsOf(project).filter((x) => x.take === take && !x.removed)) {
+    if (playingClips(clipsOf(p)).length < 2) break;
+    p = projectWithEdit(p, removeClip(p, c.id));
+  }
+  const gone = clipsOf(p).filter((c) => c.take === take).map((c) => ({ start: c.start, end: c.start + clipLength(c) }));
+  const inGone = (t: Seconds) => gone.some((r) => t >= r.start - EPS && t < r.end - EPS);
+  const rest = clipsOf(p).filter((c) => c.take !== take);
+  const sources = p.sources.filter((s) => !mine(s));
+  const transcript = p.transcript ? { ...p.transcript, words: p.transcript.words.filter((w) => !inGone(w.start)), ...(p.transcript.parked ? { parked: p.transcript.parked.filter((w) => !inGone(w.start)) } : {}) } : p.transcript;
+  const analysis = p.analysis?.parked ? { ...p.analysis, parked: { silences: p.analysis.parked.silences.filter((r) => !inGone(r.start)), clicks: p.analysis.parked.clicks.filter((c) => !inGone(c.t)) } } : p.analysis;
+  const flags = p.flags?.filter((f) => !inGone(f.t));
+  const audio = { ...p.edit.audio, tracks: Object.fromEntries(Object.entries(p.edit.audio.tracks).filter(([id]) => sources.some((s) => s.id === id))) };
+  if (audio.takeVoices) {
+    const { [take]: _dropped, ...others } = audio.takeVoices;
+    void _dropped;
+    if (Object.keys(others).length) audio.takeVoices = others;
+    else delete audio.takeVoices;
+  }
+  const base: Project = { ...p, sources, transcript, analysis, ...(flags ? { flags } : {}), edit: { ...p.edit, audio } };
+  if (rest.length === 0) {
+    // nothing left on the timeline: back to an empty project
+    const edit = { ...base.edit };
+    delete edit.clips;
+    return { ...base, edit, sources: sources.filter((s) => !s.instanceOf), duration: 0, updatedAt: new Date().toISOString() };
+  }
+  const next = projectWithEdit(base, { ...base.edit, clips: layoutClips(rest) });
+  return { ...next, updatedAt: new Date().toISOString() };
 }
 
 // ───────────────────────────── revisions ─────────────────────────────
@@ -169,7 +342,10 @@ export function commitEdit(project: Project, edit: EditState): Project {
     const m = materialChange(base, edit, project.duration);
     if (m.material) packaging = { ...packaging, stale: true, staleReason: m.reason, reviewed: false };
   }
-  return { ...project, edit, revision, packaging, updatedAt: new Date().toISOString() };
+  // When the clip order differs, everything outside the edit that is in session time is re-laid to match.
+  const placed = projectWithEdit(project, edit);
+  if (placed.packaging !== project.packaging) packaging = { ...placed.packaging, stale: packaging.stale, staleReason: packaging.staleReason, reviewed: packaging.reviewed };
+  return { ...placed, revision, packaging, updatedAt: new Date().toISOString() };
 }
 
 export function restoreRevision(project: Project, revision: number): Project {
@@ -209,7 +385,12 @@ export function applyProposal(project: Project, rawOps: unknown, opts: { label: 
 
 /** Stable key of the inputs to a processing stage, so finished stages are not repeated. */
 export function stageKey(project: Project, stage: string): string {
-  const src = project.sources.map((s) => `${s.id}:${s.fingerprint.sizeBytes}:${s.sync.offset.toFixed(3)}:${s.sync.rate.toFixed(6)}`).join('|');
-  if (stage === 'transcribe' || stage === 'visual' || stage === 'sync') return `${stage}#${src}#${project.edit.audio.masterVoiceId}`;
+  // Where a clip sits on the timeline is not an input: moving clips must not repeat transcription or analysis.
+  const src = project.sources
+    .filter((s) => !s.instanceOf)
+    .map((s) => `${s.id}:${s.fingerprint.sizeBytes}:${(s.sync.offset - (s.shift ?? 0)).toFixed(3)}:${s.sync.rate.toFixed(6)}`)
+    .join('|');
+  const voices = project.edit.audio.takeVoices ? `${project.edit.audio.masterVoiceId}+${Object.values(project.edit.audio.takeVoices).join('+')}` : project.edit.audio.masterVoiceId;
+  if (stage === 'transcribe' || stage === 'visual' || stage === 'sync') return `${stage}#${src}#${voices}`;
   return `${stage}#${src}#${JSON.stringify(project.brief)}`;
 }

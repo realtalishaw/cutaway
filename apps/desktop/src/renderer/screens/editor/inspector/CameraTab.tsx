@@ -5,6 +5,7 @@ import { ensureFaces, ensureMatte, facesKey, matteKey, retry, useData } from '..
 import { Segmented, Slider, Toggle } from '../../../ui/kit';
 import { GradeSection } from './GradeSection';
 import { Reset, Section, pct, setAppearance } from './shared';
+import { PunchSection } from './PunchSection';
 import './parity.css';
 
 const DEF = defaultAppearance();
@@ -120,6 +121,8 @@ export function CameraTab() {
           <CameraData key={cam.id} cam={cam} projectPath={projectPath} face={face.zoom || face.follow} cutout={false} />
         ))}
       </Section>
+
+      <PunchSection />
 
       <Section title="Remove background" icon="user">
         <Toggle label="Cut out the person" hint="Hides what is behind you. Computed on this Mac; nothing is uploaded." checked={cut.enabled} onChange={(v) => camera({ cutout: { ...cut, enabled: v } }, 'Remove background', 'camcut')} />

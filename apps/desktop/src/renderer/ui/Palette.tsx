@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { setEveryTransition, togglePunch } from '../screens/editor/transitionOps';
 import type { ProjectSummary } from '@shared/api';
 import { saveNow, useApp, usePlayback, type InspectorTab } from '../state/store';
+import { makeShortFromRange } from '../state/shorts';
 import { backToLibrary, newRecording, openProjectAt, pickAndImport } from '../state/actions';
 import { keyHint } from '../state/keymap';
 import { Icon, type IconName } from './icons';
@@ -28,7 +30,7 @@ export function Palette({ onClose }: { onClose(): void }) {
   const commands = useMemo(() => {
     const app = () => useApp.getState();
     const has = !!project && project.sources.length > 0;
-    const view = (v: 'sources' | 'brief' | 'edit' | 'package' | 'export') => () => (app().go('project'), app().setView(v));
+    const view = (v: 'sources' | 'brief' | 'edit' | 'package' | 'shorts' | 'export') => () => (app().go('project'), app().setView(v));
     const tab = (t: InspectorTab) => () => (view('edit')(), app().select(null), app().setPanels({ inspector: true, tab: t }));
     const out: Command[] = [
       { id: 'record', label: 'New recording', icon: 'record', keys: keyHint('record'), run: () => void newRecording() },
@@ -40,6 +42,20 @@ export function Palette({ onClose }: { onClose(): void }) {
       out.push(
         { id: 'edit', label: 'Go to Edit', icon: 'film', run: view('edit') },
         { id: 'package', label: 'Go to Package', hint: 'Thumbnail and title', icon: 'image', run: view('package') },
+        { id: 'shorts', label: 'Go to Shorts', hint: 'Vertical clips with captions', icon: 'phone', run: view('shorts') },
+        {
+          id: 'short-from-selection',
+          label: 'Make a short from the selection',
+          hint: 'The selected range or words, fitted to whole sentences',
+          icon: 'phone',
+          run: () => {
+            const sel = app().selection;
+            if (!sel || (sel.kind !== 'range' && sel.kind !== 'words')) return app().toast('Select a range on the timeline or some words in the transcript first.');
+            const made = makeShortFromRange(sel.range);
+            if ('error' in made) return app().toast(made.error, 'error');
+            view('shorts')();
+          },
+        },
         { id: 'export', label: 'Export…', icon: 'upload', keys: keyHint('export'), run: view('export') },
         { id: 'sources', label: 'Go to Sources', hint: 'Tracks, sync, voice', icon: 'sync', run: view('sources') },
         { id: 'firstcut', label: project?.firstCut ? 'Create a new first cut' : 'Create first cut', icon: 'sparkle', run: view('brief') },
@@ -58,7 +74,13 @@ export function Palette({ onClose }: { onClose(): void }) {
         { id: 't-cursor', label: 'Cursor', icon: 'pointer', keys: keyHint('tab:cursor'), run: tab('cursor') },
         { id: 't-camera', label: 'Camera', icon: 'camera', keys: keyHint('tab:camera'), run: tab('camera') },
         { id: 't-captions', label: 'Captions', icon: 'captions', keys: keyHint('tab:captions'), run: tab('captions') },
-        { id: 't-audio', label: 'Audio', icon: 'speaker', keys: keyHint('tab:audio'), run: tab('audio') },
+        { id: 't-audio', label: 'Audio', hint: 'Voice, music and sound effects', icon: 'speaker', keys: keyHint('tab:audio'), run: tab('audio') },
+        { id: 'add-text', label: 'Add text at the playhead', icon: 'text', keys: keyHint('add-text'), run: () => (view('edit')(), void setTimeout(() => window.dispatchEvent(new CustomEvent('cutaway-command', { detail: 'add-text' })), 60)) },
+        { id: 't-text', label: 'Add a title, lower third or card', hint: 'Text and titles', icon: 'text', run: tab('text') },
+        { id: 'add-music', label: 'Add music or a sound effect', hint: 'Audio tab', icon: 'music', run: tab('audio') },
+        { id: 'transitions-dissolve', label: 'Cross-dissolve every clip change', hint: 'Transitions between clips', icon: 'layout', run: () => (view('edit')(), setEveryTransition('dissolve')) },
+        { id: 'transitions-none', label: 'Remove all transitions', hint: 'Clip changes become hard cuts', icon: 'layout', run: () => (view('edit')(), setEveryTransition(null)) },
+        { id: 'punch-in', label: 'Punch in on jump cuts: on or off', hint: 'Hides cuts inside a camera shot', icon: 'camera', run: () => (view('edit')(), togglePunch()) },
         { id: 't-keys', label: 'Keyboard shortcuts overlay', icon: 'command', keys: keyHint('tab:shortcuts'), run: tab('shortcuts') },
         { id: 't-motion', label: 'Animation', icon: 'path', keys: keyHint('tab:motion'), run: tab('motion') },
         { id: 'flag-next', label: 'Go to the next flag', hint: 'Moments you marked while recording', icon: 'flag', keys: keyHint('flag-next'), run: () => window.dispatchEvent(new CustomEvent('cutaway-command', { detail: 'flag-next' })) },

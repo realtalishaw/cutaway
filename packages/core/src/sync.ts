@@ -1,5 +1,5 @@
 import type { CameraSlot, MediaSource, Project, Range, Seconds, SourceSync } from './types';
-import { subtract, union } from './ranges';
+import { intersect, subtract, union } from './ranges';
 
 export function defaultSync(method: SourceSync['method'] = 'reference', offset = 0): SourceSync {
   return {
@@ -28,7 +28,10 @@ export function toSessionTime(sync: Pick<SourceSync, 'offset' | 'rate'>, source:
 export function coverage(src: MediaSource): Range[] {
   if (!src.available || src.sync.status === 'unsynced') return [];
   const full: Range = { start: src.sync.offset, end: src.sync.offset + src.duration / src.sync.rate };
-  return subtract(full, src.gaps);
+  // A source placed for one clip (or run of clips) is only used inside it.
+  const used = src.window ? intersect(full, src.window) : full;
+  if (!used) return [];
+  return subtract(used, src.gaps);
 }
 
 export function covers(src: MediaSource | undefined, t: Seconds): boolean {
@@ -41,12 +44,48 @@ export function coversRange(src: MediaSource | undefined, r: Range): boolean {
   return coverage(src).some((c) => r.start >= c.start - 1e-3 && r.end <= c.end + 1e-3);
 }
 
+/**
+ * The first source with a role. With several clips there is one per clip: use `sourceAt` when the
+ * answer depends on where in the video you are.
+ */
 export function sourceByRole(project: Pick<Project, 'sources'>, role: MediaSource['role']): MediaSource | undefined {
   return project.sources.find((s) => s.role === role);
 }
 
 export function cameraSource(project: Pick<Project, 'sources'>, slot: CameraSlot): MediaSource | undefined {
   return sourceByRole(project, slot === 'A' ? 'cameraA' : 'cameraB');
+}
+
+/** Is a session time inside the stretch this source was placed for? Always true for a project that is one clip. */
+export function inWindow(src: Pick<MediaSource, 'window'>, t: Seconds): boolean {
+  return !src.window || (t >= src.window.start - 1e-6 && t < src.window.end - 1e-6);
+}
+
+/** The source that plays a role at a session time: the one belonging to the clip there. */
+export function sourceAt(project: Pick<Project, 'sources'>, role: MediaSource['role'], t: Seconds): MediaSource | undefined {
+  let closing: MediaSource | undefined;
+  for (const s of project.sources) {
+    if (s.role !== role) continue;
+    if (inWindow(s, t)) return s;
+    // exactly at the end of a stretch (the last frame of the video): that stretch still answers
+    if (Math.abs(t - s.window!.end) < 1e-3) closing = s;
+  }
+  return closing;
+}
+
+export function cameraSourceAt(project: Pick<Project, 'sources'>, slot: CameraSlot, t: Seconds): MediaSource | undefined {
+  return sourceAt(project, slot === 'A' ? 'cameraA' : 'cameraB', t);
+}
+
+/** The sources in play at a session time: supporting media, plus the timeline sources of the clip there. */
+export function sourcesAt(project: Pick<Project, 'sources'>, t: Seconds): MediaSource[] {
+  if (!project.sources.some((s) => s.window)) return project.sources;
+  return project.sources.filter((s) => inWindow(s, t));
+}
+
+/** Everywhere any source with this role has footage (one stretch per clip that has one). */
+export function roleCoverage(project: Pick<Project, 'sources'>, role: MediaSource['role']): Range[] {
+  return union(project.sources.filter((s) => s.role === role).flatMap(coverage));
 }
 
 /** Session duration implied by the primary (timeline-defining) sources. */

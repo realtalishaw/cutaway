@@ -3,6 +3,8 @@ import { uid } from './ranges';
 import { TimeMap } from './timemap';
 import { buildCues, chaptersToOutput, checkChapters } from './captions';
 import { unresolvedGaps } from './frame';
+import { musicClipsOf } from './music';
+import { soundFilesUsed } from './sound';
 
 export const TITLE_MAX = 100;
 export const DESCRIPTION_MAX = 5000;
@@ -146,8 +148,10 @@ export function exportPreflight(project: Project, input: PreflightInput): { chec
   const checks: PreflightCheck[] = [];
   const map = TimeMap.fromEdit(project.duration, project.edit);
   const used = new Set<string>(['screen', 'cameraA', 'cameraB']);
+  // music clips and the creator's own sound-effect files
+  const heard = new Set<string>([...musicClipsOf(project.edit, project.sources).map((c) => c.sourceId), ...soundFilesUsed(project)]);
   for (const s of project.sources) {
-    const needed = used.has(s.role) || s.id === project.edit.audio.masterVoiceId || project.edit.broll.some((b) => b.assetId === s.id) || project.edit.audio.music?.sourceId === s.id;
+    const needed = used.has(s.role) || s.id === project.edit.audio.masterVoiceId || project.edit.broll.some((b) => b.assetId === s.id) || heard.has(s.id);
     if (!needed) continue;
     if (!s.available) checks.push({ id: `missing-${s.id}`, level: 'block', title: `"${s.name}" is missing`, detail: 'The file has moved or the drive is offline. Relink it to export.', action: 'relink', sourceId: s.id });
   }

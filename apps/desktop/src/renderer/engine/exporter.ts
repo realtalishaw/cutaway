@@ -1,9 +1,12 @@
 import { ALL_FORMATS, AudioSampleSink, CanvasSource, Input, Mp4OutputFormat, Output, StreamTarget, UrlSource, VideoSampleSink, type InputAudioTrack, type StreamTargetChunk, type VideoSample } from 'mediabunny';
-import { TimeMap, buildCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, estimateVideoBitrate, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorSample, type FaceTrackSmooth, type KeyStroke, type MediaSource, type Project } from '@cutaway/core';
+import { cameraSourceAt, isMasterVoice, sourceAt, trackOf, TimeMap, buildCues, burnInCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, estimateVideoBitrate, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorSample, type FaceTrackSmooth, type KeyStroke, type MediaSource, type Project } from '@cutaway/core';
 import { resolveSourcePath } from '@shared/api';
 import { TimeStretcher, VoiceCleaner, type StereoBlock } from './audioDsp';
-import { drawFrame, neededSources, type Drawable, type FrameResources } from './compositor';
-import { loadCursor, voiceGain } from './media';
+import { drawFrame, neededSources, type Drawable, type DrawEnv, type FrameResources } from './compositor';
+import { keysOnSession, loadCursorOnSession, voiceGain } from './media';
+import { textFontsToLoad } from './textOverlay';
+import { shortCaptionFont } from './shortCaption';
+import { DUCK_SECONDS, DUCK_LEVEL, clipEnd, musicClipsOf, musicFade, placedTransitions, punchInOf, soundEvents, speakingAt, speechWindows, synthSound, transitionGains, type FrameState } from '@cutaway/core';
 import { ensureFaces, ensureKeys, ensureMatte } from './parityData';
 import { ensureGrade, gradeLuts } from './lut';
 
@@ -229,14 +232,29 @@ interface AudioTrackPlan {
   source: MediaSource;
   reader: TrackReader;
   gain: number;
-  /** 'session' tracks follow cuts; 'output' tracks (music) run straight through. */
-  clock: 'session' | 'output';
+  /** Every source track follows the cuts. Music and sound effects are mixed separately (see OutputClip). */
+  clock: 'session';
   /** Rumble filter, level, expander and limiter for the master voice. */
   cleanup: VoiceCleaner | null;
+  /** The same chain for this track's sound heard under a cross-dissolve (the neighbouring clip's side), made when first needed. */
+  makeCleanup: (() => VoiceCleaner) | null;
+  partnerCleanup?: { key: string; cleaner: VoiceCleaner };
   /** Pitch-preserving stretcher for the speed section being rendered. */
   stretch: { seg: object; stretcher: TimeStretcher } | null;
-  duck: boolean;
   coverage: { start: number; end: number }[];
+  input: Input;
+}
+
+/** A file that plays straight through on the output clock: a music clip, or a sound effect from the creator's own file. */
+interface OutputClip {
+  /** Output second at which it starts, where in the file that is, and for how long it plays. */
+  start: number;
+  sourceIn: number;
+  length: number;
+  /** Level at `t` seconds into the clip (fades included). */
+  gainAt(t: number): number;
+  duck: boolean;
+  reader: TrackReader;
   input: Input;
 }
 
@@ -257,11 +275,10 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
   const speechGain = voiceGain(project);
   for (const s of project.sources) {
     if (!s.hasAudio || !s.available) continue;
-    const isMusic = audio.music?.sourceId === s.id;
-    const t = audio.tracks[s.id];
+    const t = trackOf(audio, s);
     const brollWithAudio = project.edit.broll.some((b) => b.assetId === s.id && b.useAssetAudio);
-    if (!isMusic && !brollWithAudio && (!t || t.muted)) continue;
-    if (s.sync.status === 'unsynced' && !isMusic) continue;
+    if (!brollWithAudio && (!t || t.muted)) continue;
+    if (s.sync.status === 'unsynced') continue;
     let input: Input;
     try {
       input = await openInput(projectPath, s);
@@ -270,29 +287,60 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
     }
     const track = await input.getPrimaryAudioTrack();
     if (!track || !(await track.canDecode())) continue;
-    const isVoice = s.id === audio.masterVoiceId;
+    const isVoice = isMasterVoice(audio, s);
     const clean = isVoice && audio.voiceCleanup.enabled && !audio.voiceCleanup.bypass;
     plans.push({
       source: s,
       reader: new TrackReader(track),
       // the cleanup chain applies the speech level itself, so its expander and limiter see the final level
-      gain: isMusic ? audio.music!.gain : (t?.gain ?? 1),
-      clock: isMusic ? 'output' : 'session',
+      gain: t?.gain ?? 1,
+      clock: 'session',
       cleanup: clean ? new VoiceCleaner(SAMPLE_RATE, { makeup: speechGain, expander: project.analysis?.voiceLevelDb != null }) : null,
+      makeCleanup: clean ? () => new VoiceCleaner(SAMPLE_RATE, { makeup: speechGain, expander: project.analysis?.voiceLevelDb != null }) : null,
       stretch: null,
-      duck: isMusic && !!audio.music?.duck,
-      coverage: isMusic ? [{ start: 0, end: Infinity }] : brollWithAudio ? project.edit.broll.filter((b) => b.assetId === s.id).map((b) => ({ start: b.start, end: b.end })) : coverage(s),
+      coverage: brollWithAudio ? project.edit.broll.filter((b) => b.assetId === s.id).map((b) => ({ start: b.start, end: b.end })) : coverage(s),
       input,
     });
   }
-  // click sound: the same synthesised tick the preview plays, at each kept click's output position
+  // Music clips and file-based sound effects: each plays straight through on the output clock, so cuts never chop it.
+  const outClips: OutputClip[] = [];
+  const openOutputClip = async (sourceId: string | undefined, clip: Omit<OutputClip, 'reader' | 'input'>) => {
+    const s = project.sources.find((x) => x.id === sourceId);
+    if (!s || !s.hasAudio || !s.available || clip.start >= map.outDuration || clip.length <= 0) return;
+    try {
+      const input = await openInput(projectPath, s);
+      const track = await input.getPrimaryAudioTrack();
+      if (!track || !(await track.canDecode())) return input.dispose();
+      outClips.push({ ...clip, reader: new TrackReader(track), input });
+    } catch {
+      /* an unreadable file is left out of the mix, as an unreadable source track is */
+    }
+  };
+  for (const c of musicClipsOf(project.edit, project.sources)) {
+    if (c.gain > 0) await openOutputClip(c.sourceId, { start: c.start, sourceIn: c.sourceIn, length: c.length, gainAt: (t) => c.gain * musicFade(c, t), duck: c.duck });
+  }
+  // One-shot sounds mixed sample for sample: mouse clicks and the built-in sound effects (the same samples the preview plays).
+  const shots: { at: number; data: Float32Array; from: number; gain: number }[] = [];
   const cs = clickSoundOf(project.edit.appearance);
   const tickData = clickTick(SAMPLE_RATE);
-  const tickAt = cs.enabled ? clickTimes.filter((t) => map.isKept(t)).map((t) => Math.round(map.toOutput(t) * SAMPLE_RATE)).sort((a, b) => a - b) : [];
-  if (plans.length === 0 && tickAt.length === 0) return false;
+  if (cs.enabled) for (const t of clickTimes) if (map.isKept(t)) shots.push({ at: Math.round(map.toOutput(t) * SAMPLE_RATE), data: tickData, from: 0, gain: cs.volume });
+  for (const e of soundEvents(project, map)) {
+    if (e.cue.builtin) shots.push({ at: Math.round(e.at * SAMPLE_RATE), data: synthSound(e.cue.builtin, SAMPLE_RATE), from: Math.round(e.skip * SAMPLE_RATE), gain: e.cue.gain });
+    else {
+      const length = e.duration - e.skip;
+      await openOutputClip(e.cue.sourceId, { start: e.at, sourceIn: e.skip, length, gainAt: (t) => e.cue.gain * musicFade({ length, fadeIn: 0, fadeOut: Math.min(0.08, length / 2) }, t), duck: false });
+    }
+  }
+  shots.sort((a, b) => a.at - b.at);
+  if (plans.length === 0 && outClips.length === 0 && shots.length === 0) return false;
 
   const totalFrames = Math.round(map.outDuration * SAMPLE_RATE);
-  const speech = (project.transcript?.words ?? []).map((w) => ({ start: w.start - 0.25, end: w.end + 0.35 }));
+  // Transitions between clips: the playing clip's sound follows the transition's level curve, and under a
+  // cross-dissolve the neighbouring clip is heard too wherever it has real footage beyond its edge.
+  const transitions = placedTransitions(project, map);
+  const speech = speechWindows(project);
+  const ducking = outClips.some((c) => c.duck);
+  const DUCK_COEF = 1 - Math.exp(-1 / SAMPLE_RATE / DUCK_SECONDS);
   let written = 0;
   let pos = 44;
   await window.cutaway.export.write(args.sessionId, wavName, 0, wavHeader(totalFrames * 4)).catch((e) => {
@@ -334,13 +382,25 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
         const mixR = new Float32Array(n);
         const sessionT = seg.srcStart + (off / SAMPLE_RATE) * seg.speed;
         const outT = seg.outStart + off / SAMPLE_RATE;
+        const live = transitions.filter((t) => outT < t.end && outT + n / SAMPLE_RATE > t.start);
+        // level of the playing clip, sample by sample (null when no transition touches this second)
+        let level: Float32Array | null = null;
+        if (live.length) {
+          level = new Float32Array(n).fill(1);
+          for (const t of live) {
+            const i0 = Math.max(0, Math.ceil((t.start - outT) * SAMPLE_RATE));
+            const i1 = Math.min(n, Math.ceil((t.end - outT) * SAMPLE_RATE));
+            for (let i = i0; i < i1; i++) {
+              const o = outT + i / SAMPLE_RATE;
+              const g = transitionGains(t.transition.kind, (o - t.start) / t.duration);
+              level[i] = o < t.at ? g.from : g.to;
+            }
+          }
+        }
         for (const p of plans) {
           let l: Float32Array = new Float32Array(n);
           let r: Float32Array = new Float32Array(n);
-          if (p.clock === 'output') {
-            if (outT >= p.source.duration) continue;
-            await p.reader.read(outT, p.reader.rate / SAMPLE_RATE, n, l, r, 1);
-          } else if (!stretched) {
+          if (!stretched) {
             const blockEnd = sessionT + n / SAMPLE_RATE;
             if (!p.coverage.some((c) => sessionT < c.end && blockEnd > c.start)) continue;
             ({ l, r } = await readSession(p, sessionT, n));
@@ -356,32 +416,81 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
           p.cleanup?.run(l, r);
           for (let i = 0; i < n; i++) {
             let g = p.gain;
-            if (p.duck) {
-              const t = sessionT + (i / SAMPLE_RATE) * seg.speed;
-              const target = speech.some((w) => t >= w.start && t < w.end) ? 0.22 : 1;
-              duckLevel += (target - duckLevel) * 0.0004;
-              g *= duckLevel;
-            }
-            if (p.clock === 'session') {
-              // short fades at every cut so joins never click
-              const fromStart = off + i;
-              const fromEnd = segFrames - 1 - (off + i);
-              if (fromStart < FADE) g *= fromStart / FADE;
-              if (fromEnd < FADE) g *= fromEnd / FADE;
-            }
+            // short fades at every cut so joins never click
+            const fromStart = off + i;
+            const fromEnd = segFrames - 1 - (off + i);
+            if (fromStart < FADE) g *= fromStart / FADE;
+            if (fromEnd < FADE) g *= fromEnd / FADE;
+            if (level) g *= level[i]!;
             mixL[i] = mixL[i]! + l[i]! * g;
             mixR[i] = mixR[i]! + r[i]! * g;
           }
         }
-        if (tickAt.length) {
+        // The neighbouring clip under a cross-dissolve: its footage just beyond its edge, at normal speed.
+        for (const t of live) {
+          if (t.transition.kind !== 'dissolve') continue;
+          for (const half of ['in', 'out'] as const) {
+            // 'in': the clip about to begin, heard before the change. 'out': the clip that ended, heard after it.
+            const from = half === 'in' ? Math.max(t.start, t.at - (t.toStart - t.to.start)) : t.at;
+            const to = half === 'in' ? t.at : Math.min(t.end, t.at + (clipEnd(t.from) - t.fromEnd));
+            const i0 = Math.max(0, Math.ceil((from - outT) * SAMPLE_RATE));
+            const i1 = Math.min(n, Math.ceil((to - outT) * SAMPLE_RATE));
+            if (i1 - i0 < 1) continue;
+            const o0 = outT + i0 / SAMPLE_RATE;
+            const s0 = half === 'in' ? t.toStart - (t.at - o0) : t.fromEnd + (o0 - t.at);
+            const key = `${t.transition.id}:${half}`;
+            for (const p of plans) {
+              if (!p.coverage.some((c) => s0 < c.end && s0 + (i1 - i0) / SAMPLE_RATE > c.start)) continue;
+              const { l, r } = await readSession(p, s0, i1 - i0);
+              if (p.makeCleanup) {
+                if (p.partnerCleanup?.key !== key) p.partnerCleanup = { key, cleaner: p.makeCleanup() };
+                p.partnerCleanup.cleaner.run(l, r);
+              }
+              for (let k = 0; k < i1 - i0; k++) {
+                const o = o0 + k / SAMPLE_RATE;
+                const g = transitionGains('dissolve', (o - t.start) / t.duration);
+                const gain = p.gain * (half === 'in' ? g.to : g.from);
+                mixL[i0 + k] = mixL[i0 + k]! + l[k]! * gain;
+                mixR[i0 + k] = mixR[i0 + k]! + r[k]! * gain;
+              }
+            }
+          }
+        }
+        // The ducking follower runs through the whole video (not only where music plays) so it is already settled when a clip starts.
+        let duckEnv: Float32Array | null = null;
+        if (ducking) {
+          duckEnv = new Float32Array(n);
+          for (let i = 0; i < n; i++) {
+            const target = speakingAt(speech, sessionT + (i / SAMPLE_RATE) * seg.speed) ? DUCK_LEVEL : 1;
+            duckLevel += (target - duckLevel) * DUCK_COEF;
+            duckEnv[i] = duckLevel;
+          }
+        }
+        for (const c of outClips) {
+          if (outT >= c.start + c.length || outT + n / SAMPLE_RATE <= c.start) continue;
+          const l = new Float32Array(n);
+          const r = new Float32Array(n);
+          await c.reader.read(c.sourceIn + (outT - c.start), c.reader.rate / SAMPLE_RATE, n, l, r, 1);
+          for (let i = 0; i < n; i++) {
+            let g = c.gainAt(outT + i / SAMPLE_RATE - c.start);
+            if (g <= 0) continue;
+            if (c.duck && duckEnv) g *= duckEnv[i]!;
+            mixL[i] = mixL[i]! + l[i]! * g;
+            mixR[i] = mixR[i]! + r[i]! * g;
+          }
+        }
+        if (shots.length) {
           const blockStart = Math.round(seg.outStart * SAMPLE_RATE) + off;
-          for (const at of tickAt) {
-            if (at >= blockStart + n || at + tickData.length <= blockStart) continue;
-            for (let k = Math.max(0, blockStart - at); k < tickData.length; k++) {
-              const i = at + k - blockStart;
+          for (const shot of shots) {
+            const len = shot.data.length - shot.from;
+            if (shot.at >= blockStart + n) break;
+            if (shot.at + len <= blockStart) continue;
+            for (let k = Math.max(0, blockStart - shot.at); k < len; k++) {
+              const i = shot.at + k - blockStart;
               if (i >= n) break;
-              mixL[i] = mixL[i]! + tickData[k]! * cs.volume;
-              mixR[i] = mixR[i]! + tickData[k]! * cs.volume;
+              const v = shot.data[shot.from + k]! * shot.gain;
+              mixL[i] = mixL[i]! + v;
+              mixR[i] = mixR[i]! + v;
             }
           }
         }
@@ -402,7 +511,7 @@ async function renderAudio(args: RenderArgs, map: TimeMap, wavName: string, clic
     }
     if (written !== totalFrames) await window.cutaway.export.write(args.sessionId, wavName, 0, wavHeader(written * 4)).catch(() => {});
   } finally {
-    for (const p of plans) {
+    for (const p of [...plans, ...outClips]) {
       await p.reader.dispose();
       p.input.dispose();
     }
@@ -428,12 +537,15 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
   };
   args.onProgress({ stage: 'prepare', frames: 0, totalFrames, fps: 0 });
 
-  const byRole = (role: MediaSource['role']) => project.sources.find((s) => s.role === role);
-  const screen = byRole('screen');
-  const camA = byRole('cameraA');
-  const camB = byRole('cameraB');
+  // Every clip has its own screen and cameras: all that play are opened, and each frame uses those of its clip.
+  const playing = (role: MediaSource['role']) => project.sources.filter((s) => s.role === role && coverage(s).some((c) => c.start < project.duration - 1e-6));
+  const screens = playing('screen');
+  const cams = [...playing('cameraA'), ...playing('cameraB')];
   const inputs: Input[] = [];
   const cursors = new Map<string, FrameCursor>();
+  /** Decoders per source, so a second reader can be opened for the neighbouring clip's picture under a cross-dissolve. */
+  const sinks = new Map<string, VideoSampleSink>();
+  const partnerCursors = new Map<string, FrameCursor>();
   const stills = new Map<string, Drawable>();
   const open = async (s: MediaSource | undefined) => {
     if (!s) return;
@@ -448,7 +560,9 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
     const track = await input.getPrimaryVideoTrack();
     if (!track) throw new RenderError('missing-source', `"${s.name}" has no video track.`);
     if (!(await track.canDecode())) throw new RenderError('encode-failed', `"${s.name}" uses a codec this Mac cannot decode (${track.codec ?? 'unknown'}).`);
-    cursors.set(s.id, new FrameCursor(new VideoSampleSink(track)));
+    const sink = new VideoSampleSink(track);
+    sinks.set(s.id, sink);
+    cursors.set(s.id, new FrameCursor(sink));
   };
 
   let clickTimes: number[] = [];
@@ -458,25 +572,33 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
   try {
     await document.fonts.ready;
     await Promise.all([document.fonts.load("650 40px 'Inter Variable'"), document.fonts.load("500 40px 'Inter Variable'")]).catch(() => {});
-    for (const s of [screen, camA, camB]) await open(s);
+    // every face a free text overlay uses, so no frame is drawn in a fallback font
+    await Promise.all(textFontsToLoad(project.edit.overlays).map((f) => document.fonts.load(f))).catch(() => {});
+    if (project.edit.appearance.captions.short) await document.fonts.load(shortCaptionFont(project.edit.appearance.captions.short)).catch(() => {});
+    for (const s of [...screens, ...cams]) await open(s);
     for (const id of new Set(project.edit.broll.map((b) => b.assetId))) await open(project.sources.find((s) => s.id === id));
     let backgroundImage: Drawable | null = null;
     if (ap.background.type === 'image') backgroundImage = await loadImage(window.cutaway.media.url(resolveSourcePath(projectPath, ap.background.path)));
     await ensureGrade(projectPath, ap); // colour LUTs parsed before the first frame
 
-    const samples: CursorSample[] = screen && !screen.cursorBaked && screen.cursorFile ? await loadCursor(projectPath, screen) : [];
+    // pointer and key telemetry of every recorded screen, on the one session timeline
+    const samples: CursorSample[] = [];
+    for (const sc of screens) if (!sc.cursorBaked && sc.cursorFile) samples.push(...(await loadCursorOnSession(projectPath, sc)));
+    samples.sort((a, b) => a.t - b.t);
     const extra = cursorExtrasOf(ap);
     const cursorTrack = samples.length ? buildCursorTrack(samples, ap.cursor.smoothing, 120, { antiShake: extra.antiShake, loop: extra.loop }) : null;
     const followTrack = samples.length ? buildCursorTrack(samples, 0.97) : null;
     clickTimes = cursorTrack ? cursorTrack.clicks.map((c) => c.t) : [];
     // derived data the preview may still be computing: wait for it so the export matches what was approved
-    const keys: KeyStroke[] = shortcutsOf(ap).show ? await ensureKeys(projectPath, screen) : [];
+    const keys: KeyStroke[] = [];
+    if (shortcutsOf(ap).show) for (const sc of screens) keys.push(...keysOnSession(await ensureKeys(projectPath, sc), sc));
+    keys.sort((a, b) => a.t - b.t);
     const faceOpt = faceOf(ap);
-    const faces: Partial<Record<CameraSlot, FaceTrackSmooth | null>> = {};
-    const mattes: Partial<Record<CameraSlot, FrameCursor>> = {};
-    for (const [slot, cam] of [['A', camA], ['B', camB]] as [CameraSlot, MediaSource | undefined][]) {
-      if (!cam) continue;
-      if (faceOpt.zoom || faceOpt.follow) faces[slot] = await ensureFaces(projectPath, cam);
+    const facesOf = new Map<string, FaceTrackSmooth | null>();
+    const mattes = new Map<string, FrameCursor>();
+    for (const cam of cams) {
+      // the punch-in on jump cuts closes in on the face too, when the camera has a track
+      if (faceOpt.zoom || faceOpt.follow || punchInOf(project.edit).enabled) facesOf.set(cam.id, await ensureFaces(projectPath, cam).catch(() => null));
       if (cutoutOf(ap).enabled) {
         const mp = await ensureMatte(projectPath, cam);
         if (mp) {
@@ -484,17 +606,29 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
           inputs.push(input);
           const track = await input.getPrimaryVideoTrack();
           if (track && (await track.canDecode())) {
-            const fc = new FrameCursor(new VideoSampleSink(track));
-            mattes[slot] = fc;
+            const sink = new VideoSampleSink(track);
+            const fc = new FrameCursor(sink);
+            mattes.set(cam.id, fc);
+            sinks.set(`matte:${cam.id}`, sink);
             cursors.set(`matte:${cam.id}`, fc);
           }
         }
       }
     }
     check();
-    const device = deviceOf(ap).frame ? deviceKindFor(screen) : null;
-    const ctxFrame = { project, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * ap.crop.w) / (screen.height * ap.crop.h) : null, keys, faces, quality: 'export' as const, device };
-    const cues = ap.captions.burnIn ? buildCues(project.transcript, project.edit, map) : [];
+    const frameDevice = deviceOf(ap).frame;
+    /** What the frame at a session time is made from: the sources of the clip there. */
+    const castAt = (t: number) => {
+      const screen = sourceAt(project, 'screen', t);
+      const camA = cameraSourceAt(project, 'A', t);
+      const camB = cameraSourceAt(project, 'B', t);
+      const faces: Partial<Record<CameraSlot, FaceTrackSmooth | null>> = {};
+      if (camA && facesOf.has(camA.id)) faces.A = facesOf.get(camA.id);
+      if (camB && facesOf.has(camB.id)) faces.B = facesOf.get(camB.id);
+      const device = frameDevice ? deviceKindFor(screen) : null;
+      return { screen, camA, camB, device, ctx: { project, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * ap.crop.w) / (screen.height * ap.crop.h) : null, keys, faces, quality: 'export' as const, device } };
+    };
+    const cues = burnInCues(project, map, buildCues);
 
     const canvas = new OffscreenCanvas(W, H);
     const ctx = canvas.getContext('2d', { alpha: false })!;
@@ -515,36 +649,67 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
     output.addVideoTrack(videoSource, { frameRate: fps });
     await output.start();
 
-    const started = performance.now();
-    for (let i = 0; i < totalFrames; i++) {
-      check();
-      if (writeError) throw ipcError(writeError);
-      // sample at the middle of the frame interval so a cut never shows a frame from the removed side
-      const out = Math.min(map.outDuration - 1e-4, (i + 0.5) / fps);
-      const state = evaluateFrame(ctxFrame, out);
+    let canvas2: OffscreenCanvas | null = null;
+    type Cast = ReturnType<typeof castAt>;
+    const envOf = (cast: Cast, cue: DrawEnv['cue']): DrawEnv => ({ appearance: ap, screenPoints: cast.screen?.pointWidth && cast.screen.pointHeight ? { width: cast.screen.pointWidth, height: cast.screen.pointHeight } : null, cue, device: cast.device, luts: gradeLuts(projectPath, ap) });
+    /** The neighbouring clip's picture has its own readers, so the playing clip's are never sent back and forth. */
+    const cursorOf = (key: string, partner: boolean): FrameCursor | undefined => {
+      if (!partner) return cursors.get(key);
+      let c = partnerCursors.get(key);
+      const sink = sinks.get(key);
+      if (!c && sink) partnerCursors.set(key, (c = new FrameCursor(sink)));
+      return c;
+    };
+    /** The pictures a frame is drawn from. `at` is the session time they are taken at (the frame's own, except for a neighbour's frame). */
+    const gather = async (state: FrameState, cast: Cast, at: number, partner: boolean): Promise<FrameResources> => {
+      const { screen, camA, camB } = cast;
       const need = neededSources(state);
       const res: FrameResources = { screen: null, cameraA: null, cameraB: null, broll: null, backgroundImage };
       const grab = async (s: MediaSource | undefined, local: number): Promise<Drawable | null> => {
         if (!s) return null;
         const still = stills.get(s.id);
         if (still) return still;
-        const cur = cursors.get(s.id);
+        const cur = cursorOf(s.id, partner);
         if (!cur) return null;
         const sample = await cur.at(Math.max(0, Math.min(s.duration - 1e-3, local)));
         return sample ? sampleDrawable(sample) : null;
       };
-      if (need.screen && screen) res.screen = await grab(screen, toSourceTime(screen.sync, state.src));
-      if (need.cameras.includes('A') && camA) res.cameraA = await grab(camA, toSourceTime(camA.sync, state.src));
-      if (need.cameras.includes('B') && camB) res.cameraB = await grab(camB, toSourceTime(camB.sync, state.src));
+      if (need.screen && screen) res.screen = await grab(screen, toSourceTime(screen.sync, at));
+      if (need.cameras.includes('A') && camA) res.cameraA = await grab(camA, toSourceTime(camA.sync, at));
+      if (need.cameras.includes('B') && camB) res.cameraB = await grab(camB, toSourceTime(camB.sync, at));
       for (const [slot, cam] of [['A', camA], ['B', camB]] as [CameraSlot, MediaSource | undefined][]) {
-        const mc = mattes[slot];
+        const mc = cam && mattes.has(cam.id) ? cursorOf(`matte:${cam.id}`, partner) : undefined;
         if (!mc || !cam || !need.cameras.includes(slot)) continue;
-        const sample = await mc.at(Math.max(0, Math.min(cam.duration - 1e-3, toSourceTime(cam.sync, state.src))));
+        const sample = await mc.at(Math.max(0, Math.min(cam.duration - 1e-3, toSourceTime(cam.sync, at))));
         if (slot === 'A') res.matteA = sample ? sampleDrawable(sample) : null;
         else res.matteB = sample ? sampleDrawable(sample) : null;
       }
       if (need.broll && state.broll) res.broll = await grab(project.sources.find((s) => s.id === need.broll), state.broll.assetTime);
-      drawFrame(ctx, state, res, { appearance: ap, screenPoints: screen?.pointWidth && screen.pointHeight ? { width: screen.pointWidth, height: screen.pointHeight } : null, cue: cues.length ? cueAt(cues, out) : null, device, luts: gradeLuts(projectPath, ap) });
+      return res;
+    };
+
+    const started = performance.now();
+    for (let i = 0; i < totalFrames; i++) {
+      check();
+      if (writeError) throw ipcError(writeError);
+      // sample at the middle of the frame interval so a cut never shows a frame from the removed side
+      const out = Math.min(map.outDuration - 1e-4, (i + 0.5) / fps);
+      const cast = castAt(map.toSource(out));
+      const state = evaluateFrame(cast.ctx, out);
+      const res = await gather(state, cast, state.src, false);
+      // A transition between clips: a colour wash, or the neighbouring clip's own frame laid over this one.
+      let blend: DrawEnv['blend'] = null;
+      const tr = state.transition;
+      if (tr?.wash) blend = { alpha: tr.wash.alpha, color: tr.wash.color };
+      else if (tr?.partner && tr.partner.alpha > 0.001) {
+        const other = castAt(tr.partner.src);
+        const otherState = evaluateFrame(other.ctx, tr.partner.edgeOut);
+        const otherRes = await gather(otherState, other, tr.partner.src, true);
+        canvas2 ??= new OffscreenCanvas(W, H);
+        drawFrame(canvas2.getContext('2d', { alpha: false })!, otherState, otherRes, envOf(other, null));
+        blend = { alpha: tr.partner.alpha, image: canvas2 };
+      }
+      drawFrame(ctx, state, res, { ...envOf(cast, cues.length ? cueAt(cues, out) : null), blend });
       await videoSource.add(i / fps, 1 / fps);
       if (i % 5 === 0 || i === totalFrames - 1) {
         const elapsed = (performance.now() - started) / 1000;
@@ -574,6 +739,7 @@ export async function renderVideo(args: RenderArgs): Promise<RenderResult> {
     throw new RenderError('encode-failed', (e as Error).message || 'The video could not be encoded.');
   } finally {
     for (const c of cursors.values()) await c.dispose();
+    for (const c of partnerCursors.values()) await c.dispose();
     for (const i of inputs) i.dispose();
   }
 }

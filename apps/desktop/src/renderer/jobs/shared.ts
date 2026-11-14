@@ -2,7 +2,7 @@
  * Helpers shared by the processing jobs. Jobs only talk to window.cutaway,
  * @cutaway/core and @cutaway/ai.
  */
-import { activeRanges, coverage, covers, sentences, toSourceTime, type JobStage, type MediaSource, type Project, type Range, type Seconds } from '@cutaway/core';
+import { activeRanges, clipEnd, clipsOf, coverage, covers, playingClips, sentences, sourceAt, toSourceTime, type JobStage, type MediaSource, type Project, type Range, type Seconds } from '@cutaway/core';
 import { PROVIDERS, type PromptAsset, type PromptKeyframe, type PromptSentence, type PromptSource, type ProviderId } from '@cutaway/ai';
 import { resolveSourcePath, type AiRequest, type AiResult } from '../../shared/api';
 import { JobError, type JobContext, type StageState } from './types';
@@ -193,9 +193,21 @@ export async function askClaude(ctx: JobContext, req: Omit<AiRequest, 'id'>): Pr
 // ───────────────────────────── prompt inputs ─────────────────────────────
 
 export function promptSources(project: Project): PromptSource[] {
-  return project.sources
-    .filter((s) => s.role === 'screen' || s.role === 'cameraA' || s.role === 'cameraB' || s.role === 'voice')
-    .map((s) => ({ id: s.id, role: s.role, name: s.name, duration: s.duration, coverage: coverage(s), hasAudio: s.hasAudio, cursorTelemetry: !s.cursorBaked && !!s.cursorFile }));
+  const timeline = project.sources.filter((s) => s.role === 'screen' || s.role === 'cameraA' || s.role === 'cameraB' || s.role === 'voice');
+  const describe = (s: MediaSource): PromptSource => ({ id: s.id, role: s.role, name: s.name, duration: s.duration, coverage: coverage(s), hasAudio: s.hasAudio, cursorTelemetry: !s.cursorBaked && !!s.cursorFile });
+  const clips = playingClips(clipsOf(project));
+  if (clips.length < 2) return timeline.map(describe);
+  // Several clips: say which clip each source belongs to, and leave out footage that is off the timeline.
+  const out: PromptSource[] = [];
+  clips.forEach((c, i) => {
+    const range = { start: c.start, end: clipEnd(c) };
+    for (const s of timeline) {
+      if (!s.window || s.window.start > range.start + 1e-6 || s.window.end < range.end - 1e-6) continue;
+      const cov = coverage(s).flatMap((r) => (r.end > range.start && r.start < range.end ? [{ start: Math.max(r.start, range.start), end: Math.min(r.end, range.end) }] : []));
+      out.push({ ...describe(s), coverage: cov, clip: { index: i + 1, name: c.name, ...range } });
+    }
+  });
+  return out;
 }
 
 export function promptAssets(project: Project): PromptAsset[] {
@@ -270,16 +282,24 @@ export function spread(candidates: { t: Seconds; priority: number }[], max: numb
  */
 export async function extractStills(ctx: JobContext, project: Project, wants: FrameWant[], width = 640): Promise<{ stills: Still[]; imageDir: string | null }> {
   const stills: Still[] = [];
-  const byRole = new Map<FrameWant['role'], FrameWant[]>();
-  for (const w of wants) byRole.set(w.role, [...(byRole.get(w.role) ?? []), w]);
-  for (const [role, list] of byRole) {
-    const src = project.sources.find((s) => s.role === role && s.available && s.kind === 'video');
-    if (!src) continue;
+  // A still comes from the source that plays that role in the clip at that moment. With several clips
+  // the stills of all their files go to one folder, since the model may read one folder only.
+  const several = !!project.edit.clips && project.sources.some((s) => s.window);
+  const bySource = new Map<string, { src: MediaSource; role: FrameWant['role']; list: FrameWant[] }>();
+  for (const w of wants) {
+    const src = several ? sourceAt(project, w.role, w.sessionTime) : project.sources.find((s) => s.role === w.role && s.available && s.kind === 'video');
+    if (!src || !src.available || src.kind !== 'video') continue;
+    const key = `${w.role}|${src.id}`;
+    const entry = bySource.get(key) ?? { src, role: w.role, list: [] };
+    entry.list.push(w);
+    bySource.set(key, entry);
+  }
+  for (const { src, role, list } of bySource.values()) {
     const usable = list.filter((w) => covers(src, w.sessionTime));
     if (usable.length === 0) continue;
     const times = usable.map((w) => Math.min(Math.max(0, toSourceTime(src.sync, w.sessionTime)), Math.max(0, src.duration - 0.05)));
     try {
-      const frames = await window.cutaway.native.frames(ctx.projectPath, filePath(ctx, src), times, width);
+      const frames = await window.cutaway.native.frames(ctx.projectPath, filePath(ctx, src), times, width, several);
       frames.forEach((f, i) => {
         // Results are matched by requested time; fall back to order.
         const j = times.findIndex((t) => Math.abs(t - f.t) < 1e-3);

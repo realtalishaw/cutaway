@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { coverage, fmtTime, relinkMatch, setMasterVoice, syncFromCalibration, toSessionTime, toSourceTime, withSources, type CorrelationResult, type MediaSource, type Project, type Range, type SourceRole, type SourceSync } from '@cutaway/core';
+import { clipsOf, dropTake, isTimelineSource, putBackClip, takeOf, coverage, fmtTime, relinkMatch, setMasterVoice, withoutSoundSource, syncFromCalibration, toSessionTime, toSourceTime, withSources, type CorrelationResult, type MediaSource, type Project, type Range, type SourceRole, type SourceSync } from '@cutaway/core';
 import { resolveSourcePath, type ProbeResult } from '@shared/api';
 import { useApp, useProject } from '../state/store';
-import { clearImportReport, droppedPaths, errorText, filePaths, getImportReport, importFiles, newRecording, recordImportReport, subscribeImportReport } from '../state/actions';
+import { clearImportReport, droppedPaths, errorText, filePaths, getImportReport, importFiles, newRecording, recordImportReport, sourceToClip, subscribeImportReport, takeToBroll } from '../state/actions';
 import '../state/recording';
 import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Empty, Modal, Segmented, Slider, Toggle, fmtBytes } from '../ui/kit';
@@ -39,29 +39,39 @@ const REFERENCE: SourceSync = { offset: 0, rate: 1, method: 'reference', confide
  * reviewed. Sources recorded together keep their shared clock.
  */
 function normaliseSync(sources: MediaSource[]): MediaSource[] {
-  const lead = leadOf(sources);
+  // Each footage group (a clip's take) has its own reference; a clip that sits further along the
+  // timeline keeps its place (`shift`) when its sync state is reset.
+  const leads = new Map<string, MediaSource | undefined>();
+  const leadFor = (s: MediaSource) => {
+    const k = takeOf(s);
+    if (!leads.has(k)) leads.set(k, leadOf(sources.filter((x) => !x.instanceOf && takeOf(x) === k)));
+    return leads.get(k);
+  };
   let changed = false;
   const out = sources.map((s) => {
-    if (s.sync.method === 'recorded-clock') return s;
+    if (s.sync.method === 'recorded-clock' || s.instanceOf) return s;
     if (!isTimeline(s)) {
       if (s.sync.method === 'reference' && s.sync.status === 'aligned') return s;
       changed = true;
       return { ...s, sync: { ...REFERENCE } };
     }
-    if (s.id === lead?.id) {
+    if (s.id === leadFor(s)?.id) {
       if (s.sync.status === 'aligned' && s.sync.confirmedByCreator) return s;
       if (s.sync.method !== 'unsynced') return s;
       changed = true;
-      return { ...s, sync: { ...REFERENCE } };
+      return { ...s, sync: { ...REFERENCE, offset: s.shift ?? 0 } };
     }
     if (s.sync.method === 'reference') {
       changed = true;
-      return { ...s, sync: { ...REVIEW } };
+      return { ...s, sync: { ...REVIEW, offset: s.shift ?? 0 } };
     }
     return s;
   });
   return changed ? out : sources;
 }
+
+/** The reference of a source's own footage group. */
+const groupLead = (sources: MediaSource[], s: MediaSource) => leadOf(sources.filter((x) => !x.instanceOf && takeOf(x) === takeOf(s)));
 
 function needsReview(s: MediaSource, lead: MediaSource | undefined): boolean {
   return isTimeline(s) && s.id !== lead?.id && s.sync.method !== 'recorded-clock' && s.sync.status !== 'unsynced' && !(s.sync.status === 'aligned' && s.sync.confirmedByCreator);
@@ -169,7 +179,8 @@ function SyncWorkbench({ sourceId, onClose }: { sourceId: string; onClose: () =>
   const project = useProject();
   const projectPath = useApp((s) => s.projectPath)!;
   const source = project.sources.find((s) => s.id === sourceId);
-  const lead = leadOf(project.sources);
+  // a file is lined up against the reference of its own footage group (its clip)
+  const lead = source ? groupLead(project.sources, source) : leadOf(project.sources);
   const refVideo = useRef<HTMLVideoElement>(null);
   const srcVideo = useRef<HTMLVideoElement>(null);
   const [listen, setListen] = useState<'both' | 'ref' | 'this'>('both');
@@ -420,7 +431,11 @@ function applyRelink(source: MediaSource, probe: ProbeResult, updateIdentity: bo
 function SourceRow({ source, project, lead, onSync, onRelink }: { source: MediaSource; project: Project; lead: MediaSource | undefined; onSync: () => void; onRelink: () => void }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const projectPath = useApp((s) => s.projectPath)!;
-  const taken = new Set(project.sources.filter((s) => s.id !== source.id).map((s) => s.role));
+  // roles are per footage group: every clip can have its own screen and cameras
+  const taken = new Set(project.sources.filter((s) => s.id !== source.id && !s.instanceOf && takeOf(s) === takeOf(source)).map((s) => s.role));
+  const pieces = project.edit.clips && isTimelineSource(source) ? clipsOf(project).filter((c) => c.take === takeOf(source)) : [];
+  const offTimeline = pieces.length > 0 && pieces.every((c) => c.removed);
+  const otherFootage = project.sources.some((s) => s.id !== source.id && !s.instanceOf && isTimelineSource(s) && s.kind === 'video');
   const isLead = source.id === lead?.id;
   const timeline = isTimeline(source);
   const sync = source.sync;
@@ -437,11 +452,14 @@ function SourceRow({ source, project, lead, onSync, onRelink }: { source: MediaS
     );
 
   const remove = () => {
-    useApp.getState().patch((p) => {
+    useApp.getState().patch((p0) => {
+      // the picture of a clip leaves with its clip
+      const lastVideo = !!p0.edit.clips && isTimelineSource(source) && source.kind === 'video' && !p0.sources.some((s) => s.id !== source.id && !s.instanceOf && isTimelineSource(s) && s.kind === 'video' && takeOf(s) === takeOf(source));
+      const p = lastVideo ? dropTake(p0, takeOf(source)) : p0;
       const sources = normaliseSync(p.sources.filter((s) => s.id !== source.id));
-      const next = withSources(p, sources);
+      const next = withSources({ ...p, sources }, sources);
       // Decisions that pointed at this file go with it.
-      return { ...next, edit: { ...next.edit, broll: next.edit.broll.filter((b) => b.assetId !== source.id), audio: { ...next.edit.audio, music: next.edit.audio.music?.sourceId === source.id ? null : next.edit.audio.music } } };
+      return { ...next, edit: withoutSoundSource({ ...next.edit, broll: next.edit.broll.filter((b) => b.assetId !== source.id) }, p.sources, source.id) };
     });
     useApp.getState().toast(`Removed “${source.name}” from the project. The file itself was not deleted.`);
   };
@@ -489,6 +507,10 @@ function SourceRow({ source, project, lead, onSync, onRelink }: { source: MediaS
                 </option>
               ))}
             </select>
+            {pieces.length && clipsOf(project).length > 1 ? <span className={`pill ${offTimeline ? 'warn' : ''}`} data-testid="source-clip" title={offTimeline ? 'This clip was removed from the timeline. Its footage and its edits are kept.' : 'The clip on the timeline that plays this footage'}>{offTimeline ? 'Off the timeline · ' : ''}{pieces[0]!.name}{pieces.length > 1 ? ` +${pieces.length - 1}` : ''}</span> : null}
+            {offTimeline && isLead ? <Button size="sm" data-testid="source-put-back" onClick={() => useApp.getState().edit((_e, p) => pieces.filter((c) => c.removed).reduce((e, c) => putBackClip({ edit: e, duration: p.duration }, c.id), p.edit), 'Put clip back')}>Put back</Button> : null}
+            {source.role === 'broll' && source.kind === 'video' && source.available && otherFootage ? <Button size="sm" data-testid="source-to-clip" title="Play this video on the timeline as a clip of its own, after what is already there" onClick={() => { const name = sourceToClip(source.id); if (name) useApp.getState().toast(`“${source.name}” is now ${name} on the timeline.`); }}>Add to the timeline</Button> : null}
+            {pieces.length && isLead && source.origin === 'import' && takeOf(source) !== 'main' && otherFootage ? <Button size="sm" variant="ghost" data-testid="source-to-broll" title="Take this clip off the timeline and keep the video as B-roll. Edits made on the clip are dropped." onClick={() => (takeToBroll(takeOf(source)), useApp.getState().toast(`“${source.name}” is now B-roll.`))}>Use as B-roll</Button> : null}
             <Button variant="ghost" size="sm" icon="dots" aria-label={`More actions for ${source.name}`} onClick={(e) => setMenu({ x: e.clientX, y: e.clientY })} />
           </div>
         </div>
@@ -634,10 +656,10 @@ function Inspection() {
       </div>
       {accepted.length ? (
         <div className="row wrap" style={{ gap: 6 }}>
-          {accepted.map(({ probe, source }) => (
+          {accepted.map(({ probe, source, clip }) => (
             <span key={source.id} className="pill ok" title={probe.path}>
               <Icon name={ROLE[source.role].icon} size={10} />
-              {source.name} → {ROLE[source.role].label}
+              {source.name} → {clip ? `${clip} on the timeline` : ROLE[source.role].label}
             </span>
           ))}
           <span className="tiny dim">Roles are suggestions. Change them below.</span>
@@ -684,11 +706,13 @@ export function Sources() {
     }
   }, []);
 
-  const timeline = project.sources.filter(isTimeline);
-  const other = project.sources.filter((s) => !isTimeline(s));
-  const pending = project.sources.filter((s) => s.available && needsReview(s, lead));
+  // a second placement of a file (a clip split and moved apart) is not a file of its own
+  const records = project.sources.filter((s) => !s.instanceOf);
+  const timeline = records.filter(isTimeline);
+  const other = records.filter((s) => !isTimeline(s));
+  const pending = records.filter((s) => s.available && needsReview(s, groupLead(records, s)));
   const leadUsable = !!lead && lead.available;
-  const missing = project.sources.filter((s) => !s.available);
+  const missing = records.filter((s) => !s.available);
 
   const proceed = () => useApp.getState().setView('brief');
   const proceedWithout = () => {
@@ -762,6 +786,7 @@ export function Sources() {
             </div>
             <div className="row" style={{ gap: 8 }}>
               <span className="tiny dim mono">Timeline {fmtTime(project.duration, true)}</span>
+              <Button icon="record" data-testid="record-clip" title="Record another take into this project. It is added to the timeline as a new clip, after what is already there." onClick={() => useApp.getState().go('record')}>Record a clip</Button>
               <Button icon="import" busy={importing} onClick={() => input.current?.click()}>Add media…</Button>
             </div>
           </div>
@@ -776,7 +801,7 @@ export function Sources() {
               <section className="col" style={{ gap: 8 }}>
                 <div className="src-heading"><Icon name="film" size={16} /> On the timeline <span className="dim">{timeline.length}</span></div>
                 {timeline.map((s) => (
-                  <SourceRow key={s.id} source={s} project={project} lead={lead} onSync={() => setSyncing(s.id)} onRelink={() => void relink(s, setRelinking)} />
+                  <SourceRow key={s.id} source={s} project={project} lead={groupLead(records, s)} onSync={() => setSyncing(s.id)} onRelink={() => void relink(s, setRelinking)} />
                 ))}
               </section>
             ) : null}

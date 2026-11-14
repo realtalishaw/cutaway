@@ -7,6 +7,8 @@ export interface Cue {
   end: Seconds;
   text: string;
   wordIds: string[];
+  /** Each word with its own output-time span, for captions that light up the word being spoken (shorts). */
+  words?: { text: string; start: Seconds; end: Seconds }[];
 }
 
 export interface CaptionOptions {
@@ -109,6 +111,8 @@ export function chapterStamp(t: Seconds): string {
 /** Chapters in output time. A chapter whose start was cut lands on the next surviving frame. */
 export function chaptersToOutput(chapters: Chapter[], map: TimeMap): OutputChapter[] {
   const mapped = chapters
+    // a chapter inside a clip that was taken off the timeline is not in the video
+    .filter((c) => c.sessionTime < map.srcDuration - 1e-6 || map.srcDuration <= 0)
     .map((c) => ({ time: Math.floor(map.toOutput(c.sessionTime)), title: c.title.trim() }))
     .filter((c) => c.title.length > 0)
     .sort((a, b) => a.time - b.time);

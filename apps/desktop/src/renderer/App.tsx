@@ -12,6 +12,7 @@ import { Sources } from './screens/Sources';
 import { Brief } from './screens/Brief';
 import { Editor } from './screens/Editor';
 import { Package } from './screens/Package';
+import { Shorts } from './screens/Shorts';
 import { ExportScreen } from './screens/Export';
 import { Settings } from './screens/Settings';
 import { Processing } from './screens/Processing';
@@ -24,6 +25,7 @@ const STEPS: { view: ProjectView; label: string }[] = [
   { view: 'sources', label: 'Sources' },
   { view: 'edit', label: 'Edit' },
   { view: 'package', label: 'Package' },
+  { view: 'shorts', label: 'Shorts' },
 ];
 
 function isTyping(): boolean {
@@ -264,6 +266,8 @@ function Workspace() {
       return <Editor />;
     case 'package':
       return <Package />;
+    case 'shorts':
+      return <Shorts />;
     case 'export':
       return <ExportScreen />;
   }
@@ -358,7 +362,7 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping()) return;
       const app = useApp.getState();
-      if (commandForEvent(e) === 'play' && app.route === 'project' && app.project && (app.project.ui.view === 'edit' || app.project.ui.view === 'package')) {
+      if (commandForEvent(e) === 'play' && app.route === 'project' && app.project && (app.project.ui.view === 'edit' || app.project.ui.view === 'package' || app.project.ui.view === 'shorts')) {
         e.preventDefault();
         usePlayback.getState().toggle();
       }

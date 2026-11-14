@@ -16,6 +16,7 @@ import type {
   Zoom,
 } from './types';
 import { EPS, overlaps, subtract, uid, union } from './ranges';
+import { clipRuns } from './clips';
 
 export const BACKGROUNDS: { id: string; name: string; colors: string[]; angle: number }[] = [
   { id: 'ember', name: 'Ember', colors: ['#2a1410', '#8c2f16', '#f0703a'], angle: 135 },
@@ -333,6 +334,12 @@ export function clearAiInRange(edit: EditState, range: Range, lanes: ('cuts' | '
 /** Does the difference between two edits change what the viewer sees/hears enough to invalidate packaging? */
 export function materialChange(a: EditState, b: EditState, duration: number): { material: boolean; reason: string | null } {
   const removed = (e: EditState) => union(e.cuts).reduce((s, r) => s + (r.end - r.start), 0);
+  // Which footage plays in which order (a split alone changes nothing a viewer sees).
+  const order = (e: EditState) =>
+    clipRuns((e.clips ?? []).filter((c) => !c.removed))
+      .map((r) => `${r.take}:${(r.start - r.shift).toFixed(2)}:${(r.end - r.start).toFixed(2)}`)
+      .join('|');
+  if (a.clips && b.clips && order(a) !== order(b)) return { material: true, reason: 'Clips were moved, added or removed since these were made.' };
   const delta = Math.abs(removed(a) - removed(b));
   if (delta > Math.max(5, duration * 0.04)) return { material: true, reason: `About ${Math.round(delta)}s of footage was ${removed(b) > removed(a) ? 'removed' : 'restored'} since these were made.` };
   if (JSON.stringify(a.speeds.map((s) => [s.start, s.end, s.speed])) !== JSON.stringify(b.speeds.map((s) => [s.start, s.end, s.speed]))) {

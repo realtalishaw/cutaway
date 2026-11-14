@@ -17,6 +17,9 @@ import {
   TimeMap,
   applyProposal,
   flagsOf,
+  inWindow,
+  isMasterVoice,
+  takeOf,
   keepFlaggedMoments,
   markFillers,
   proposeLayouts,
@@ -126,11 +129,13 @@ export async function runFirstCut(ctx: JobContext, opts: FirstCutOptions = {}): 
   else
     await run('sync', 'Checking how the sources line up…', async () => {
       const p = ctx.get();
-      const master = p.sources.find((s) => s.id === p.edit.audio.masterVoiceId);
+      // Each footage group lines up against its own voice.
+      const masterOf = (s: MediaSource) => p.sources.find((x) => !x.instanceOf && isMasterVoice(p.edit.audio, x) && takeOf(x) === takeOf(s));
       const notes: string[] = [];
       let sources = p.sources;
       for (const s of p.sources) {
-        if (!TIMELINE_ROLES.includes(s.role) || s.id === master?.id) continue;
+        const master = masterOf(s);
+        if (!TIMELINE_ROLES.includes(s.role) || s.instanceOf || s.id === master?.id) continue;
         if (s.sync.status !== 'needs-review' || s.sync.method === 'manual' || s.sync.confirmedByCreator) continue;
         if (!master || !s.hasAudio) {
           notes.push(`"${s.name}" has no shared audio to align with; align it by hand in Sources.`);
@@ -142,7 +147,8 @@ export async function runFirstCut(ctx: JobContext, opts: FirstCutOptions = {}): 
           if (r.reliable) {
             const offset = toSessionTime(master.sync, r.offset);
             const rate = r.rate * master.sync.rate;
-            sources = sources.map((x) => (x.id === s.id ? { ...x, sync: { ...x.sync, offset, rate, method: 'audio-correlation' as const, confidence: r.confidence, status: 'aligned' as const, checkpoints: r.checkpoints, confirmedByCreator: false } } : x));
+            // the offset is measured against the voice where it sits on the timeline now
+            sources = sources.map((x) => (x.id === s.id ? { ...x, ...(master.shift !== undefined ? { shift: master.shift } : {}), sync: { ...x.sync, offset, rate, method: 'audio-correlation' as const, confidence: r.confidence, status: 'aligned' as const, checkpoints: r.checkpoints, confirmedByCreator: false } } : x));
             notes.push(`"${s.name}" aligned from shared audio (confidence ${Math.round(r.confidence * 100)}%).`);
           } else notes.push(`"${s.name}" could not be aligned automatically; align it by hand in Sources.`);
         } catch (e) {
@@ -161,7 +167,9 @@ export async function runFirstCut(ctx: JobContext, opts: FirstCutOptions = {}): 
   else
     await run('transcribe', 'Transcribing speech on this Mac. Audio is not sent anywhere.', async () => {
       const p = ctx.get();
-      const master = p.sources.find((s) => s.id === p.edit.audio.masterVoiceId && s.hasAudio && s.available);
+      // One voice per footage group (a project that is one clip has exactly one, as before).
+      const voices = p.sources.filter((s) => isMasterVoice(p.edit.audio, s) && s.hasAudio && s.available);
+      const master = voices[0];
       const locale = ctx.settings.transcription.locale || 'en-US';
       const empty = (engine: string): Transcript => ({ engine, locale, onDevice: true, sourceId: master?.id ?? '', hasSpeech: false, words: [], generatedAt: new Date().toISOString() });
       let transcript: Transcript;
@@ -170,23 +178,51 @@ export async function runFirstCut(ctx: JobContext, opts: FirstCutOptions = {}): 
         transcript = empty('none');
         detail = 'This project has no voice track, so there is nothing to transcribe.';
       } else {
-        try {
-          const res = await api.native.transcribe(filePath(ctx, master), locale);
-          const words: Word[] = res.words
-            .filter((w) => w.text.trim() && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start)
-            .map((w) => ({ id: uid('w'), text: w.text.trim(), start: toSessionTime(master.sync, w.start), end: toSessionTime(master.sync, w.end), confidence: w.confidence, kind: 'word' as const }))
-            .filter((w) => w.end > 0 && w.start < p.duration)
-            .sort((a, b) => a.start - b.start);
-          const hasSpeech = res.hasSpeech && words.length > 0;
-          transcript = { engine: res.engine, locale: res.locale || locale, onDevice: res.onDevice, sourceId: master.id, hasSpeech, words: hasSpeech ? markFillers(words) : [], generatedAt: new Date().toISOString() };
-          detail = hasSpeech ? `${words.length} words transcribed on this Mac (${res.engine}).` : 'No speech was found, so no transcript was written.';
-        } catch (e) {
-          const code = errorCode(e);
-          if (code === 'no-audio') {
-            transcript = empty('none');
-            detail = 'The voice track has no audio, so there is nothing to transcribe.';
-          } else if (code === 'speech-permission-denied') throw new JobError('transcribe', 'permission', 'Speech recognition is not allowed for Cutaway. Allow it in System Settings › Privacy & Security › Speech Recognition, then retry.', true);
-          else throw new JobError('transcribe', 'native-failed', `Transcription failed: ${errorText(e)}`, true);
+        const heard = new Map<string, Awaited<ReturnType<typeof api.native.transcribe>> | null>();
+        const words: Word[] = [];
+        let first: Awaited<ReturnType<typeof api.native.transcribe>> | null = null;
+        let silentFiles = 0;
+        for (const voice of voices) {
+          checkAbort(ctx, 'transcribe');
+          const file = filePath(ctx, voice);
+          if (!heard.has(file)) {
+            try {
+              heard.set(file, await api.native.transcribe(file, locale));
+            } catch (e) {
+              const code = errorCode(e);
+              if (code === 'no-audio') heard.set(file, null);
+              else if (code === 'speech-permission-denied') throw new JobError('transcribe', 'permission', 'Speech recognition is not allowed for Cutaway. Allow it in System Settings › Privacy & Security › Speech Recognition, then retry.', true);
+              else throw new JobError('transcribe', 'native-failed', `Transcription failed: ${errorText(e)}`, true);
+            }
+          }
+          const res = heard.get(file);
+          if (!res) {
+            silentFiles += 1;
+            continue;
+          }
+          first ??= res;
+          if (!res.hasSpeech) continue;
+          for (const w of res.words) {
+            if (!w.text.trim() || !Number.isFinite(w.start) || !Number.isFinite(w.end) || !(w.end > w.start)) continue;
+            const start = toSessionTime(voice.sync, w.start);
+            const end = toSessionTime(voice.sync, w.end);
+            // a voice placed for one clip only speaks inside it
+            if (voice.window ? !inWindow(voice, start) : !(end > 0 && start < p.duration)) continue;
+            words.push({ id: uid('w'), text: w.text.trim(), start, end, confidence: w.confidence, kind: 'word' as const });
+          }
+        }
+        words.sort((x, y) => x.start - y.start);
+        if (!first) {
+          transcript = empty('none');
+          detail = 'The voice track has no audio, so there is nothing to transcribe.';
+        } else {
+          const marked = words.length ? markFillers(words) : [];
+          const shown = marked.filter((w) => w.start < p.duration);
+          const parked = marked.filter((w) => w.start >= p.duration);
+          const hasSpeech = shown.length > 0;
+          transcript = { engine: first.engine, locale: first.locale || locale, onDevice: first.onDevice, sourceId: master.id, hasSpeech, words: shown, ...(parked.length ? { parked } : {}), generatedAt: new Date().toISOString() };
+          detail = hasSpeech ? `${shown.length} words transcribed on this Mac (${first.engine}).` : 'No speech was found, so no transcript was written.';
+          if (voices.length > 1 && silentFiles) detail += ` ${silentFiles} clip${silentFiles === 1 ? ' has' : 's have'} no sound.`;
         }
       }
       ctx.update((q) => ({ ...q, transcript }));
@@ -199,57 +235,96 @@ export async function runFirstCut(ctx: JobContext, opts: FirstCutOptions = {}): 
   else
     await run('visual', 'Finding where things happen on screen…', async () => {
       const p = ctx.get();
-      const screen = sourceByRole(p, 'screen');
-      const master = p.sources.find((s) => s.id === p.edit.audio.masterVoiceId && s.hasAudio && s.available);
+      // Every clip's screen and voice, each written into its own stretch of the session timeline.
+      const screens = p.sources.filter((s) => s.role === 'screen' && s.available);
+      const screen = screens[0];
+      const voices = p.sources.filter((s) => isMasterVoice(p.edit.audio, s) && s.hasAudio && s.available);
+      // footage that is off the timeline sits after the end of the video and is analysed too, so it is ready when put back
+      const total = Math.max(p.duration, ...p.sources.map((s) => s.window?.end ?? 0));
       let activity: number[] = [];
       let activityHz = 4;
       let clicks: Analysis['clicks'] = [];
       const parts: string[] = [];
-      if (screen?.available) {
-        try {
-          const res = await api.native.activity(filePath(ctx, screen));
-          activityHz = res.fps > 0 ? res.fps : 4;
-          activity = new Array<number>(Math.ceil(p.duration * activityHz) + 1).fill(0);
-          for (const s of res.samples) {
-            const i = Math.round(toSessionTime(screen.sync, s.t) * activityHz);
-            if (i >= 0 && i < activity.length) activity[i] = Math.max(activity[i]!, s.change);
-          }
-        } catch (e) {
-          throw new JobError('visual', 'native-failed', `The screen recording could not be analysed: ${errorText(e)}`, true);
-        }
-        checkAbort(ctx, 'visual');
-        if (screen.cursorFile && !screen.cursorBaked) {
+      if (screen) {
+        const seen = new Map<string, Awaited<ReturnType<typeof api.native.activity>>>();
+        for (const sc of screens) {
+          const file = filePath(ctx, sc);
           try {
-            const samples = await api.native.readCursor(resolveSourcePath(ctx.projectPath, screen.cursorFile));
-            clicks = samples.filter((s) => s.e === 'down').map((s) => ({ t: s.t + screen.sync.offset, x: s.x, y: s.y })).filter((c) => c.t >= 0 && c.t <= p.duration);
-            parts.push(`${clicks.length} click${clicks.length === 1 ? '' : 's'} from the recorded cursor`);
-          } catch {
-            parts.push('cursor data could not be read');
+            if (!seen.has(file)) seen.set(file, await api.native.activity(file));
+            const res = seen.get(file)!;
+            if (activity.length === 0) {
+              activityHz = res.fps > 0 ? res.fps : 4;
+              activity = new Array<number>(Math.ceil(total * activityHz) + 1).fill(0);
+            }
+            for (const s of res.samples) {
+              const t = toSessionTime(sc.sync, s.t);
+              if (!inWindow(sc, t)) continue;
+              const i = Math.round(t * activityHz);
+              if (i >= 0 && i < activity.length) activity[i] = Math.max(activity[i]!, s.change);
+            }
+          } catch (e) {
+            throw new JobError('visual', 'native-failed', `The screen recording could not be analysed: ${errorText(e)}`, true);
           }
-        } else parts.push('imported video: the cursor is part of the picture, so clicks are unknown');
+          checkAbort(ctx, 'visual');
+          if (sc.cursorFile && !sc.cursorBaked) {
+            try {
+              const samples = await api.native.readCursor(resolveSourcePath(ctx.projectPath, sc.cursorFile));
+              clicks.push(...samples.filter((s) => s.e === 'down').map((s) => ({ t: s.t + sc.sync.offset, x: s.x, y: s.y })).filter((c) => c.t >= 0 && c.t <= total && inWindow(sc, c.t)));
+            } catch {
+              parts.push('cursor data could not be read');
+            }
+          }
+        }
+        clicks.sort((x, y) => x.t - y.t);
+        if (screens.some((sc) => sc.cursorFile && !sc.cursorBaked)) parts.push(`${clicks.length} click${clicks.length === 1 ? '' : 's'} from the recorded cursor`);
+        else parts.push('imported video: the cursor is part of the picture, so clicks are unknown');
       } else parts.push('no screen source');
       checkAbort(ctx, 'visual');
       let silences: Range[] = [];
       let waveform: number[] = [];
       let waveformHz = 20;
       let voiceLevelDb: number | null = null;
-      if (master) {
+      const measured = new Map<string, Awaited<ReturnType<typeof api.native.analyzeVoice>>>();
+      for (const voice of voices) {
+        const file = filePath(ctx, voice);
         try {
-          const v = await api.native.analyzeVoice(filePath(ctx, master));
-          silences = v.silences.map((r) => ({ start: toSessionTime(master.sync, r.start), end: toSessionTime(master.sync, r.end) })).filter((r) => r.end > 0);
-          waveformHz = v.waveformHz || 20;
-          voiceLevelDb = v.levelDb ?? null;
-          const pad = Math.round(master.sync.offset * waveformHz);
-          waveform = pad >= 0 ? [...new Array<number>(pad).fill(0), ...v.waveform] : v.waveform.slice(-pad);
+          if (!measured.has(file)) measured.set(file, await api.native.analyzeVoice(file));
+          const v = measured.get(file)!;
+          silences.push(...v.silences.map((r) => ({ start: toSessionTime(voice.sync, r.start), end: toSessionTime(voice.sync, r.end) })).filter((r) => r.end > 0 && (!voice.window || (r.end > voice.window.start && r.start < voice.window.end))).map((r) => (voice.window ? { start: Math.max(r.start, voice.window.start), end: Math.min(r.end, voice.window.end) } : r)));
+          voiceLevelDb ??= v.levelDb ?? null;
+          if (!voice.window && voices.length === 1) {
+            waveformHz = v.waveformHz || 20;
+            const pad = Math.round(voice.sync.offset * waveformHz);
+            waveform = pad >= 0 ? [...new Array<number>(pad).fill(0), ...v.waveform] : v.waveform.slice(-pad);
+          } else {
+            if (waveform.length === 0) {
+              waveformHz = v.waveformHz || 20;
+              waveform = new Array<number>(Math.ceil(total * waveformHz) + 1).fill(0);
+            }
+            const hz = v.waveformHz || 20;
+            v.waveform.forEach((level, k) => {
+              const t = toSessionTime(voice.sync, k / hz);
+              if (!inWindow(voice, t)) return;
+              const i = Math.round(t * waveformHz);
+              if (i >= 0 && i < waveform.length) waveform[i] = level;
+            });
+          }
         } catch {
           parts.push('voice level could not be measured');
         }
       }
-      const analysis: Analysis = { silences, activity, activityHz, clicks, waveform, waveformHz, voiceLevelDb, computedAt: new Date().toISOString() };
+      silences.sort((x, y) => x.start - y.start);
+      // what belongs to footage that is off the timeline is kept aside
+      const parked = { silences: silences.filter((r) => r.start >= p.duration && !!p.edit.clips), clicks: clicks.filter((c) => c.t >= p.duration && !!p.edit.clips) };
+      if (p.edit.clips) {
+        silences = silences.filter((r) => r.start < p.duration);
+        clicks = clicks.filter((c) => c.t < p.duration);
+      }
+      const analysis: Analysis = { silences, activity, activityHz, clicks, waveform, waveformHz, voiceLevelDb, ...(parked.silences.length || parked.clicks.length ? { parked } : {}), computedAt: new Date().toISOString() };
       ctx.update((q) => ({ ...q, analysis }));
       mark(ctx, 'visual');
       const active = screenActivity(ctx.get()).reduce((s, r) => s + (r.end - r.start), 0);
-      return `${screen?.available ? `${fmt(active)} of visible screen activity; ` : ''}${parts.join('; ')}.`;
+      return `${screen ? `${fmt(active)} of visible screen activity; ` : ''}${parts.join('; ')}.`;
     });
 
   // ── assemble ────────────────────────────────────────────────────────────

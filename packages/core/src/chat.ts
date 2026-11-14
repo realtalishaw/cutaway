@@ -10,6 +10,7 @@
 import type { ChatLane, ChatMessage, ChatProposalItem, CheckpointRef, DecisionMeta, EditOp, EditState, Project, Range, RevisionRecord } from './types';
 import { fmtTime, overlaps, uid } from './ranges';
 import { applyOps, restoreCut, removeById } from './edit';
+import { projectWithEdit } from './clips';
 import { checkpoint, commitEdit } from './project';
 import { validateOps } from './validate';
 
@@ -270,7 +271,8 @@ export function findCheckpoint(project: Pick<Project, 'revisions'>, ref: { revis
 export function projectAtCheckpoint(project: Project, revision: number): Project | null {
   const rec = findCheckpoint(project, { revision });
   if (!rec) return null;
-  return { ...project, edit: rec.snapshot };
+  // That version's clip order too: the footage is re-laid to match it.
+  return projectWithEdit(project, rec.snapshot);
 }
 
 function cutSeconds(e: EditState): number {

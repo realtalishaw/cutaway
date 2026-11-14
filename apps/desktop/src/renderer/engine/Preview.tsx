@@ -1,8 +1,11 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
-import { buildCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorTrack, type FaceTrackSmooth, type FrameState, type MediaSource, type Project } from '@cutaway/core';
+import { cameraSourceAt, isMasterVoice, sourceAt, trackOf, buildCues, burnInCues, buildCursorTrack, clickSoundOf, clickTick, coverage, cueAt, cursorExtrasOf, cutoutOf, deviceKindFor, deviceOf, evaluateFrame, faceOf, shortcutsOf, toSourceTime, type CameraSlot, type CursorTrack, type FaceTrackSmooth, type FrameState, type MediaSource, type Project } from '@cutaway/core';
 import { timeMapOf, useApp, usePlayback, useShownProject } from '../state/store';
-import { drawFrame, drawableFromElement, type FrameResources } from './compositor';
-import { loadCursor, sourceUrl, voiceGain } from './media';
+import { drawFrame, drawableFromElement, type DrawEnv, type FrameResources } from './compositor';
+import { punchInOf } from '@cutaway/core';
+import { keysOnSession, loadCursorOnSession, sourceUrl, voiceGain } from './media';
+import { duckStep, musicClipsOf, musicGainAt, musicSourceTime, soundEvents, speakingAt, speechWindows, type Range, type SoundEvent } from '@cutaway/core';
+import { playBuiltin, playFile } from './soundPlayer';
 import voiceWorkletUrl from './voiceWorklet.ts?worker&url';
 import { ensureFaces, ensureKeys, ensureMatte, peekFaces, peekKeys, peekMatte } from './parityData';
 import { gradeLuts } from './lut';
@@ -20,7 +23,11 @@ interface Props {
   onPointer?(phase: 'down' | 'move' | 'up', p: PreviewPoint, e: ReactPointerEvent): void;
   cursorStyle?: string;
   selectedMaskId?: string | null;
+  /** A free text overlay to outline as selected (editor only; never drawn in an export). */
+  selectedOverlayId?: string | null;
   showCaptions?: boolean;
+  /** Play this project instead of the open one (a short's derived project). */
+  project?: Project;
 }
 
 interface El {
@@ -34,13 +41,15 @@ interface El {
  * Live preview. Media elements are slaved to one output-time clock; every
  * frame is drawn by the same evaluateFrame + drawFrame the exporter uses.
  */
-export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions = true }: Props) {
-  const project = useShownProject();
+export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverlayId, showCaptions = true, project: override }: Props) {
+  const shown = useShownProject();
+  // A short is played from a project derived for it (shortProject); everything else plays the open project.
+  const project = override ?? shown;
   const projectPath = useApp((s) => s.projectPath)!;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const live = useRef({ project, projectPath, selectedMaskId: selectedMaskId ?? null, showCaptions });
-  live.current = { project, projectPath, selectedMaskId: selectedMaskId ?? null, showCaptions };
+  const live = useRef({ project, projectPath, selectedMaskId: selectedMaskId ?? null, selectedOverlayId: selectedOverlayId ?? null, showCaptions });
+  live.current = { project, projectPath, selectedMaskId: selectedMaskId ?? null, selectedOverlayId: selectedOverlayId ?? null, showCaptions };
   const lastState = useRef<FrameState | null>(null);
 
   useEffect(() => {
@@ -51,11 +60,25 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
     let cursorKey = '';
     let cursorTrack: CursorTrack | null = null;
     let followTrack: CursorTrack | null = null;
+    /** Built tracks by key, so crossing from one clip into the next does not blank the pointer while it rebuilds. */
+    const trackCache = new Map<string, { cursor: CursorTrack; follow: CursorTrack }>();
     let cuesKey: unknown = null;
     let cues: ReturnType<typeof buildCues> = [];
     const matteEls = new Map<string, HTMLVideoElement>();
     let tick_: AudioBuffer | null = null;
     let prevSrc = -1;
+    // music clips and sound effects run on the output clock
+    const musicEls = new Map<string, { el: HTMLAudioElement; url: string }>();
+    let duck = 1;
+    let speechKey: unknown = null;
+    let speech: Range[] = [];
+    let eventsKey: unknown = null;
+    let events: SoundEvent[] = [];
+    let prevOut = -1;
+    /** Stop functions of the sounds this preview started (not the inspector's "listen" buttons). */
+    let started: (() => void)[] = [];
+    /** Where the neighbouring clip's frame is drawn during a cross-dissolve. */
+    let blendCanvas: HTMLCanvasElement | null = null;
     let raf = 0;
     let last = performance.now();
     let seenSeek = -1;
@@ -114,7 +137,7 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
 
     /** Route the master voice through a rumble filter + level gain; same treatment as export. */
     const applyVoiceChain = (e: El, p: Project) => {
-      const on = p.edit.audio.voiceCleanup.enabled && !p.edit.audio.voiceCleanup.bypass && e.source.id === p.edit.audio.masterVoiceId;
+      const on = p.edit.audio.voiceCleanup.enabled && !p.edit.audio.voiceCleanup.bypass && isMasterVoice(p.edit.audio, e.source);
       if (!e.node) {
         if (!on) return;
         try {
@@ -222,18 +245,25 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       const speed = seg?.speed ?? 1;
 
       // cursor telemetry (recordings only)
-      const screen = p.sources.find((s) => s.role === 'screen');
+      // With several clips, the screen (and its pointer, keys and size) is the one of the clip being shown.
+      const screen = sourceAt(p, 'screen', src);
       const extra = cursorExtrasOf(p.edit.appearance);
-      const key = screen && !screen.cursorBaked && screen.cursorFile ? `${pp}|${screen.cursorFile}|${p.edit.appearance.cursor.smoothing}|${extra.antiShake}|${extra.loop}` : '';
+      const key = screen && !screen.cursorBaked && screen.cursorFile ? `${pp}|${screen.cursorFile}|${screen.shift ?? 0}|${screen.window?.start ?? ''}|${screen.window?.end ?? ''}|${p.edit.appearance.cursor.smoothing}|${extra.antiShake}|${extra.loop}` : '';
       if (key !== cursorKey) {
         cursorKey = key;
-        cursorTrack = followTrack = null;
-        if (key && screen) {
+        const built = trackCache.get(key);
+        cursorTrack = built?.cursor ?? null;
+        followTrack = built?.follow ?? null;
+        if (key && screen && !built) {
           const smoothing = p.edit.appearance.cursor.smoothing;
-          void loadCursor(pp, screen).then((samples) => {
-            if (cursorKey !== key || samples.length === 0) return;
-            cursorTrack = buildCursorTrack(samples, smoothing, 120, { antiShake: extra.antiShake, loop: extra.loop });
-            followTrack = buildCursorTrack(samples, 0.97);
+          void loadCursorOnSession(pp, screen).then((samples) => {
+            if (samples.length === 0) return;
+            const fresh = { cursor: buildCursorTrack(samples, smoothing, 120, { antiShake: extra.antiShake, loop: extra.loop }), follow: buildCursorTrack(samples, 0.97) };
+            if (trackCache.size > 12) trackCache.clear();
+            trackCache.set(key, fresh);
+            if (cursorKey !== key) return;
+            cursorTrack = fresh.cursor;
+            followTrack = fresh.follow;
           });
         }
       }
@@ -242,15 +272,15 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       if (screen?.keysFile && shortcutsOf(p.edit.appearance).show) void ensureKeys(pp, screen);
       const faceOpt = faceOf(p.edit.appearance);
       const faces: Partial<Record<CameraSlot, FaceTrackSmooth | null>> = {};
-      if (faceOpt.zoom || faceOpt.follow) {
+      if (faceOpt.zoom || faceOpt.follow || punchInOf(p.edit).enabled) {
         for (const slot of ['A', 'B'] as CameraSlot[]) {
-          const cam = p.sources.find((s) => s.role === (slot === 'A' ? 'cameraA' : 'cameraB'));
+          const cam = cameraSourceAt(p, slot, src);
           if (!cam || !cam.available) continue;
           void ensureFaces(pp, cam);
           faces[slot] = peekFaces(pp, cam).value;
         }
       }
-      const ctxFrame = { project: p, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * p.edit.appearance.crop.w) / (screen.height * p.edit.appearance.crop.h) : null, keys: peekKeys(pp, screen), faces, quality: 'preview' as const, device: deviceOf(p.edit.appearance).frame ? deviceKindFor(screen) : null };
+      const ctxFrame = { project: p, map, cursor: cursorTrack, follow: followTrack, screenAspect: screen?.width && screen.height ? (screen.width * p.edit.appearance.crop.w) / (screen.height * p.edit.appearance.crop.h) : null, keys: keysOnSession(peekKeys(pp, screen), screen), faces, quality: 'preview' as const, device: deviceOf(p.edit.appearance).frame ? deviceKindFor(screen) : null };
       const state = evaluateFrame(ctxFrame, out);
       lastState.current = state;
 
@@ -291,19 +321,69 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       };
 
       const res: FrameResources = { screen: null, cameraA: null, cameraB: null, broll: null, backgroundImage: null };
-      for (const s of p.sources) {
-        const track = audio.tracks[s.id];
-        const audible = s.hasAudio && track && !track.muted;
-        const isMusic = audio.music?.sourceId === s.id;
-        const timeline = s.role === 'screen' || s.role === 'cameraA' || s.role === 'cameraB';
-        if (isMusic) {
-          sync(s, out, true, audio.music!.gain * (audio.music!.duck && speaking(p, src) ? 0.22 : 1), 1);
-          continue;
+      // ── a cross-dissolve between clips: the neighbouring clip's own pictures, taken just beyond its edge ──
+      const tr = state.transition;
+      const clipLevel = tr?.gain ?? 1;
+      const partnerIds = new Set<string>();
+      let partner: { state: FrameState; res: FrameResources; screen: MediaSource | undefined; alpha: number } | null = null;
+      if (tr?.partner && tr.partner.alpha > 0.001) {
+        const ps = tr.partner.src;
+        const pScreen = sourceAt(p, 'screen', ps);
+        const pRes: FrameResources = { screen: null, cameraA: null, cameraB: null, broll: null, backgroundImage: null };
+        const pFaces: Partial<Record<CameraSlot, FaceTrackSmooth | null>> = {};
+        for (const [s, key] of [[pScreen, 'screen'], [cameraSourceAt(p, 'A', ps), 'cameraA'], [cameraSourceAt(p, 'B', ps), 'cameraB']] as [MediaSource | undefined, 'screen' | 'cameraA' | 'cameraB'][]) {
+          if (!s || !s.available || s.sync.status === 'unsynced') continue;
+          if (key !== 'screen' && (faceOpt.zoom || faceOpt.follow || punchInOf(p.edit).enabled)) pFaces[key === 'cameraA' ? 'A' : 'B'] = peekFaces(pp, s).value;
+          const e = ensure(s);
+          if (!e) continue;
+          // The same file is already playing as this clip's own picture (two halves of a split): it is left alone.
+          if (!coverage(s).some((c) => src >= c.start && src < c.end)) {
+            partnerIds.add(s.id);
+            wanted.add(s.id);
+            const el = e.el;
+            const local = Math.max(0, Math.min(s.duration - 0.03, toSourceTime(s.sync, ps)));
+            const drift = el.currentTime - local;
+            el.muted = true;
+            if (pb.playing && !tr.partner.held) {
+              const r = Math.max(0.1, Math.min(8, s.sync.rate));
+              if (Math.abs(el.playbackRate - r) > 1e-3) el.playbackRate = r;
+              if (hardSeek || Math.abs(drift) > 0.12) el.currentTime = local;
+              if (el.paused) void el.play().catch(() => {});
+            } else {
+              if (!el.paused) el.pause();
+              if (Math.abs(drift) > 0.02 && !el.seeking) el.currentTime = local;
+            }
+          }
+          pRes[key] = drawableFromElement(e.el);
         }
+        const pState = evaluateFrame({ ...ctxFrame, cursor: null, follow: null, keys: [], faces: pFaces, screenAspect: pScreen?.width && pScreen.height ? (pScreen.width * p.edit.appearance.crop.w) / (pScreen.height * p.edit.appearance.crop.h) : null, device: deviceOf(p.edit.appearance).frame ? deviceKindFor(pScreen) : null }, tr.partner.edgeOut);
+        partner = { state: pState, res: pRes, screen: pScreen, alpha: tr.partner.alpha };
+      }
+      for (const s of p.sources) {
+        if (partnerIds.has(s.id)) continue;
+        const track = trackOf(audio, s);
+        const audible = s.hasAudio && track && !track.muted;
+        const timeline = s.role === 'screen' || s.role === 'cameraA' || s.role === 'cameraB';
         if (!timeline && !audible) continue;
         if (s.sync.status === 'unsynced') continue;
         const covered = coverage(s).some((c) => src >= c.start && src < c.end);
-        const e = sync(s, toSourceTime(s.sync, src), covered, audible ? track.gain : 0, speed * s.sync.rate);
+        // A source of another clip is opened shortly before its clip begins and parked on its first
+        // frame, so the change of clip does not wait for a seek. Further away it is left alone.
+        if (!covered && s.window) {
+          const lead = s.window.start - src;
+          if (lead > 0 && lead < 4 && s.available) {
+            const upcoming = ensure(s);
+            const first = Math.max(0, toSourceTime(s.sync, s.window.start));
+            if (upcoming) {
+              upcoming.el.muted = true;
+              if (!upcoming.el.paused) upcoming.el.pause();
+              if (Math.abs(upcoming.el.currentTime - first) > 0.05 && !upcoming.el.seeking) upcoming.el.currentTime = first;
+            }
+          }
+          continue;
+        }
+        // during a transition the clip's sound follows the transition's level curve, as in the export
+        const e = sync(s, toSourceTime(s.sync, src), covered, audible ? track.gain * clipLevel : 0, speed * s.sync.rate);
         if (!e || !covered) continue;
         const d = drawableFromElement(e.el);
         if (s.role === 'screen') res.screen = d;
@@ -344,6 +424,78 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
         if (!wanted.has(id) && !e.el.paused) e.el.pause();
       }
 
+      // ── music clips: one element per clip, slaved to the output clock, with the exporter's level maths ──
+      if (speechKey !== p.transcript) {
+        speechKey = p.transcript;
+        speech = speechWindows(p);
+      }
+      duck = pb.playing && !hardSeek ? duckStep(duck, speakingAt(speech, src), dt) : speakingAt(speech, src) ? duckStep(1, true, 10) : 1;
+      const sounding = new Set<string>();
+      for (const c of musicClipsOf(p.edit, p.sources)) {
+        const file = p.sources.find((x) => x.id === c.sourceId);
+        const local = musicSourceTime(c, out);
+        if (!file || !file.available || out < c.start || out >= c.start + c.length || local >= file.duration - 0.02) continue;
+        sounding.add(c.id);
+        const url = sourceUrl(pp, file);
+        let m = musicEls.get(c.id);
+        if (m && m.url !== url) {
+          m.el.pause();
+          musicEls.delete(c.id);
+          m = undefined;
+        }
+        if (!m) {
+          const el = new Audio();
+          el.crossOrigin = 'anonymous';
+          el.preload = 'auto';
+          el.src = url;
+          m = { el, url };
+          musicEls.set(c.id, m);
+        }
+        const volume = Math.max(0, Math.min(1, musicGainAt(c, out) * (c.duck ? duck : 1) * pb.volume));
+        m.el.volume = volume;
+        m.el.muted = volume <= 0;
+        const drift = m.el.currentTime - local;
+        if (pb.playing) {
+          if (hardSeek || Math.abs(drift) > 0.12) m.el.currentTime = local;
+          if (m.el.paused) void m.el.play().catch(() => {});
+        } else {
+          if (!m.el.paused) m.el.pause();
+          if (Math.abs(drift) > 0.012 && !m.el.seeking) m.el.currentTime = local;
+        }
+      }
+      for (const [id, m] of musicEls) {
+        if (sounding.has(id)) continue;
+        if (!m.el.paused) m.el.pause();
+        // a clip that was removed, or one the playhead has left for good
+        if (!musicClipsOf(p.edit, p.sources).some((c) => c.id === id)) {
+          m.el.removeAttribute('src');
+          m.el.load();
+          musicEls.delete(id);
+        }
+      }
+
+      // ── sound effects: each one starts as the playhead reaches it ──
+      if (eventsKey !== p.edit) {
+        eventsKey = p.edit;
+        events = soundEvents(p, map);
+      }
+      if (!pb.playing || hardSeek) {
+        for (const stop of started) stop();
+        started = [];
+      } else if (prevOut >= 0 && out >= prevOut && out - prevOut < 0.5) {
+        for (const ev of events) {
+          if (ev.at < prevOut) continue;
+          if (ev.at >= out) break;
+          if (ev.cue.builtin) started.push(playBuiltin(ev.cue.builtin, ev.cue.gain * pb.volume, ev.skip));
+          else {
+            const file = p.sources.find((x) => x.id === ev.cue.sourceId);
+            if (file?.available) started.push(playFile(sourceUrl(pp, file), ev.cue.gain * pb.volume, ev.skip));
+          }
+        }
+        if (started.length > 64) started = started.slice(-32);
+      }
+      prevOut = out;
+
       // ── draw ──
       const canvas = canvasRef.current;
       const wrap = wrapRef.current;
@@ -374,15 +526,36 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       ctx.setTransform(pw / ap.output.width, 0, 0, ph / ap.output.height, 0, 0);
       if (cuesKey !== p.edit || !cues) {
         cuesKey = p.edit;
-        cues = buildCues(p.transcript, p.edit, map);
+        cues = burnInCues(p, map, buildCues);
+      }
+      let blend: DrawEnv['blend'] = null;
+      if (tr?.wash) blend = { alpha: tr.wash.alpha, color: tr.wash.color };
+      else if (partner) {
+        blendCanvas ??= document.createElement('canvas');
+        if (blendCanvas.width !== pw || blendCanvas.height !== ph) {
+          blendCanvas.width = pw;
+          blendCanvas.height = ph;
+        }
+        const bctx = blendCanvas.getContext('2d', { alpha: false })!;
+        bctx.setTransform(pw / ap.output.width, 0, 0, ph / ap.output.height, 0, 0);
+        partner.res.backgroundImage = res.backgroundImage;
+        drawFrame(bctx, partner.state, partner.res, {
+          appearance: ap,
+          screenPoints: partner.screen?.pointWidth && partner.screen.pointHeight ? { width: partner.screen.pointWidth, height: partner.screen.pointHeight } : null,
+          cue: null,
+          device: deviceOf(ap).frame ? deviceKindFor(partner.screen) : null,
+          luts: gradeLuts(pp, ap),
+        });
+        blend = { alpha: partner.alpha, image: blendCanvas };
       }
       drawFrame(ctx, state, res, {
         appearance: live.current.showCaptions ? ap : { ...ap, captions: { ...ap.captions, burnIn: false } },
         screenPoints: screen?.pointWidth && screen.pointHeight ? { width: screen.pointWidth, height: screen.pointHeight } : null,
         cue: ap.captions.burnIn ? cueAt(cues, out) : null,
         device: deviceOf(ap).frame ? deviceKindFor(screen) : null,
-        editor: { selectedMaskId: live.current.selectedMaskId },
+        editor: { selectedMaskId: live.current.selectedMaskId, selectedOverlayId: live.current.selectedOverlayId },
         luts: gradeLuts(pp, ap),
+        blend,
       });
     };
     raf = requestAnimationFrame(tick);
@@ -399,6 +572,12 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
         m.removeAttribute('src');
         m.load();
       }
+      for (const m of musicEls.values()) {
+        m.el.pause();
+        m.el.removeAttribute('src');
+        m.el.load();
+      }
+      for (const stop of started) stop();
       void audioCtx?.close();
     };
   }, []);
@@ -445,20 +624,4 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, showCaptions =
       />
     </div>
   );
-}
-
-function speaking(p: Project, src: number): boolean {
-  const words = p.transcript?.words;
-  if (!words) return false;
-  // binary search for a word near src
-  let lo = 0;
-  let hi = words.length - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const w = words[mid]!;
-    if (src < w.start - 0.25) hi = mid - 1;
-    else if (src > w.end + 0.35) lo = mid + 1;
-    else return true;
-  }
-  return false;
 }

@@ -1,9 +1,13 @@
 import type { Appearance, BrollInsert, CameraSlot, CursorSample, KeyStroke, LayoutMode, LayoutSegment, Mask, Overlay, Project, Rect, Seconds, Zoom } from './types';
 import { at, clamp } from './ranges';
-import { cameraSource, covers, sourceByRole, toSourceTime } from './sync';
+import { cameraSourceAt, covers, sourceAt, sourcesAt, toSourceTime } from './sync';
+import { baseLayoutAt } from './clips';
 import { DEVICE_BEZEL, activeShortcuts, cursorExtrasOf, faceAt, faceCrop, faceOf, motionBlurOf, shortcutsOf, type CameraCrop, type FaceTrackSmooth, type ShownShortcut } from './parity';
+import { shortFaceCrop } from './shorts';
 import { defaultLayoutMode } from './edit';
 import type { TimeMap } from './timemap';
+import { brollOpacity, placedTransitions, transitionAt, type ActiveTransition } from './transitions';
+import { punchCrop, punchScaleAt } from './punch';
 
 export const ease = (p: number): number => {
   const t = clamp(p, 0, 1);
@@ -255,11 +259,12 @@ type PLayout = Pick<Project, 'sources' | 'edit' | 'duration'>;
  */
 export function resolveLayout(project: PLayout, t: Seconds): ResolvedLayout {
   const seg = at(project.edit.layouts, t) ?? null;
-  let mode: LayoutMode = seg?.mode ?? project.edit.baseLayout ?? defaultLayoutMode(project.sources);
-  let camera: CameraSlot = seg?.camera ?? (cameraSource(project, 'A') ? 'A' : 'B');
-  const screen = sourceByRole(project, 'screen');
+  // With several clips each one has its own sources and its own base view.
+  let mode: LayoutMode = seg?.mode ?? baseLayoutAt(project, t) ?? defaultLayoutMode(sourcesAt(project, t));
+  let camera: CameraSlot = seg?.camera ?? (cameraSourceAt(project, 'A', t) ? 'A' : 'B');
+  const screen = sourceAt(project, 'screen', t);
   const screenOk = covers(screen, t);
-  const camOk = (slot: CameraSlot) => covers(cameraSource(project, slot), t);
+  const camOk = (slot: CameraSlot) => covers(cameraSourceAt(project, slot, t), t);
   let fellBack = false;
   let unresolved = false;
   if (mode !== 'screen' && !camOk(camera)) {
@@ -285,7 +290,8 @@ export function resolveLayout(project: PLayout, t: Seconds): ResolvedLayout {
   return { mode, camera, transition: seg?.transition ?? 'smooth', start: seg?.start ?? 0, unresolved, fellBack, segment: seg };
 }
 
-export type ZoomPose = { scale: number; cx: number; cy: number };
+/** `ax`/`ay` (≤ 1) narrow the visible window on one axis, so a wide screen can fill a tall frame (shorts). */
+export type ZoomPose = { scale: number; cx: number; cy: number; ax?: number; ay?: number };
 
 export interface LensState {
   /** Centre in screen-source coordinates. */
@@ -311,7 +317,8 @@ export interface FrameState {
   screen: (Placement & { zoom: ZoomPose }) | null;
   cameras: (Placement & { slot: CameraSlot; crop?: CameraCrop })[];
   broll: { insert: BrollInsert; opacity: number; assetTime: Seconds } | null;
-  overlays: { overlay: Overlay; enter: number; exit: number }[];
+  /** enter/exit: 0…1 progress of the fixed animation of the ready-made graphics. sinceIn/untilOut: output seconds since it appeared and until it goes (free text animates from these). */
+  overlays: { overlay: Overlay; enter: number; exit: number; sinceIn: Seconds; untilOut: Seconds }[];
   masks: Mask[];
   cursor: {
     x: number;
@@ -331,6 +338,10 @@ export interface FrameState {
   /** Earlier poses inside the shutter window, oldest first; empty when nothing is moving or blur is off. */
   blur: Pose[];
   unresolved: boolean;
+  /** A transition between two clips in progress: a colour wash, or the neighbouring clip's picture to lay over this one. */
+  transition: ActiveTransition | null;
+  /** Magnification the punch-in on jump cuts adds to the camera in this frame (1 = none). Already applied to `cameras[].crop`. */
+  punch: number;
 }
 
 export interface FrameContext {
@@ -370,6 +381,22 @@ function zoomTarget(ctx: FrameContext, z: Zoom, src: Seconds): { x: number; y: n
   return { x: z.x, y: z.y };
 }
 
+/** The pointer the view follows, averaged over a moment either side so the picture glides instead of chasing it. */
+function followPoint(track: CursorTrack | null, t: Seconds): { x: number; y: number } | null {
+  if (!track) return null;
+  let x = 0;
+  let y = 0;
+  let n = 0;
+  for (const d of [-0.6, -0.3, 0, 0.3, 0.6]) {
+    const c = cursorAt(track, Math.max(0, t + d));
+    if (!c) continue;
+    x += c.x;
+    y += c.y;
+    n++;
+  }
+  return n ? { x: x / n, y: y / n } : null;
+}
+
 /** Layout placement and zoom at one output time. */
 function poseAt(ctx: FrameContext, out: Seconds): { src: Seconds; layout: ResolvedLayout; pose: Pose; lens: LensState | null } {
   const { project, map } = ctx;
@@ -377,18 +404,24 @@ function poseAt(ctx: FrameContext, out: Seconds): { src: Seconds; layout: Resolv
   const mo = MOTION[ap.motion];
   const src = map.toSource(out);
   const layout = resolveLayout(project, src);
-  const geo = layoutGeometry(layout.mode, ap, ctx.screenAspect, ctx.device ?? null);
+  // In a short, a screen shown on its own fills the whole frame (the window onto it is narrowed below).
+  const fill = !!project.edit.reframe?.fillScreen;
+  const frameAspect = ap.output.width / ap.output.height;
+  const geometry = (mode: LayoutMode) => (fill && mode === 'screen' ? layoutGeometry(mode, ap, frameAspect, null) : layoutGeometry(mode, ap, ctx.screenAspect, ctx.device ?? null));
+  const geo = geometry(layout.mode);
 
   // Blend from the layout the viewer saw just before this decision started.
   let screenP: Placement = geo.screen;
   let cams: (Placement & { slot: CameraSlot })[] = [{ ...geo.camera, slot: layout.camera }];
   const startOut = map.toOutput(layout.start);
   const sinceStart = out - startOut;
-  if (layout.segment && layout.transition === 'smooth' && startOut > 1e-3 && sinceStart < mo.layout) {
+  // A view that begins where a clip begins has nothing to blend from: the clip change is a hard cut.
+  const atClipStart = !!project.edit.clips && project.edit.clips.some((c) => !c.removed && Math.abs(c.start - layout.start) < 1e-3);
+  if (layout.segment && layout.transition === 'smooth' && startOut > 1e-3 && sinceStart < mo.layout && !atClipStart) {
     const prevSrc = map.toSource(Math.max(0, startOut - 1 / ap.output.fps));
     const prev = resolveLayout(project, Math.min(prevSrc, layout.start - 1e-3));
     if (prev.mode !== layout.mode || prev.camera !== layout.camera) {
-      const pg = layoutGeometry(prev.mode, ap, ctx.screenAspect, ctx.device ?? null);
+      const pg = geometry(prev.mode);
       const p = ease(sinceStart / mo.layout);
       screenP = { rect: lerpRect(pg.screen.rect, geo.screen.rect, p), opacity: lerp(pg.screen.opacity, geo.screen.opacity, p), radius: lerp(pg.screen.radius, geo.screen.radius, p) };
       const camRect = lerpRect(pg.camera.rect, geo.camera.rect, p);
@@ -426,6 +459,21 @@ function poseAt(ctx: FrameContext, out: Seconds): { src: Seconds; layout: Resolv
     const scale = 1 + (z.scale - 1) * amt;
     const half = 0.5 / scale;
     zoom = { scale, cx: lerp(0.5, clamp(t.x, half, 1 - half), amt), cy: lerp(0.5, clamp(t.y, half, 1 - half), amt) };
+  }
+  if (fill && layout.mode === 'screen' && ctx.screenAspect) {
+    // The frame is taller (or wider) than the screen: show the part the pointer is in, unless a zoom is aiming the view.
+    const ax = Math.min(1, frameAspect / ctx.screenAspect);
+    const ay = Math.min(1, ctx.screenAspect / frameAspect);
+    const f = followPoint(ctx.follow, src);
+    const hx = (0.5 * ax) / zoom.scale;
+    const hy = (0.5 * ay) / zoom.scale;
+    zoom = {
+      scale: zoom.scale,
+      cx: clamp(zoom.cx + ((f?.x ?? 0.5) - 0.5) * (1 - best), hx, 1 - hx),
+      cy: ay < 1 ? clamp(zoom.cy + ((f?.y ?? 0.5) - 0.5) * (1 - best), hy, 1 - hy) : zoom.cy,
+      ax,
+      ay,
+    };
   }
   return { src, layout, pose: { screen: { ...screenP, zoom }, cameras: cams }, lens };
 }
@@ -472,9 +520,7 @@ export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
   if (ins) {
     const a = map.toOutput(ins.start);
     const b = map.toOutput(ins.end);
-    const fade = Math.min(0.3, (b - a) / 3);
-    const opacity = clamp(Math.min((out - a) / fade, (b - out) / fade), 0, 1);
-    broll = { insert: ins, opacity: ease(opacity), assetTime: ins.assetIn + (src - ins.start) };
+    broll = { insert: ins, opacity: ease(brollOpacity(ins, a, b, out)), assetTime: ins.assetIn + (src - ins.start) };
   }
 
   const overlays: FrameState['overlays'] = [];
@@ -482,7 +528,7 @@ export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
     if (src < o.start || src >= o.end) continue;
     const a = map.toOutput(o.start);
     const b = map.toOutput(o.end);
-    overlays.push({ overlay: o, enter: clamp((out - a) / 0.45, 0, 1), exit: clamp((b - out) / 0.3, 0, 1) });
+    overlays.push({ overlay: o, enter: clamp((out - a) / 0.45, 0, 1), exit: clamp((b - out) / 0.3, 0, 1), sinceIn: out - a, untilOut: b - out });
   }
 
   const masks = project.edit.masks.filter((m) => src >= m.start && src < m.end);
@@ -524,20 +570,28 @@ export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
 
   // camera framing from face tracking
   const face = faceOf(ap);
-  const cameras: FrameState['cameras'] = pose.cameras
-    .filter((c) => c.opacity > 0.003 && !!cameraSource(project, c.slot))
+  // Punch-in on jump cuts: a factor on top of whatever framing the camera has, only in a full-frame camera view.
+  const punch = layout.mode === 'camera' ? punchScaleAt(project, map, out) : 1;
+  const framed: FrameState['cameras'] = pose.cameras
+    .filter((c) => c.opacity > 0.003 && !!cameraSourceAt(project, c.slot, src))
     .map((c) => {
       const track = face.zoom || face.follow ? ctx.faces?.[c.slot] : null;
       if (!track) return c;
-      const camSrc = cameraSource(project, c.slot)!;
+      const camSrc = cameraSourceAt(project, c.slot, src)!;
+      // A short reframes the camera for a box of another shape, with headroom.
+      const reframe = project.edit.reframe;
+      if (reframe && reframe.framing !== 'original' && camSrc.width && camSrc.height && c.rect.w > 1 && c.rect.h > 1) {
+        return { ...c, crop: shortFaceCrop(track, Math.max(0, toSourceTime(camSrc.sync, src)), camSrc.width / camSrc.height, c.rect.w / c.rect.h) };
+      }
       const f = faceAt(track, Math.max(0, toSourceTime(camSrc.sync, src)));
       return { ...c, crop: faceCrop(f, face, track.median) };
     });
+  const cameras: FrameState['cameras'] = punch > 1.0005 ? framed.map((c) => ({ ...c, crop: punchCrop(c.crop, punch, ctx.faces?.[c.slot]) })) : framed;
 
   const sc = shortcutsOf(ap);
   const shortcuts = sc.show && ctx.keys?.length ? activeShortcuts(ctx.keys, src, sc.hidden) : [];
 
-  const hasScreen = !!sourceByRole(project, 'screen');
+  const hasScreen = !!sourceAt(project, 'screen', src);
   return {
     out,
     src,
@@ -552,6 +606,8 @@ export function evaluateFrame(ctx: FrameContext, out: Seconds): FrameState {
     shortcuts,
     blur: hasScreen || blur.length === 0 ? blur : blur,
     unresolved: layout.unresolved,
+    transition: project.edit.transitions?.length ? transitionAt(placedTransitions(project, map), out, ap.output.fps) : null,
+    punch,
   };
 }
 

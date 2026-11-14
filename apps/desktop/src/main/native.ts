@@ -113,11 +113,12 @@ function fullConfig(config: RecordConfig, outDir: string) {
 
 const hash = (s: string) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 12);
 
-export async function frames(projectPath: string, file: string, times: number[], width: number): Promise<{ t: number; path: string }[]> {
+/** `together`: put the stills of several files in one folder (the one folder a model may read), each file's under its own prefix. */
+export async function frames(projectPath: string, file: string, times: number[], width: number, together = false): Promise<{ t: number; path: string }[]> {
   if (times.length === 0) return [];
-  const dir = path.join(projectPath, 'cache', 'frames', `${hash(file)}-${width}`);
+  const dir = path.join(projectPath, 'cache', 'frames', together ? `clips-${width}` : `${hash(file)}-${width}`);
   await fsp.mkdir(dir, { recursive: true });
-  const res = await runJson<{ t: number; path: string }[]>(['frames', file, '--times', times.map((t) => t.toFixed(3)).join(','), '--width', String(width), '--out-dir', dir], { timeoutMs: 180000 });
+  const res = await runJson<{ t: number; path: string }[]>(['frames', file, '--times', times.map((t) => t.toFixed(3)).join(','), '--width', String(width), '--out-dir', dir, ...(together ? ['--prefix', `f${hash(file)}`] : [])], { timeoutMs: 180000 });
   return res.map((r) => ({ t: r.t, path: r.path }));
 }
 

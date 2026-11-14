@@ -57,11 +57,12 @@ export const KEY_COMMANDS: KeyCommand[] = [
   { id: 'cut', label: 'Cut the selected range', group: 'Editing', scope: 'editor', combo: 'X' },
   { id: 'keep', label: 'Keep the selected range (protect it from AI changes)', group: 'Editing', scope: 'editor', combo: 'L' },
   { id: 'delete', label: 'Remove the selected item', group: 'Editing', scope: 'editor', combo: 'Backspace' },
-  { id: 'split', label: 'Split the selected block at the playhead', group: 'Editing', scope: 'menu', combo: 'Cmd+B' },
+  { id: 'split', label: 'Split the selected block, or the clip, at the playhead', group: 'Editing', scope: 'menu', combo: 'Cmd+B' },
   { id: 'lock', label: 'Lock the selection against AI changes', group: 'Editing', scope: 'menu', combo: 'Cmd+L' },
   { id: 'layout-camera', label: 'Fullscreen camera from the playhead', group: 'Editing', scope: 'editor', combo: 'Ctrl+L' },
   { id: 'layout-screen', label: 'Screen only from the playhead', group: 'Editing', scope: 'editor', combo: 'Ctrl+S' },
   { id: 'layout-both', label: 'Screen with camera overlay from the playhead', group: 'Editing', scope: 'editor', combo: 'Ctrl+B' },
+  { id: 'add-text', label: 'Add text at the playhead', group: 'Editing', scope: 'editor', combo: 'T' },
 
   { id: 'tab:background', label: 'Background', group: 'Sidebar', scope: 'menu', combo: 'Cmd+1' },
   { id: 'tab:cursor', label: 'Cursor', group: 'Sidebar', scope: 'menu', combo: 'Cmd+2' },

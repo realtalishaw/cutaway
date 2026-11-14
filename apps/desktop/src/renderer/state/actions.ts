@@ -1,4 +1,4 @@
-import { sourceFromProbe, suggestRole, withSources, type MediaSource, type Project } from '@cutaway/core';
+import { addTakeAsClip, defaultSync, dropTake, isTimelineSource, nextClipName, sourceFromProbe, suggestRole, takeOf, uid, withSources, type MediaSource, type Project, type SourceRole } from '@cutaway/core';
 import type { ProbeResult } from '@shared/api';
 import { saveNow, useApp } from './store';
 
@@ -64,8 +64,66 @@ export async function newRecording() {
 
 /** Results of inspecting files before they become sources. */
 export interface ImportReport {
-  accepted: { probe: ProbeResult; source: MediaSource }[];
+  /** `clip`: the clip a video became when it was added after footage that was already on the timeline. */
+  accepted: { probe: ProbeResult; source: MediaSource; clip?: string }[];
   rejected: ProbeResult[];
+}
+
+const hasFootage = (sources: MediaSource[]) => sources.some((s) => isTimelineSource(s) && s.kind === 'video' && !s.instanceOf);
+
+/** The role a video plays as a clip of its own: a screen recording or a camera, judged from the file alone. */
+function clipRole(s: Pick<MediaSource, 'path' | 'duration' | 'width' | 'height' | 'fps'>): SourceRole {
+  const role = suggestRole({ path: s.path, ok: true, kind: 'video', duration: s.duration, video: { width: s.width ?? 0, height: s.height ?? 0, fps: s.fps ?? 30 } }, []);
+  return role === 'screen' ? 'screen' : 'cameraA';
+}
+
+/** A video as a source that can be a clip of its own: placed at the start of its own clock. */
+function asClipSource(s: MediaSource): MediaSource {
+  const fresh: MediaSource = { ...s, role: clipRole(s), sync: defaultSync('reference'), gaps: [] };
+  delete fresh.shift;
+  delete fresh.window;
+  delete fresh.take;
+  return fresh;
+}
+
+/**
+ * Put a supporting video on the timeline as a clip of its own, after what is already there.
+ * Returns the clip's name, or null when nothing changed.
+ */
+export function sourceToClip(sourceId: string): string | null {
+  let name: string | null = null;
+  useApp.getState().patch((p: Project) => {
+    const s = p.sources.find((x) => x.id === sourceId);
+    if (!s || s.kind !== 'video' || isTimelineSource(s) || !s.available) return p;
+    const rest = p.sources.filter((x) => x.id !== sourceId);
+    const base = withSources({ ...p, edit: { ...p.edit, broll: p.edit.broll.filter((b) => b.assetId !== sourceId) } }, rest);
+    if (!hasFootage(rest)) {
+      name = 'Clip 1';
+      return withSources(base, [...rest, asClipSource(s)]);
+    }
+    name = nextClipName(base);
+    return addTakeAsClip(base, { take: uid('take'), name, sources: [asClipSource(s)] });
+  });
+  return name;
+}
+
+/** Take a clip's footage off the timeline for good and keep its video among the supporting media as B-roll. */
+export function takeToBroll(take: string): void {
+  useApp.getState().patch((p: Project) => {
+    const mine = p.sources.filter((s) => !s.instanceOf && isTimelineSource(s) && takeOf(s) === take);
+    if (mine.length === 0 || !p.edit.clips) return p;
+    const dropped = dropTake(p, take);
+    const back = mine.map((s) => {
+      const role: SourceRole = s.kind === 'video' ? 'broll' : 'music';
+      const kept: MediaSource = { ...s, role, sync: defaultSync('reference'), gaps: [] };
+      delete kept.shift;
+      delete kept.window;
+      delete kept.take;
+      return kept;
+    });
+    const all = [...dropped.sources, ...back];
+    return withSources({ ...dropped, sources: all }, all);
+  });
 }
 
 /** Turn probed files into sources with suggested roles. Unsupported files are reported, never silently dropped. */
@@ -95,6 +153,26 @@ export async function importFiles(paths: string[]): Promise<ImportReport | null>
   try {
     const probes = await api().library.importMedia(projectPath, paths, mode);
     const report = sourcesFromProbes(probes, project.sources, mode === 'copy');
+    // A project that already has footage on its timeline: each new video becomes a clip after it, unless
+    // its name says it is B-roll. (It can be moved to the supporting media, or back, in Sources.)
+    if (hasFootage(project.sources)) {
+      const clips = report.accepted.filter(({ source, probe }) => source.kind === 'video' && suggestRole(probe, []) !== 'broll');
+      const rest = report.accepted.filter((a) => !clips.includes(a)).map(({ source }) =>
+        source.kind === 'video' ? { ...source, role: 'broll' as const, sync: defaultSync('reference') } : isTimelineSource(source) ? { ...source, sync: { ...source.sync, method: 'unsynced' as const, status: 'needs-review' as const, confirmedByCreator: false } } : source,
+      );
+      for (const a of report.accepted) if (!clips.includes(a) && a.source.kind === 'video') a.source = { ...a.source, role: 'broll' };
+      app.patch((p: Project) => {
+        let next = rest.length ? withSources(p, [...p.sources, ...rest]) : p;
+        for (const a of clips) {
+          a.clip = nextClipName(next);
+          a.source = asClipSource(a.source);
+          next = addTakeAsClip(next, { take: uid('take'), name: a.clip, sources: [a.source] });
+        }
+        return next;
+      });
+      recordImportReport(report);
+      return report;
+    }
     if (report.accepted.length) {
       // Secondary cameras and voice files from another device start unsynced until reviewed.
       const hasTimeline = project.sources.some((s) => ['screen', 'cameraA', 'cameraB'].includes(s.role));

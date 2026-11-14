@@ -31,6 +31,7 @@ import {
   type PackageManifest,
   type Project,
 } from '@cutaway/core';
+import { musicClipsOf, soundFilesUsed } from '@cutaway/core';
 import * as exporterModule from './exporter';
 import { renderVideo, type RenderArgs, type RenderProgress, type RenderResult } from './exporter';
 import { thumbnailJpeg } from './thumb';
@@ -201,7 +202,8 @@ function creditsText(project: Project): string | null {
   const used = new Map<string, string[]>();
   const add = (id: string, use: string) => used.set(id, [...(used.get(id) ?? []), use]);
   for (const b of project.edit.broll) add(b.assetId, 'B-roll');
-  if (project.edit.audio.music) add(project.edit.audio.music.sourceId, 'Music');
+  for (const id of new Set(musicClipsOf(project.edit, project.sources).map((c) => c.sourceId))) add(id, 'Music');
+  for (const id of soundFilesUsed(project)) add(id, 'Sound effect');
   if (used.size === 0) return null;
   const lines = ['Supporting material used in this video', ''];
   for (const [id, uses] of used) {

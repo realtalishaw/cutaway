@@ -8,6 +8,7 @@ import { CursorTab } from './inspector/CursorTab';
 import { CameraTab } from './inspector/CameraTab';
 import { CaptionsTab } from './inspector/CaptionsTab';
 import { AudioTab } from './inspector/AudioTab';
+import { TextTab } from './inspector/TextTab';
 import { ShortcutsTab } from './inspector/ShortcutsTab';
 import { MotionTab } from './inspector/MotionTab';
 import { ChatTab } from './inspector/ChatTab';
@@ -20,12 +21,13 @@ const TABS: { id: InspectorTab; icon: IconName; label: string }[] = [
   { id: 'camera', icon: 'camera', label: 'Camera' },
   { id: 'captions', icon: 'captions', label: 'Captions' },
   { id: 'transcript', icon: 'transcript', label: 'Transcript' },
-  { id: 'audio', icon: 'speaker', label: 'Audio' },
+  { id: 'audio', icon: 'speaker', label: 'Audio, music and sound effects' },
+  { id: 'text', icon: 'text', label: 'Text and titles' },
   { id: 'shortcuts', icon: 'command', label: 'Keyboard shortcuts' },
   { id: 'motion', icon: 'path', label: 'Animations' },
 ];
 
-const CLOSE_LABEL: Record<string, string> = { zoom: 'Zoom', layout: 'Layout', cut: 'Cut', overlay: 'Graphic', broll: 'B-roll', mask: 'Mask', lock: 'Lock', speed: 'Speed', range: 'Selection', words: 'Selection', suggestion: 'Suggestion' };
+const CLOSE_LABEL: Record<string, string> = { zoom: 'Zoom', layout: 'Layout', cut: 'Cut', overlay: 'Graphic', broll: 'B-roll', mask: 'Mask', lock: 'Lock', speed: 'Speed', range: 'Selection', words: 'Selection', suggestion: 'Suggestion', music: 'Music', sound: 'Sound' };
 
 /** Right sidebar: a rail of icon tabs beside one rounded card, like Screen Studio's. */
 export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' | 'callout' | null) => void }) {
@@ -35,6 +37,7 @@ export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' |
   const openSuggestions = useApp((s) => s.project?.edit.suggestions.filter((x) => x.status === 'open').length ?? 0);
   const hasKeys = useApp((s) => !!s.project?.sources.some((x) => (x as { keysFile?: string }).keysFile));
   const setPanels = useApp((s) => s.setPanels);
+  const textSelected = useApp((s) => s.selection?.kind === 'overlay' && !!s.project?.edit.overlays.some((o) => o.id === (s.selection as { id: string }).id && o.kind === 'text'));
   // Text selections made in the transcript are acted on there, not in a separate editor.
   // …and a selected range is what a chat message is about, so the conversation stays open.
   const contextual = !!sel && !(tab === 'transcript' && sel.kind === 'words') && !(tab === 'chat' && (sel.kind === 'range' || sel.kind === 'words'));
@@ -63,7 +66,7 @@ export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' |
           <>
             <div className="insp-back">
               <button className="btn block" onClick={() => app().select(null)}>
-                <Icon name="arrowLeft" size={15} /> Close {CLOSE_LABEL[sel!.kind] ?? ''} editor
+                <Icon name="arrowLeft" size={15} /> Close {textSelected ? 'Text' : (CLOSE_LABEL[sel!.kind] ?? '')} editor
               </button>
             </div>
             <SelectionPanel pickTarget={pickTarget} />
@@ -80,6 +83,8 @@ export function Inspector({ pickTarget }: { pickTarget: (what: 'zoom' | 'mask' |
           <Transcript />
         ) : tab === 'audio' ? (
           <AudioTab />
+        ) : tab === 'text' ? (
+          <TextTab />
         ) : tab === 'shortcuts' ? (
           <ShortcutsTab />
         ) : tab === 'chat' ? (

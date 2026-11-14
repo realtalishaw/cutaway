@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { fmtTime, slugify, withSources, type Project } from '@cutaway/core';
+import { clipsOf, dropTake, fmtTime, isTimelineSource, projectOfTake, slugify, withSources, type Project } from '@cutaway/core';
 import { mediaUrl, type TakeManifest } from '@shared/api';
 import { useApp } from '../state/store';
 import { errorText } from '../state/actions';
-import { describeTake } from '../state/recording';
+import { describeTake, setTakeUse } from '../state/recording';
 import { runFileExport, type PackageProgress } from '../engine/packageExport';
 import { Icon } from '../ui/icons';
 import { Button, fmtBytes } from '../ui/kit';
@@ -29,6 +29,28 @@ export function QuickShare({ manifest, takeDir, note, onExit }: { manifest: Take
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // In a project that already had footage, the take became a clip after it. That can be changed here.
+  const use = useApp((s) => {
+    const p = s.project;
+    if (!p) return null;
+    const mine = p.sources.filter((x) => x.takeId === manifest.takeId && x.origin === 'recording');
+    const clip = clipsOf(p).find((c) => c.take === manifest.takeId);
+    if (clip) return `clip:${clip.name}`;
+    if (mine.length && mine.every((x) => !isTimelineSource(x)) && p.sources.some((x) => isTimelineSource(x) && x.kind === 'video')) return 'broll';
+    return null;
+  });
+  const [switching, setSwitching] = useState(false);
+  const switchUse = async (to: 'clip' | 'broll') => {
+    setSwitching(true);
+    try {
+      rendered.current = null;
+      await setTakeUse(manifest, takeDir, to);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setSwitching(false);
+    }
+  };
   // One render serves both Copy and Save: the second action reuses the first file.
   const rendered = useRef<{ path: string; bytes: number; revision: number } | null>(null);
   const openRef = useRef<HTMLButtonElement>(null);
@@ -65,7 +87,8 @@ export function QuickShare({ manifest, takeDir, note, onExit }: { manifest: Take
     setBusy({ kind, progress: null, abort });
     // Rendered into the project's cache: not an export the creator has to tidy up, and cleared with the cache.
     const res = await runFileExport({
-      project,
+      // the take by itself, also when it sits on a timeline with other clips
+      project: projectOfTake(project, manifest.takeId),
       projectPath: path,
       destDir: `${path}/cache/quick-share`,
       format: 'mp4',
@@ -108,8 +131,10 @@ export function QuickShare({ manifest, takeDir, note, onExit }: { manifest: Take
     try {
       busy?.abort.abort();
       useApp.getState().patch((p: Project) => {
-        const kept = p.sources.filter((s) => !(s.takeId === manifest.takeId && s.origin === 'recording'));
-        return { ...withSources(p, kept), flags: (p.flags ?? []).filter((f) => f.takeId !== manifest.takeId) };
+        // a take that sits on the timeline as its own clip leaves with its clip
+        const q = dropTake(p, manifest.takeId);
+        const kept = q.sources.filter((s) => !(s.takeId === manifest.takeId && s.origin === 'recording'));
+        return { ...withSources({ ...q, sources: kept }, kept), flags: (q.flags ?? []).filter((f) => f.takeId !== manifest.takeId) };
       });
       await api().library.discardTake(takeDir);
       useApp.getState().toast('The take was moved to the Trash.');
@@ -138,6 +163,14 @@ export function QuickShare({ manifest, takeDir, note, onExit }: { manifest: Take
             {flags ? ` · ${flags} flag${flags === 1 ? '' : 's'}` : ''}
           </div>
           {note ? <div className="tiny dim" style={{ marginTop: 6 }}>{note}</div> : null}
+          {use ? (
+            <div className="tiny" style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }} data-testid="qs-use">
+              <span className="muted">{use === 'broll' ? 'Kept as B-roll: it is in Sources, not on the timeline.' : `Added to the timeline as “${use.slice(5)}”, after what was already there.`}</span>
+              <Button size="sm" variant="ghost" disabled={switching || !!busy} data-testid={use === 'broll' ? 'qs-as-clip' : 'qs-as-broll'} onClick={() => void switchUse(use === 'broll' ? 'clip' : 'broll')}>
+                {use === 'broll' ? 'Add to the timeline' : 'Use as B-roll instead'}
+              </Button>
+            </div>
+          ) : null}
 
           <div className="qs-actions">
             <button ref={openRef} className="btn primary lg qs-open" data-testid="qs-open" onClick={() => onExit('editor')} disabled={deleting}>

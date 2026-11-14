@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { flagsOf, fmtTime, type Range } from '@cutaway/core';
+import { flagsOf, fmtTime, type Overlay, type Project, type Range } from '@cutaway/core';
 import { readOnly, timeMapOf, useApp, usePlayback, useShownProject, viewedProject } from '../state/store';
 import { acceptComparison, discardComparison, reviseSection } from '../state/jobs';
 import { Preview, type PreviewPoint } from '../engine/Preview';
@@ -12,6 +12,9 @@ import { SensitiveSheet } from './editor/SensitiveSheet';
 import { commandForEvent } from '../state/keymap';
 import { stepVersion } from '../state/chat';
 import { addMask, addOverlay, addZoom, cutRange, lockRange, patchItem, playheadSource, removeSelected, seekSource, selectedRange, setLayout, splitSelected } from './editor/ops';
+import { splitClipAtPlayhead } from './editor/clipOps';
+import { addText } from './editor/titleSoundOps';
+import { layoutText, measuringContext } from '../engine/textOverlay';
 import './editor/editor.css';
 
 type Pick = 'zoom' | 'mask' | 'callout' | null;
@@ -148,9 +151,10 @@ function PreviewToolbar({ pickMask, findSensitive }: { pickMask(): void; findSen
       ? [
           tool('mask', 'Hide sensitive content: drag over it on the preview', () => (addMask(range(5), 'screen'), pickMask())),
           tool('shield', 'Find sensitive data: emails, keys, card numbers, passwords', findSensitive),
-          tool('text', 'Add a callout at the playhead', () => addOverlay(range(4), 'callout', 'Callout')),
+          tool('chat', 'Add a callout at the playhead', () => addOverlay(range(4), 'callout', 'Callout')),
         ]
       : [],
+    [tool('text', 'Add text at the playhead (T). Titles and lower thirds are in the Text tab.', () => addText('plain'))],
   ].filter((g) => g.length);
   if (!groups.length) return null;
   return (
@@ -269,6 +273,27 @@ function jumpFlag(dir: 1 | -1) {
   usePlayback.getState().seek(target);
 }
 
+/** The frame-size anchor a text really ends up at: a drag past the safe margin stops at it, so there is no dead zone on the way back. */
+function settledAnchor(p: Project, o: Overlay): { x: number; y: number } {
+  const { width: W, height: H } = p.edit.appearance.output;
+  const L = layoutText(measuringContext(), o, W, H);
+  const x = L.style.align === 'left' ? L.block.x : L.style.align === 'right' ? L.block.x + L.block.w : L.block.x + L.block.w / 2;
+  return { x: x / W, y: (L.block.y + L.block.h / 2) / H };
+}
+
+/** The free text under a point of the preview at the playhead (the one drawn last wins). */
+function textAt(p: Project, pt: PreviewPoint): Overlay | null {
+  const { width: W, height: H } = p.edit.appearance.output;
+  const t = playheadSource(p);
+  const pad = Math.min(W, H) * 0.015;
+  for (const o of [...p.edit.overlays].reverse()) {
+    if (o.kind !== 'text' || t < o.start || t >= o.end) continue;
+    const b = layoutText(measuringContext(), o, W, H).block;
+    if (pt.x * W >= b.x - pad && pt.x * W <= b.x + b.w + pad && pt.y * H >= b.y - pad && pt.y * H <= b.y + b.h + pad) return o;
+  }
+  return null;
+}
+
 export function Editor() {
   const project = useShownProject();
   const selection = useApp((s) => s.selection);
@@ -276,10 +301,12 @@ export function Editor() {
   const inspector = useApp((s) => s.panels.inspector);
   const [zoom, setZoom] = useState(0);
   const [pick, setPick] = useState<Pick>(null);
+  const textSelected = selection?.kind === 'overlay' && project.edit.overlays.some((o) => o.id === selection.id && o.kind === 'text');
   const [revising, setRevising] = useState(false);
   const [mark, setMark] = useState<number | null>(null);
   const [sheet, setSheet] = useState<'crop' | 'sensitive' | null>(null);
   const dragStart = useRef<PreviewPoint | null>(null);
+  const textDrag = useRef<{ id: string; dx: number; dy: number } | null>(null);
 
   // Keep the library card's poster current: grab the preview when leaving the editor.
   useEffect(
@@ -311,7 +338,10 @@ export function Editor() {
       const p = useApp.getState().project;
       if (!p) return;
       if (cmd === 'split') {
-        if (!splitSelected(p)) useApp.getState().toast('Select a view, zoom, B-roll or speed block to split it at the playhead. To remove footage, mark a range with I and O, then press X.');
+        // a selected block is split; otherwise the clip under the playhead is
+        const sel = useApp.getState().selection;
+        const block = !!sel && ['layout', 'zoom', 'broll', 'speed'].includes(sel.kind);
+        if (!splitSelected(p) && (block || !splitClipAtPlayhead(p))) useApp.getState().toast(block ? 'Move the playhead inside the selected block to split it there.' : 'Move the playhead inside a clip to split it there. To remove footage, mark a range with I and O, then press X.');
       } else if (cmd === 'lock') {
         const r = selectedRange(useApp.getState().selection);
         if (r) lockRange(r);
@@ -320,6 +350,7 @@ export function Editor() {
       else if (cmd === 'version-prev' || cmd === 'version-next') stepVersion(cmd === 'version-next' ? 1 : -1);
       else if (cmd === 'crop' && p.sources.some((x) => x.role === 'screen')) setSheet('crop');
       else if (cmd === 'find-sensitive' && p.sources.some((x) => x.role === 'screen')) setSheet('sensitive');
+      else if (cmd === 'add-text') addText('plain');
     };
     window.addEventListener('cutaway-revise', onRevise);
     window.addEventListener('cutaway-command', onCommand);
@@ -396,6 +427,10 @@ export function Editor() {
           e.preventDefault();
           stepVersion(1);
           break;
+        case 'add-text':
+          e.preventDefault();
+          addText('plain');
+          break;
         case 'mark-in':
           setMark(playheadSource(p));
           app.toast('In point set. Move the playhead and mark the end of the range.');
@@ -424,7 +459,26 @@ export function Editor() {
   // direct manipulation on the preview: zoom target, callout position, mask rectangle
   const onPointer = (phase: 'down' | 'move' | 'up', pt: PreviewPoint) => {
     const sel = useApp.getState().selection;
-    if (!pick || !sel || !('id' in sel)) return;
+    if (!pick) {
+      // Free text is moved by dragging it: press on a text to select it, keep dragging to place it.
+      const p = useApp.getState().project;
+      if (!p || comparing) return;
+      if (phase === 'down') {
+        const hit = textAt(p, pt);
+        textDrag.current = hit ? { id: hit.id, dx: hit.x - pt.x, dy: hit.y - pt.y } : null;
+        if (hit && !(sel && 'id' in sel && sel.id === hit.id)) useApp.getState().select({ kind: 'overlay', id: hit.id });
+        return;
+      }
+      const d = textDrag.current;
+      const o = d ? p.edit.overlays.find((x) => x.id === d.id) : null;
+      if (d && o && !o.meta.locked) {
+        const at = settledAnchor(p, { ...o, x: pt.x + d.dx, y: pt.y + d.dy });
+        if (Math.abs(at.x - o.x) > 1e-4 || Math.abs(at.y - o.y) > 1e-4) patchItem('overlays', o.id, at, 'Move text');
+      }
+      if (phase === 'up') textDrag.current = null;
+      return;
+    }
+    if (!sel || !('id' in sel)) return;
     if (pick === 'zoom' && sel.kind === 'zoom' && pt.screen && phase !== 'move') {
       patchItem('zooms', sel.id, { x: Math.min(1, Math.max(0, pt.screen.x)), y: Math.min(1, Math.max(0, pt.screen.y)), follow: false }, 'Set zoom target', false);
       if (phase === 'up') setPick(null);
@@ -482,7 +536,7 @@ export function Editor() {
         <VersionBar />
         <div className="stage-preview">
           {!comparing ? <PreviewToolbar pickMask={() => setPick('mask')} findSensitive={() => setSheet('sensitive')} /> : null}
-          <Preview onPointer={pick ? onPointer : undefined} cursorStyle={pick ? 'crosshair' : undefined} selectedMaskId={selection?.kind === 'mask' ? selection.id : null} />
+          <Preview onPointer={pick || !comparing ? onPointer : undefined} cursorStyle={pick ? 'crosshair' : textSelected ? 'move' : undefined} selectedMaskId={selection?.kind === 'mask' ? selection.id : null} selectedOverlayId={textSelected ? selection!.id : null} />
           {pick ? (
             <div className="pick-hint">
               {pick === 'mask' ? 'Drag to select the area for the new mask' : pick === 'zoom' ? 'Click the point to zoom into' : 'Click where the callout should sit'}

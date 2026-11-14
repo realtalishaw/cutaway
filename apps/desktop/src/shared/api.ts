@@ -469,7 +469,7 @@ export interface CutawayApi {
     preflight(config: RecordConfig): Promise<PreflightResult>;
     probe(paths: string[]): Promise<ProbeResult[]>;
     /** Stills written into the project's cache; returns absolute paths. */
-    frames(projectPath: string, file: string, times: number[], width: number): Promise<{ t: number; path: string }[]>;
+    frames(projectPath: string, file: string, times: number[], width: number, together?: boolean): Promise<{ t: number; path: string }[]>;
     activity(file: string): Promise<{ fps: number; samples: { t: number; change: number }[] }>;
     transcribe(file: string, locale: string): Promise<TranscribeResult>;
     analyzeVoice(file: string): Promise<VoiceAnalysis>;

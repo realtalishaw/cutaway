@@ -1,0 +1,56 @@
+/* The clips row: one block per clip, above the footage track. */
+.lane-clips { margin-bottom: 6px; }
+.lane-clips .tl-track { position: relative; height: 100%; }
+.tl-clip { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; border-radius: 8px; background: linear-gradient(180deg, #2b3140, #353c4e); box-shadow: inset 0 0 0 1px #4b556b; color: #e9edf6; font-size: 11.5px; font-weight: 500; cursor: grab; overflow: hidden; outline-offset: 1px; user-select: none; touch-action: none; }
+.tl-clip:hover { box-shadow: inset 0 0 0 1px #6f7c99; }
+.tl-clip.selected { box-shadow: inset 0 0 0 2px #fff6e0; z-index: 4; }
+.tl-clip.dragging { cursor: grabbing; opacity: 0.86; z-index: 6; box-shadow: inset 0 0 0 2px #fff6e0, 0 8px 22px rgba(0, 0, 0, 0.5); }
+.tl-clip-label { display: flex; align-items: center; gap: 7px; padding: 0 12px; min-width: 0; flex: 1; pointer-events: none; }
+.tl-clip-label b { flex: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 5px; background: rgba(255, 255, 255, 0.14); font-size: 10.5px; font-weight: 600; line-height: 16px; text-align: center; }
+.tl-clip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-clip-label small { margin-left: auto; padding-left: 6px; color: rgba(233, 237, 246, 0.6); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.tl-clip-trimmed { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, rgba(8, 9, 13, 0.62) 0 5px, rgba(8, 9, 13, 0.4) 5px 10px); pointer-events: none; }
+.tl-clip-handle { position: absolute; top: 3px; bottom: 3px; width: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.28); cursor: ew-resize; z-index: 2; opacity: 0; transition: opacity 0.12s; touch-action: none; }
+.tl-clip-handle.l { margin-left: 2px; }
+.tl-clip-handle.r { margin-right: 2px; }
+.tl-clip:hover .tl-clip-handle, .tl-clip.selected .tl-clip-handle { opacity: 1; }
+.tl-clip-handle:hover { background: #fff6e0; }
+.tl-clip-name-input { flex: 1; min-width: 40px; margin: 0 10px; padding: 1px 6px; border: 0; border-radius: 5px; background: rgba(8, 9, 13, 0.7); color: #fff; font: inherit; outline: 1px solid #8a7aee; }
+.tl-clip-drop { position: absolute; top: -3px; bottom: -3px; width: 3px; margin-left: -2px; border-radius: 2px; background: #fff6e0; box-shadow: 0 0 0 2px rgba(255, 246, 224, 0.25); pointer-events: none; z-index: 7; }
+.lane-clips.readonly .tl-clip { cursor: default; }
+
+/* Clip panel in the inspector. */
+.clip-off { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.clip-off:first-child { border-top: 0; }
+.clip-name-field { width: 100%; }
+
+/* Transitions: the marker on each clip change, its menu, and the control in the clip panel. */
+/* The marker rides on the top edge of the row, clear of the trim handles on either side of the clip change. */
+.tl-join { position: absolute; top: -11px; width: 14px; height: 14px; margin: 0 0 0 -8px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 7px; background: #1a1d26; box-shadow: 0 0 0 1px #4b556b; color: rgba(233, 237, 246, 0.55); cursor: pointer; z-index: 5; opacity: 0; transition: opacity 0.12s, background 0.12s, color 0.12s; }
+.lane-clips:hover .tl-join, .tl-join.set, .tl-join.open, .tl-join:focus-visible { opacity: 1; }
+.tl-join:hover, .tl-join.open { background: #2b3140; color: #fff; box-shadow: 0 0 0 1px #8a7aee; }
+.tl-join.set { background: #6c5ce7; color: #fff; box-shadow: 0 0 0 1px #9d91f5, 0 2px 8px rgba(0, 0, 0, 0.45); }
+.lane-clips.readonly .tl-join { cursor: default; }
+.tl-join-menu { position: fixed; z-index: 60; width: 276px; padding: 10px; border-radius: 12px; background: #15171e; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.09), 0 18px 44px rgba(0, 0, 0, 0.6); display: flex; flex-direction: column; gap: 8px; }
+.tl-join-menu .eyebrow { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(233, 237, 246, 0.5); }
+.tl-join-menu .tr-all { margin-top: 2px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+.tr-field { display: flex; flex-direction: column; gap: 8px; }
+.tr-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.tr-kinds button { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 7px 8px; border: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.05); color: rgba(233, 237, 246, 0.78); font: inherit; font-size: 12px; text-align: left; cursor: pointer; white-space: nowrap; }
+.tr-kinds button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.09); color: #fff; }
+.tr-kinds button[aria-checked='true'] { background: rgba(108, 92, 231, 0.26); color: #fff; box-shadow: inset 0 0 0 1px #8a7aee; }
+.tr-kinds button:disabled { opacity: 0.4; cursor: default; }
+.tr-kinds button svg { flex: none; }
+.tr-kinds button span { overflow: hidden; text-overflow: ellipsis; }
+.tr-side { display: flex; flex-direction: column; gap: 6px; }
+.tr-side + .tr-side { margin-top: 6px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+
+/* Punch-in on jump cuts: a small mark on each cut where the framing changes. */
+.tl-punch { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; margin-left: 3px; border-radius: 3px; background: rgba(255, 255, 255, 0.9); color: #2a1c05; font-size: 9px; font-weight: 700; line-height: 1; flex: none; }
+.tl-punch.off { background: transparent; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55); color: rgba(255, 255, 255, 0.7); }
+.punch-list { display: flex; flex-direction: column; gap: 2px; max-height: 168px; overflow: auto; margin: 2px -4px 0; }
+.punch-list button { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border: 0; border-radius: 6px; background: transparent; color: rgba(233, 237, 246, 0.8); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.punch-list button:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+.punch-list .mono { font-variant-numeric: tabular-nums; color: rgba(233, 237, 246, 0.55); min-width: 44px; }
+.punch-list .tag { margin-left: auto; font-size: 10.5px; color: rgba(233, 237, 246, 0.5); }
+.punch-list .tag.in { color: #c9c2ff; }

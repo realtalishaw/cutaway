@@ -88,6 +88,23 @@ export interface MediaSource {
   note?: string;
   /** Free-text tags that help B-roll matching. */
   tags?: string[];
+  /**
+   * Which footage group (a recorded take, or files imported together) this timeline source belongs to.
+   * Absent = the project's first group ("main"). Clips are cut from a group; see `Clip.take`.
+   */
+  take?: string;
+  /**
+   * How far this placement's own clock is moved onto the session timeline: session = take time + shift.
+   * `sync.offset` and `gaps` already include it. Absent = 0.
+   */
+  shift?: Seconds;
+  /** Session range this placement is used in (its clip, or run of clips). Absent = wherever it has media. */
+  window?: Range;
+  /**
+   * Set on a second placement of the same file, made when clips cut from one take sit apart on the
+   * timeline. Derived from the source it names; never edited on its own.
+   */
+  instanceOf?: string;
 }
 
 // ───────────────────────────── transcript ─────────────────────────────
@@ -109,6 +126,8 @@ export interface Transcript {
   sourceId: string;
   hasSpeech: boolean;
   words: Word[];
+  /** Words of clips that were removed from the timeline, kept so the clip can be put back. */
+  parked?: Word[];
   generatedAt: string;
 }
 
@@ -169,16 +188,96 @@ export interface Zoom extends Range {
   meta: DecisionMeta;
 }
 
-export type OverlayKind = 'callout' | 'section-card' | 'lower-third';
+/** The three ready-made graphics. These are the only overlay kinds an AI proposal may use. */
+export type GraphicKind = 'callout' | 'section-card' | 'lower-third';
+/** 'text' is the free text tool: its look comes from `Overlay.style`. */
+export type OverlayKind = GraphicKind | 'text';
+
+export type TextFont = 'inter' | 'anton' | 'serif' | 'grotesk' | 'mono';
+export type TextAnimation = 'none' | 'fade' | 'slide-up' | 'pop' | 'typewriter';
+
+/**
+ * Look of a free text overlay. Lengths are fractions of the output's short side unless noted,
+ * so the same style holds up on wide, square and vertical outputs.
+ */
+export interface TextStyle {
+  font: TextFont;
+  /** Font size as a fraction of the output's short side. */
+  size: number;
+  weight: number;
+  color: string;
+  align: 'left' | 'center' | 'right';
+  /** Width the text wraps at, as a fraction of the output width. */
+  width: number;
+  uppercase: boolean;
+  /** Extra letter spacing in em. */
+  tracking: number;
+  /** Line height as a multiple of the font size. */
+  leading: number;
+  background: { shape: 'none' | 'box' | 'pill'; color: string; opacity: number };
+  /** Outline width as a fraction of the font size; 0 = none. */
+  outline: { width: number; color: string };
+  /** 0 = none … 1 = heavy drop shadow. */
+  shadow: number;
+  /** A thin bar beside (or, for centred text, under) the first line. null = none. */
+  accent: string | null;
+  /** Dims the whole frame behind the text (title cards, end cards). */
+  scrim: { color: string; opacity: number } | null;
+  /** How the second line (`Overlay.subtext`) differs from the first. */
+  sub: { scale: number; weight: number; color: string; font: TextFont; uppercase: boolean; tracking: number };
+  in: { type: TextAnimation; duration: Seconds };
+  out: { type: TextAnimation; duration: Seconds };
+}
+
+/** A sound that plays once: one of the built-in synthesised sounds, or the creator's own file. */
+export interface SoundCue {
+  /** Built-in sound id (see BUILTIN_SOUNDS), or null when `sourceId` names a file. */
+  builtin: string | null;
+  sourceId?: string;
+  gain: number;
+}
 
 export interface Overlay extends Range {
   id: string;
   kind: OverlayKind;
   text: string;
   subtext?: string;
-  /** Normalised output-frame anchor for callouts. */
+  /** Normalised output-frame anchor: for callouts the centre; for free text the block's anchor point. */
   x: number;
   y: number;
+  /** kind 'text' only. */
+  style?: TextStyle;
+  /** Played as the overlay appears. */
+  sound?: SoundCue;
+  meta: DecisionMeta;
+}
+
+/**
+ * A sound effect tied to a moment of the content (session time). If that moment is cut, the sound is
+ * dropped. `start` is the moment; `end` is where the sound has died away.
+ */
+export interface SoundEffect extends Range, SoundCue {
+  id: string;
+  meta: DecisionMeta;
+}
+
+/**
+ * A piece of music on the OUTPUT timeline: it starts at a second of the finished video and plays
+ * straight through, so cutting or moving footage never makes the music jump.
+ */
+export interface MusicClip {
+  id: string;
+  sourceId: string;
+  /** Output-time second at which the clip starts. */
+  start: Seconds;
+  /** Where in the file playback starts. */
+  sourceIn: Seconds;
+  length: Seconds;
+  gain: number;
+  fadeIn: Seconds;
+  fadeOut: Seconds;
+  /** Lower the music while someone is speaking. */
+  duck: boolean;
   meta: DecisionMeta;
 }
 
@@ -191,6 +290,9 @@ export interface BrollInsert extends Range {
   fit: 'cover' | 'contain';
   /** Narration is preserved unless the creator opts into the asset's audio. */
   useAssetAudio: boolean;
+  /** Seconds the insert takes to fade in and out. Absent = the standard short fade (see `brollOpacity`); 0 = a hard cut. */
+  fadeIn?: Seconds;
+  fadeOut?: Seconds;
   meta: DecisionMeta;
 }
 
@@ -202,6 +304,54 @@ export interface Mask extends Range {
   rect: Rect;
   style: 'blur' | 'solid' | 'highlight';
   meta: DecisionMeta;
+}
+
+/**
+ * One piece of footage on the timeline. The session timeline is the playing clips laid end to end in
+ * array order; removed clips follow the last playing one, so everything keeps a place and can come back.
+ */
+export interface Clip {
+  id: string;
+  /** Footage group the clip plays (see `MediaSource.take`). The first clip of a group has `id === take`. */
+  take: string;
+  name: string;
+  /** Session time at which the clip starts. Kept in step with the order by `layoutClips`. */
+  start: Seconds;
+  /** The part of the take this clip plays, on the take's own clock. */
+  in: Seconds;
+  out: Seconds;
+  /** The view used wherever no layout segment applies inside this clip. */
+  baseLayout?: LayoutMode;
+  /** Taken off the timeline. Its footage stays on disk and its decisions are parked here. */
+  removed?: boolean;
+  /** Decisions of a removed clip, by lane, with times measured from the clip's start. */
+  parked?: Record<string, unknown[]>;
+}
+
+export type TransitionKind = 'dissolve' | 'dip-black' | 'dip-white';
+
+/**
+ * How one clip gives way to the next. It belongs to that pair of clips: it is drawn only while
+ * `from` is immediately followed by `to` on the timeline, and the clip operations drop it once
+ * they are no longer neighbours. A transition never changes the length of the video.
+ */
+export interface Transition {
+  id: string;
+  /** Clip ids: the clip that ends and the clip that begins. */
+  from: string;
+  to: string;
+  kind: TransitionKind;
+  /** Wanted length in output seconds; what is drawn is clamped to what the two clips can give. */
+  duration: Seconds;
+}
+
+/** Hide jump cuts in a full-frame camera shot by alternating between normal framing and a slight punch-in. */
+export interface PunchIn {
+  enabled: boolean;
+  /** Magnification of the punched-in shots (1.05 … 1.3). */
+  scale: number;
+  /** Ids of cuts at which the framing is left as it was. */
+  skip?: string[];
 }
 
 export interface RangeLock extends Range {
@@ -225,8 +375,11 @@ export interface Suggestion extends Range {
 export interface AudioSettings {
   /** The one source whose voice is heard. Camera scratch audio stays muted. */
   masterVoiceId: string | null;
+  /** The audible voice of every footage group after the first, by `MediaSource.take`. */
+  takeVoices?: Record<string, string>;
   tracks: Record<string, { gain: number; muted: boolean }>;
   voiceCleanup: { enabled: boolean; bypass: boolean };
+  /** Superseded by EditState.music. Still read from older projects: see `musicClipsOf`. */
   music: { sourceId: string; gain: number; duck: boolean } | null;
 }
 
@@ -272,7 +425,7 @@ export interface Appearance {
   shortcuts?: { show: boolean; size: number; position: 'bottom' | 'top'; hidden: string[] };
   /** Generic phone/tablet bezel around a portrait or device screen source. */
   device?: { frame: boolean; color: 'graphite' | 'silver' | 'midnight' };
-  captions: { burnIn: boolean; size: number; position: 'bottom' | 'top'; style: 'pill' | 'plain' | 'bold' };
+  captions: { burnIn: boolean; size: number; position: 'bottom' | 'top'; style: 'pill' | 'plain' | 'bold'; /** Word-by-word captions of a short (set only on the project a short is rendered from). */ short?: ShortCaptions };
   motion: 'calm' | 'balanced' | 'lively';
   /** Colour LUT and sharpening for the screen recording and for the cameras. */
   grade?: { screen?: LayerGrade; camera?: LayerGrade };
@@ -318,6 +471,8 @@ export interface CameraLook {
 export type KeyStroke = { t: Seconds; e: 'shortcut'; keys: string[] } | { t: Seconds; e: 'type' };
 
 export interface EditState {
+  /** The clips in playing order. Absent = one clip holding the whole recording (read through `clipsOf`). */
+  clips?: Clip[];
   cuts: Cut[];
   /** Ranges the creator restored or asked to keep; AI cuts may not remove them. */
   keeps: Range[];
@@ -331,10 +486,20 @@ export interface EditState {
   masks: Mask[];
   locks: RangeLock[];
   suggestions: Suggestion[];
+  /** Music clips on the output timeline. Absent in projects saved before music clips existed: read through `musicClipsOf`. */
+  music?: MusicClip[];
+  /** Sound effects in session time. Read through `soundsOf`. */
+  sounds?: SoundEffect[];
+  /** Transitions between neighbouring clips, keyed by the two clips' ids (not by time). Read through `transitionsOf`. */
+  transitions?: Transition[];
+  /** Punch-in on jump cuts. Absent = off. Read through `punchInOf`. */
+  punchIn?: PunchIn;
   /** Caption/transcript spelling corrections keyed by word id. Never cuts footage. */
   wordText: Record<string, string>;
   audio: AudioSettings;
   appearance: Appearance;
+  /** How a short fills its frame. Never saved: present only on the project a short is rendered from (`shortProject`). */
+  reframe?: ShortReframe;
 }
 
 // ───────────────────────────── operations ─────────────────────────────
@@ -348,7 +513,7 @@ export type EditOp =
   | { op: 'speed'; start: Seconds; end: Seconds; speed: number; reason?: string; confidence?: Confidence }
   | { op: 'layout'; start: Seconds; end: Seconds; mode: LayoutMode; camera?: CameraSlot; transition?: 'cut' | 'smooth'; reason?: string; confidence?: Confidence }
   | { op: 'zoom'; start: Seconds; end: Seconds; scale: number; x?: number; y?: number; follow?: boolean; reason?: string; confidence?: Confidence }
-  | { op: 'overlay'; kind: OverlayKind; start: Seconds; end: Seconds; text: string; subtext?: string; x?: number; y?: number; reason?: string; confidence?: Confidence }
+  | { op: 'overlay'; kind: GraphicKind; start: Seconds; end: Seconds; text: string; subtext?: string; x?: number; y?: number; reason?: string; confidence?: Confidence }
   | { op: 'broll'; assetId: string; start: Seconds; end: Seconds; assetIn?: Seconds; reason?: string; confidence?: Confidence }
   | { op: 'suggest'; kind: Suggestion['kind']; start: Seconds; end: Seconds; title: string; reason: string; confidence?: Confidence; apply?: EditOp[] };
 
@@ -405,6 +570,8 @@ export interface Analysis {
   activityHz: number;
   /** Click times (session) and positions from cursor telemetry. */
   clicks: { t: Seconds; x: number; y: number }[];
+  /** Silences and clicks of clips that were removed from the timeline. */
+  parked?: { silences: Range[]; clicks: { t: Seconds; x: number; y: number }[] };
   /** Loudness envelope (0…1) of the master voice for the waveform lane. */
   waveform: number[];
   waveformHz: number;
@@ -614,11 +781,13 @@ export interface Project {
   artConsent?: { provider: string; grantedAt: string } | null;
   /** Completed stage checkpoints so a retry resumes instead of restarting. */
   stages: Partial<Record<JobStage, { doneAt: string; inputKey: string }>>;
-  ui: { playhead: Seconds; view: 'sources' | 'brief' | 'edit' | 'package' | 'export'; expandedTimeline: boolean };
+  ui: { playhead: Seconds; view: 'sources' | 'brief' | 'edit' | 'package' | 'shorts' | 'export'; expandedTimeline: boolean };
   /** Moments the creator flagged while recording (session time). */
   flags?: Flag[];
   /** The "Ask AI" thread of this project. */
   chat?: ChatMessage[];
+  /** Vertical shorts cut from this video. Each is a range of the session timeline plus framing and captions; the edit is not copied. */
+  shorts?: Short[];
 }
 
 /** A marker dropped during recording: "look here". */
@@ -626,4 +795,53 @@ export interface Flag {
   id: string;
   t: Seconds;
   takeId?: string;
+  /** The flag sits in a clip that was removed from the timeline. */
+  parked?: boolean;
+}
+
+// ───────────────────────────── shorts ─────────────────────────────
+
+export type ShortShape = 'vertical' | 'square';
+/**
+ * How the picture fills a short's frame:
+ * face = the camera fills the frame and follows the speaker;
+ * stack = the whole screen on top, the camera below;
+ * screen = the screen fills the frame and the visible part follows the pointer;
+ * original = the views of the long video, fitted into the new shape.
+ */
+export type ShortFraming = 'face' | 'stack' | 'screen' | 'original';
+export type ShortCaptionPreset = 'pop' | 'clean' | 'boxed' | 'editorial';
+
+export interface ShortCaptions {
+  /** 'off' = no burned-in captions. */
+  preset: ShortCaptionPreset | 'off';
+  /** Where the lines sit. All three keep clear of the short-video apps' own buttons and text. */
+  position: 'high' | 'middle' | 'low';
+  /** 0.7…1.4 of the preset's size. */
+  size: number;
+}
+
+export interface Short extends Range {
+  id: string;
+  title: string;
+  shape: ShortShape;
+  framing: ShortFraming;
+  captions: ShortCaptions;
+  /** The line the short opens on, as spoken. */
+  hook?: string;
+  /** Why this stretch was proposed. */
+  reason?: string;
+  /** Who picked the range. */
+  origin: 'ai' | 'rules' | 'creator';
+  provider?: 'claude' | 'codex';
+  createdAt: string;
+  /** The last file exported from this short. */
+  exported?: { path: string; at: string; bytes: number; revision: number };
+}
+
+/** Carried by the project a short is rendered from; read by frame evaluation. */
+export interface ShortReframe {
+  framing: ShortFraming;
+  /** A screen shown on its own fills the whole frame, and the window onto it follows the pointer. */
+  fillScreen: boolean;
 }
