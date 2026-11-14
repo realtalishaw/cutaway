@@ -25,7 +25,7 @@ export function CaptionsTab() {
   return (
     <>
       <Section group="Transcript" title="Captions" icon="captions">
-        <Toggle label="Hide transcript" hint="Off burns captions into the video. A captions.srt file is exported either way." checked={!ap.captions.burnIn} onChange={(v) => captions({ burnIn: !v }, 'Captions', 'cap')} />
+        <Toggle label="Hide transcript" hint="Off burns captions into the video. For a captions file, use Export transcript below, or export a YouTube package (it includes captions.srt)." checked={!ap.captions.burnIn} onChange={(v) => captions({ burnIn: !v }, 'Captions', 'cap')} />
       </Section>
       <Section title="Transcript size" icon="captions" action={<Reset show={ap.captions.size !== 1} onClick={() => captions({ size: 1 }, 'Caption size', 'capsize')} />}>
         <Slider min={0.6} max={1.8} value={ap.captions.size} onChange={(v) => captions({ size: v }, 'Caption size', 'capsize')} />

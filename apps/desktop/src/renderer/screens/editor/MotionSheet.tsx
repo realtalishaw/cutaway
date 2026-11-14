@@ -14,7 +14,7 @@ import { MOTION_TEMPLATES, ownTemplates, type MotionTemplate } from '../../motio
 import './motion.css';
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (\w*Error: )?/, '') : String(e));
-const EXAMPLES = ['A subscribe button that gets clicked, turns into Subscribed, and confetti bursts', 'A big number counting up from 0 to 10,000 with “views” under it', 'A Vox-style yellow highlighter sweeping under the words “It works”', 'A name tag that slides in from the left: “Talisha White — Creator”'];
+const EXAMPLES = ['A subscribe button that gets clicked, turns into Subscribed, and confetti bursts', 'A big number counting up from 0 to 10,000 with “views” under it', 'A Vox-style yellow highlighter sweeping under the words “It works”', 'A name tag that slides in from the left: “Alex Rivera — Creator”'];
 
 /** A live, looping preview of an animation page, in a sandboxed frame that can only draw. */
 export function MotionPreview({ html, fields, width, height, className = '' }: { html: string; fields: Record<string, string>; width: number; height: number; className?: string }) {

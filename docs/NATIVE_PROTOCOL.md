@@ -30,7 +30,7 @@ settings and never waits on a permission prompt for more than 60 s.
   "windows":  [{ "id": 4242, "title": "Docs", "app": "Safari", "bundleId": "com.apple.Safari", "x": 0, "y": 0, "width": 1200, "height": 800, "displayId": 1 }],
   "cameras":  [{ "id": "<AVCaptureDevice.uniqueID>", "name": "FaceTime HD Camera", "formats": [{ "width": 1920, "height": 1080, "maxFps": 30 }] }],
   "microphones": [{ "id": "<uniqueID>", "name": "MacBook Pro Microphone", "default": true }],
-  "externalDevices": [{ "id": "<uniqueID>", "name": "Talisha's iPhone", "width": 1170, "height": 2532, "kind": "iphone|ipad|null" }],
+  "externalDevices": [{ "id": "<uniqueID>", "name": "Alex's iPhone", "width": 1170, "height": 2532, "kind": "iphone|ipad|null" }],
   "apps": [{ "bundleId": "com.google.Chrome", "name": "Google Chrome", "pid": 812 }]
 }
 ```

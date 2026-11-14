@@ -4,6 +4,12 @@ description: "Quick fixes for common problems."
 ---
 
 <AccordionGroup>
+  <Accordion title="macOS says it can't verify Cutaway">
+    This is normal the first time you open Cutaway. Click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway** next to Cutaway. You only do this once.
+
+    See [Install Cutaway](/install#open-cutaway-for-the-first-time) for the full steps.
+  </Accordion>
+
   <Accordion title="The recorder says it can't record my screen">
     Your Mac needs to give Cutaway permission.
 
@@ -50,8 +56,16 @@ description: "Quick fixes for common problems."
 
   <Accordion title="The AI helpers aren't working">
     - Check you have **Claude Code** or **Codex** installed and signed in. See [Set up the AI helpers](/ai/set-up-ai).
-    - In **Settings → Processing**, press **Sign in…** if Cutaway says you're signed out.
+    - In **Settings → Processing**, press **Sign in to Claude Code…** or **Sign in to Codex…** if Cutaway says you're signed out.
     - No AI? No problem. Cutaway still works with its built-in rules.
+  </Accordion>
+
+  <Accordion title="Cutaway quit while I was recording">
+    Your footage is saved as you record, so most of it is safe.
+
+    1. Open Cutaway. On the **Projects** screen, look for **Interrupted work**.
+    2. Press **Recover** to add the footage to its project. Everything up to the last save point comes back.
+    3. Don't need it? Press **Discard** instead.
   </Accordion>
 
   <Accordion title="I can't find my exported video">

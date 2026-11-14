@@ -1,0 +1,86 @@
+---
+title: "Make voice, music and pictures with AI"
+description: "Generate a voiceover, music, sound effects, pictures and short videos, and put them straight into your video."
+---
+
+Cutaway can make new media for your video from a short description:
+
+| What | Made with | Where to find it |
+| --- | --- | --- |
+| **Voiceover** (a voice reading your words) | ElevenLabs, fal.ai, or your Mac's own voices (free) | **+** on the audio row → **AI voiceover…** |
+| **Music** | ElevenLabs or fal.ai | **+** on the audio row → **Generate music…** |
+| **Sound effect** | ElevenLabs or fal.ai | **+** on the audio row → **Generate a sound effect…** |
+| **Picture** | fal.ai | **+** on the video row or the text & effects row → **Generate an image…** |
+| **Short video** | fal.ai | **+** on the video row or the text & effects row → **Generate a video…** |
+
+<Frame>
+  <img src="/images/screens/ai-voiceover.png" alt="The AI voiceover window with ElevenLabs, fal.ai and This Mac (free) to choose from, the words to say, a voice, and a preview player" />
+</Frame>
+
+## Before you start: add your key
+
+ElevenLabs and fal.ai are AI services you sign up for yourself. Cutaway uses **your own account**, so you pay them directly for what you make. (Your Mac's own voices are free and need no account.)
+
+<Steps>
+  <Step title="Get a key">
+    - **ElevenLabs:** in ElevenLabs, open **Developers → API keys** and create a key. Give it access to Text to Speech, Sound Effects, Music and Voices (read).
+    - **fal.ai:** in fal.ai, open the dashboard → **Keys** and create a key.
+  </Step>
+  <Step title="Add it to Cutaway">
+    Open **Settings → AI generation**, paste the key, and press **Save**. Press **Test** to check it works. This doesn't use any credits.
+  </Step>
+</Steps>
+
+<Frame>
+  <img src="/images/screens/settings-ai-generation.png" alt="Settings, AI generation tab, with ElevenLabs and fal.ai keys saved and connected" />
+</Frame>
+
+<Note>
+  Your key is kept in your Mac's keychain. It is never put in a project or an export. Only what you type for a generation is sent, to the service you chose.
+</Note>
+
+## Make a voiceover
+
+<Steps>
+  <Step title="Put the playhead where the voice should start">
+    The voiceover is added there.
+  </Step>
+  <Step title="Press + on the audio row and choose AI voiceover…">
+  </Step>
+  <Step title="Choose who makes it">
+    **ElevenLabs**, **fal.ai**, or **This Mac (free)**.
+  </Step>
+  <Step title="Type what it should say and pick a voice">
+    Press **Generate**, then listen to it in the window.
+  </Step>
+  <Step title="Keep it">
+    Not quite right? Change the words or the voice and press **Make another**. Happy? Press **Add to timeline**.
+  </Step>
+</Steps>
+
+Want to use your own voice instead? See [Record a voiceover](/edit/music-and-sound#record-a-voiceover).
+
+## Make music or a sound effect
+
+1. Put the playhead where it should start.
+2. Press **+** on the audio row and choose **Generate music…** or **Generate a sound effect…**.
+3. Describe it, for example "calm lo-fi beat" or "a soft whoosh".
+4. Set the **Length**. For music from ElevenLabs, leave **Instrumental** on so there's no singing over your voice.
+5. Press **Generate**, listen, and press **Add to timeline**.
+
+Generated music is added like any other music: quieter, and lowered while you talk. See [Voice, music and sound](/edit/music-and-sound#change-the-music) to change it.
+
+## Make a picture or a short video
+
+1. Press **+** on the **video row** to add it as its own clip, or on the **text & effects row** to put it over your footage (like B-roll).
+2. Choose **Generate an image…** or **Generate a video…**.
+3. Describe it, and choose a **Shape**: **Wide**, **Tall** or **Square**. Videos can be **5 s** or **8 s** long.
+4. Press **Generate**, look at it, and press **Add to timeline**.
+
+<Tip>
+  Nothing is added until you press **Add to timeline**, so you can try a few versions first. Each try uses credits from your account.
+</Tip>
+
+## Choose the fal.ai models
+
+**Settings → AI generation → fal.ai models** lets you pick which fal.ai model makes each kind of media. The defaults are inexpensive. You can paste any model id from fal.ai's model list that takes a text prompt, or leave a field empty to go back to the default.

@@ -1,6 +1,6 @@
 ---
 title: "Voice, music and sound"
-description: "Make your voice clear, add background music, and add sound effects."
+description: "Make your voice clear, add and shape background music, add sound effects, and add a voiceover."
 ---
 
 Click the **Audio** icon (the speaker) in the right sidebar, or press **Command + 6**.
@@ -29,16 +29,17 @@ Use the sliders under **Levels** to make each track louder or quieter.
   <Step title="Press the + on the audio row">
     It's at the end of the bottom row of the timeline.
   </Step>
-  <Step title="Choose Music or sound from my files…">
-    Pick a music file from your Mac.
+  <Step title="Choose where the music comes from">
+    - **Music or sound from my files…** to pick a music file on your Mac.
+    - **Generate music…** to have AI make some. See [Make voice, music and pictures with AI](/edit/ai-generation).
   </Step>
   <Step title="Done">
-    The music appears as a green block on the timeline. Cutaway automatically makes it quieter while you're talking, so your voice is always easy to hear.
+    The music appears as a green block on the audio row, with its waveform. Cutaway makes it quieter while you're talking, so your voice is always easy to hear.
   </Step>
 </Steps>
 
 <Frame>
-  <img src="/images/screens/add-menu-audio.png" alt="The add audio menu with Music or sound from my files, Record voiceover, and Built-in sound at the playhead" />
+  <img src="/images/screens/add-menu-audio.png" alt="The add audio menu" />
 </Frame>
 
 <Warning>
@@ -50,14 +51,55 @@ Use the sliders under **Levels** to make each track louder or quieter.
 Click the music block on the timeline to select it. Then you can:
 
 - **Drag it** to start the music at a different moment.
-- **Drag its ends** to make it shorter.
-- Press **Loop** to start the song again when it runs out.
-- Change how it **fades** in and out.
+- **Drag its ends** to make it shorter or longer.
+- **Split** it at the playhead (press **S** or **Command + B**) to cut it into two pieces you can move or delete separately.
+- Turn on **Loop** to start the song again when it runs out, so a short piece plays under the whole video.
+- Set **Fade in** and **Fade out**.
+- Set its **Level**, and turn **Lower under speech** on or off.
+
+Music is placed on the *finished* video, so cutting parts of your recording never chops the music.
+
+### Make the music louder or quieter at certain moments
+
+Under **Volume over time**, move the playhead to a moment and press the button to **add a point** there. Then, on the music block:
+
+- **Drag a point** up or down to change the volume. Drag it all the way down to silence the music there.
+- Hold **Shift** while dragging to keep the point at the same moment.
+- **Double-click a point** to remove it.
 
 ## Add a sound effect
 
-Move the playhead to the moment, press the **+** on the audio row, and choose **Built-in sound at the playhead**. Cutaway has a few built-in sounds, like a click, pop and whoosh.
+Move the playhead to the moment, press the **+** on the audio row, and choose:
+
+- **Built-in sound at the playhead**: a click, pop, whoosh and more. These are free and made on your Mac.
+- **Generate a sound effect…**: describe any sound and AI makes it. See [Make voice, music and pictures with AI](/edit/ai-generation#make-music-or-a-sound-effect).
+- **Music or sound from my files…**: use a sound file you already have.
+
+<Tip>
+  In the **Audio** panel, under **Sound effects**, you can add a sound **On every cut**, **On every view change**, or **As every text appears**, all in one step.
+</Tip>
 
 ## Record a voiceover
 
-A **voiceover** is your voice recorded on its own, played over your video. Press the **+** on the audio row and choose **Record voiceover…**.
+A **voiceover** is your voice recorded on its own and played over your video.
+
+<Steps>
+  <Step title="Put the playhead where you want to start talking">
+  </Step>
+  <Step title="Press + on the audio row and choose Record voiceover…">
+  </Step>
+  <Step title="Pick your microphone and press the record button">
+    The window shows how loud you are and how long you've been talking.
+  </Step>
+  <Step title="Press stop, then add it">
+    Listen to the take. Keep it to put it on the audio row where the playhead was, or try again.
+  </Step>
+</Steps>
+
+<Frame>
+  <img src="/images/screens/record-voiceover.png" alt="The Record voiceover window while recording, with a level meter and a stop button" />
+</Frame>
+
+## Have AI read it for you
+
+Don't want to record your own voice? **AI voiceover…** (also on the audio row's **+**) reads out what you type, with a voice from **ElevenLabs**, **fal.ai**, or your Mac's own voices (free). See [Make a voiceover](/edit/ai-generation#make-a-voiceover).

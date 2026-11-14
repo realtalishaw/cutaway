@@ -42,11 +42,39 @@ Here you can change:
 
 - **Camera shape, size and roundness**: **Rounded**, **Circle** or **Square**, big or small.
 - **Camera position**: which corner the bubble sits in.
-- **Camera look**: quick color styles like **Natural**, **Studio**, **Golden**, **Cool** or **Mono**. Or adjust **brightness**, **contrast**, **saturation** and **warmth** yourself.
+- **Camera shadow**: a soft shadow under the camera bubble.
+- **Camera look**: quick color styles like **Natural**, **Studio**, **Golden**, **Cool** or **Mono**. Or adjust **Brightness**, **Contrast**, **Saturation** and **Warmth** yourself.
+- **Camera LUT**: a color recipe file from another app. Press **Choose a .cube file…** to pick one, then drag **Strength** to make it stronger or softer. The file is copied into your project.
+- **Camera sharpening**: drag **Amount** to make your camera a little crisper.
 - **Zoom on face** and **Follow face**: keeps your face centered and filling the frame.
-- **Remove background**: hides what's behind you and puts a blur or a plain color there instead. This happens on your Mac.
 - **Mirror camera**: flips your camera left to right.
+
+## Remove the background behind you
+
+Under **Remove background**, turn on **Cut out the person**. Cutaway hides what's behind you. This happens on your Mac. Nothing is uploaded.
+
+Then pick what goes behind you:
+
+- **None**: you stand right on top of your screen recording, with no camera bubble.
+- **Blur**: your own background, blurred.
+- **Color**: a plain color. Click the color box to pick one.
 
 ## Jump cuts
 
-When you cut a mistake out of a talking-head video, your face can "jump" a little. Cutaway can hide this by zooming your camera in slightly after each cut, so it looks like a deliberate camera change. Find it under **Jump cuts** in the Camera panel.
+When you cut a mistake out of a talking-head video, your face can "jump" a little. Cutaway can hide this by zooming your camera in slightly after each cut, so it looks like a deliberate camera change.
+
+<Steps>
+  <Step title="Turn it on">
+    In the Camera panel, under **Jump cuts**, turn on **Punch in on jump cuts**.
+  </Step>
+  <Step title="Pick how far it zooms">
+    Drag **Punch-in** (from 105% to 130%). The panel lists every cut where the framing changes.
+  </Step>
+  <Step title="Leave out a cut (optional)">
+    Click a cut in the list (or select it on the timeline). Then turn off **Punch in at this cut** for that one cut.
+  </Step>
+</Steps>
+
+<Note>
+  Punch-in only works where a cut sits inside one full-screen camera shot, with no zoom and no layout change at that moment.
+</Note>

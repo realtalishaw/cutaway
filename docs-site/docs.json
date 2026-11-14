@@ -35,7 +35,9 @@
             "pages": [
               "record/start-a-recording",
               "record/layouts-and-cameras",
-              "record/import-footage"
+              "record/import-footage",
+              "record/teleprompter",
+              "record/record-cutaway"
             ]
           },
           {
@@ -50,8 +52,11 @@
               "edit/background-and-shape",
               "edit/captions",
               "edit/text-and-titles",
+              "edit/animations",
+              "edit/b-roll",
               "edit/callouts",
               "edit/music-and-sound",
+              "edit/ai-generation",
               "edit/hide-private-info",
               "edit/cursor-and-animation",
               "edit/undo-and-versions"

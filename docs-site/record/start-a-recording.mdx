@@ -22,9 +22,27 @@ Use the buttons on the left of the bottom bar:
 | **Display** | Your whole screen | Most videos. Start here. |
 | **Window** | One app window | Showing one app without the rest of your screen |
 | **Area** | A box you draw on the screen | Keeping the video focused on one part |
-| **Tab** | One browser tab, without the browser's toolbar | Showing a website |
+| **Tab** | One browser tab, without the browser's tab strip and toolbar | Showing a website |
 | **Device** | A connected iPhone or iPad screen | Showing a phone app |
 | **Camera** | Only your camera | Talking to the camera, with no screen |
+
+### Window: resize to a standard size
+
+In **Window** mode, a **Resize** menu appears next to the window's size. Pick a size like 1920 × 1080 and Cutaway resizes the real window for you. This needs Accessibility access: turn Cutaway on in **System Settings → Privacy & Security → Accessibility**.
+
+### Tab: keep the tab in front
+
+**Tab** mode records the browser window and leaves out the tab strip and toolbar. So keep that tab in front while you record. If you switch to another tab, that's what gets recorded.
+
+If a strip of toolbar still shows, change **Trim top** until it's gone.
+
+### Device: record your iPhone or iPad
+
+Connect your iPhone or iPad with a cable, unlock it, and tap **Trust** on the device. It shows up a few seconds later. Until then you see **No iPhone or iPad connected**.
+
+<Note>
+  Touches on your phone aren't recorded like a mouse cursor. So Cutaway can't add automatic zooms to device recordings.
+</Note>
 
 <Tip>
   Not sure? Choose **Display**. You can crop the video later if you recorded too much. See [Background, crop and shape](/edit/background-and-shape).
@@ -37,11 +55,15 @@ On the right of the bottom bar:
 - **No camera**: click it and pick your camera if you want your face in the video.
 - **B**: a second camera, if you have one. You can skip this.
 - **No microphone**: click it and pick your microphone so your voice is recorded.
-- **No system audio**: turn this on if you want to record sounds your Mac plays, like a video or app sounds.
+- **No system audio**: click it if you want to record sounds your Mac plays, like a video or app sounds. Choose **Record system audio from all apps**, or **Record from selected apps** and tick the apps you want.
 
 Want to pick how your face and screen are arranged? See [Layouts and cameras](/record/layouts-and-cameras).
 
 ## Record
+
+<Tip>
+  Want to read from a script? Press **Teleprompter** under **Start recording**. Your script scrolls in a floating window that's never recorded. See [Teleprompter](/record/teleprompter).
+</Tip>
 
 <Steps>
   <Step title="Press Start recording">
@@ -51,16 +73,16 @@ Want to pick how your face and screen are arranged? See [Layouts and cameras](/r
     Show what you want to show and talk as you go. Pauses and mistakes are fine. Cutaway can remove them later.
   </Step>
   <Step title="Press Stop">
-    A small control bar floats on your screen while you record. Press the **stop** button on it. Your new project opens.
+    A small control bar floats on your screen while you record. Press the **stop** button on it. A **Recording saved** box appears.
   </Step>
 </Steps>
 
 The control bar is never part of your video. It also has:
 
-- **Pause**: take a break, then press it again to keep going.
-- **Flag**: mark a moment so you can find it later (shortcut: **Control + Option + F**).
-- **Teleprompter**: show your script in a floating window while you talk. Only you see it.
-- **Camera bubble**: a small mirror of your camera, so you can check how you look. It's never recorded.
+- **Pause**: take a break, then press it again to resume.
+- **Flag**: mark a moment so you can find it later (shortcut from any app: **Control + Option + F**). Flags show up on the timeline. In the editor, press **[** and **]** to jump to the previous or next flag.
+- **Teleprompter**: show or hide your script in a floating window while you talk. Only you see it.
+- **Camera bubble**: show or hide a small mirror of your camera, so you can check how you look. It's never recorded, and your camera keeps recording either way.
 
 <Tip>
   Start or stop recording from any app: hold **Control + Option + Command** and press **R**.
@@ -68,12 +90,30 @@ The control bar is never part of your video. It also has:
 
 ## Recording options
 
-Click the **gear** at the far right of the bottom bar for more options, like:
+Click the **gear** at the far right of the bottom bar for more options:
 
+- **Hide desktop icons**: leaves your desktop icons out of the recording. Your desktop isn't changed.
+- **Hide notifications**: leaves notification banners out of the recording.
+- **Record keyboard shortcuts**: records the shortcuts you press, so they can show in your video. The letters you type are never saved. Needs Input Monitoring access.
+- **Record Cutaway too (for demos)**: keeps Cutaway open and in the recording, so you can show how it works. See [Record a demo of Cutaway](/record/record-cutaway).
+- **Teleprompter**: turn your floating script on or off. See [Teleprompter](/record/teleprompter).
+- **Show my camera while recording**: show the camera bubble while you record. Only you see it.
+- **Frame rate**: **30 fps** or **60 fps**. 60 looks smoother.
+- **Cursor**: **Clean** records the mouse pointer separately, so you can smooth or resize it later. **Baked in** makes it part of the picture, and you can't change it afterwards.
 - **Countdown**: how long to wait before recording starts.
-- **Hide desktop icons** and **Hide notifications**: keep your screen tidy while you record.
-- **Teleprompter**: write or paste your script.
 
 ## What happens next
 
-When you stop, Cutaway shows your recording and asks how you want your [first cut](/edit/first-cut) to feel.
+When you stop, a **Recording saved** box appears. Your take is already in your project, and nothing has been uploaded. Pick what to do:
+
+| Button | What it does |
+| --- | --- |
+| **Open in editor** | Opens the raw recording in the editor. Press **Create first cut** there when you're ready. |
+| **Copy to clipboard** | Puts the video on your clipboard, so you can paste it into Slack, Mail, Messages or Finder. Handy for a quick share. |
+| **Save video as…** | Saves the video as a file wherever you choose. |
+| **First cut** | Opens the **First cut** screen, where Cutaway tidies up your [first cut](/edit/first-cut). |
+| **Delete take** | Moves this recording to the Trash and takes it out of the project. Cutaway asks you to confirm first. |
+
+<Note>
+  Recording into a project that already has video? Your new take is added to the end of the timeline. Press **Use as B-roll instead** to keep it in **Sources** without putting it on the timeline.
+</Note>
