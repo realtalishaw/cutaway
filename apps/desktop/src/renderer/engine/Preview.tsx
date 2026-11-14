@@ -85,6 +85,35 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
     let seenSeek = -1;
     let lastSeg = -1;
     let disposed = false;
+    /**
+     * The last picture of each video, copied just before it is sent to a new time. While the seek runs the
+     * element has no frame to give, so this is drawn instead of a "source unavailable" slate.
+     */
+    const held = new Map<string, HTMLCanvasElement>();
+    const holdFrame = (id: string, el: HTMLVideoElement) => {
+      if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) return;
+      const scale = Math.min(1, 1920 / el.videoWidth);
+      const w = Math.round(el.videoWidth * scale), h = Math.round(el.videoHeight * scale);
+      let c = held.get(id);
+      if (!c) held.set(id, (c = document.createElement('canvas')));
+      if (c.width !== w || c.height !== h) (c.width = w), (c.height = h);
+      c.getContext('2d')?.drawImage(el, 0, 0, w, h);
+    };
+    /** Move a video to a new time, keeping its current picture to show until the new one is ready. */
+    const seekEl = (id: string, el: HTMLVideoElement, t: number) => {
+      holdFrame(id, el);
+      el.currentTime = t;
+    };
+    /** The video's picture now, or the one held from before a seek that is still running. */
+    const pictureOf = (id: string, el: HTMLVideoElement) => {
+      const d = drawableFromElement(el);
+      if (d) {
+        if (!el.seeking) held.delete(id);
+        return d;
+      }
+      const h = held.get(id);
+      return h ? drawableFromElement(h) : null;
+    };
 
     const ensure = (s: MediaSource): El | null => {
       if (!s.available || s.kind === 'image') return null;
@@ -319,11 +348,11 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
         if (pb.playing) {
           const r = Math.max(0.1, Math.min(8, rate));
           if (Math.abs(el.playbackRate - r) > 1e-3) el.playbackRate = r;
-          if (hardSeek || segChanged || Math.abs(drift) > 0.12) el.currentTime = local;
+          if (hardSeek || segChanged || Math.abs(drift) > 0.12) seekEl(s.id, el, local);
           if (el.paused) void el.play().catch(() => {});
         } else {
           if (!el.paused) el.pause();
-          if (Math.abs(drift) > 0.012 && !el.seeking) el.currentTime = local;
+          if (Math.abs(drift) > 0.012 && !el.seeking) seekEl(s.id, el, local);
         }
         return e;
       };
@@ -414,7 +443,7 @@ export function Preview({ onPointer, cursorStyle, selectedMaskId, selectedOverla
         // during a transition the clip's sound follows the transition's level curve, as in the export
         const e = sync(s, toSourceTime(s.sync, src), covered, audible ? track.gain * clipLevel : 0, speed * s.sync.rate);
         if (!e || !covered) continue;
-        const d = drawableFromElement(e.el);
+        const d = pictureOf(s.id, e.el);
         if (s.role === 'screen') res.screen = d;
         else if (s.role === 'cameraA') res.cameraA = d;
         else if (s.role === 'cameraB') res.cameraB = d;
