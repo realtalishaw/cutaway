@@ -171,6 +171,44 @@ export function buildArtPrompt(input: ArtPromptInput): string {
     .join('\n');
 }
 
+/** Looks for an image model. Each names a thing or a place, never a person: image models draw faces for "close-up". */
+const IMAGE_MOODS = ['a single hero object under bold studio lighting', 'a clean isometric miniature scene with strong depth', 'a cinematic close-up of one object with shallow depth of field and rim light', 'a graphic poster look with large simple shapes and a strong diagonal'];
+
+/** Where the subject goes so the thumbnail's words have room, in words an image model follows. */
+const IMAGE_SPACE: Record<'headline' | 'banner' | 'badge', string> = {
+  headline: 'the main subject on the right third of the frame, the left half dark and empty',
+  banner: 'the main subject in the upper part of the frame, the bottom third calm and empty',
+  badge: 'the subject pushed to the edges, the centre calm and slightly dark',
+};
+
+/**
+ * The same picture, described for an image model (fal.ai) rather than an agent: one short visual description,
+ * subject first, with no tool instructions, rules list or answer format (an image model draws whatever it is given).
+ * Pure.
+ */
+export function buildImageModelArtPrompt(input: ArtPromptInput): string {
+  const title = oneLine(input.title, 140);
+  const words = input.overlayText.map((t) => oneLine(t, 60)).filter(Boolean).join(' / ');
+  // A template concept's rationale says how it was made, not what the video is about.
+  const about = /^built from|no ai model/i.test(input.rationale.trim()) ? '' : oneLine(input.rationale, 220);
+  const said = input.quotes.map((q) => oneLine(q, 120)).filter(Boolean).slice(0, 2);
+  const palette = input.palette.filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 2);
+  const direction = oneLine(input.direction, 300);
+  const subject = direction || [`A striking visual metaphor, made only of objects and scenery, for a video titled "${title}"`, words && words.toLowerCase() !== title.toLowerCase() ? `about "${words}"` : null].filter(Boolean).join(' ');
+  return [
+    `${subject}.`,
+    about ? `The video: ${about}.` : null,
+    said.length ? `Inspired by: ${said.map((q) => `"${q}"`).join(', ')}.` : null,
+    `Shown as ${IMAGE_MOODS[Math.abs(input.variation) % IMAGE_MOODS.length]}, ${IMAGE_SPACE[input.template ?? 'headline']}.`,
+    'An empty scene with no people in it.',
+    `Bold, vivid YouTube thumbnail background, high contrast, ${palette.length ? `accent colours ${palette.join(' and ')}` : 'one saturated accent colour'} against a darker background, clean modern 3D render, sharp focus.`,
+    input.notes ? `Style notes: ${oneLine(input.notes, 200)}.` : null,
+    'No text, no letters, no logos.',
+  ]
+    .filter((l): l is string => !!l)
+    .join(' ');
+}
+
 export const ART_REPLY_SCHEMA = {
   type: 'object',
   properties: { generated: { type: 'boolean' }, note: { type: 'string' } },

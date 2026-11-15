@@ -12,7 +12,7 @@
  * (`generated`), shown as such in the editor and written to the package
  * manifest.
  */
-import { PROVIDERS, buildArtPrompt } from '@cutaway/ai';
+import { PROVIDERS, buildArtPrompt, buildImageModelArtPrompt } from '@cutaway/ai';
 import { uid, type GeneratedArt, type PackagingConcept, type Project, type ThumbnailLayer } from '@cutaway/core';
 import { resolveSourcePath } from '../../shared/api';
 
@@ -129,6 +129,9 @@ export type ArtOutcome = { ok: true; art: GeneratedArt; durationMs: number } | {
 
 let seq = 0;
 
+/** fal.ai model for thumbnail pictures when the creator kept the default (fast, lower quality) image model. */
+export const THUMBNAIL_FAL_MODEL = 'fal-ai/flux/dev';
+
 /** Make one picture. Never called without `artAllowed(project)`; it checks again so no path skips the sheet. */
 export async function generateArt(req: ArtRequest): Promise<ArtOutcome> {
   const source = req.source ?? ART_SOURCES.codex;
@@ -146,14 +149,19 @@ export async function generateArt(req: ArtRequest): Promise<ArtOutcome> {
     }
   }
   if (req.signal.aborted) return { ok: false, code: 'cancelled', message: 'Cancelled. Nothing was changed.' };
-  const prompt = buildArtPrompt(artPromptInput(req.concept, req.direction, refs.length, (req.concept.art?.length ?? 0) + seq, req.notes ?? null));
+  const input = artPromptInput(req.concept, req.direction, refs.length, (req.concept.art?.length ?? 0) + seq, req.notes ?? null);
+  // Codex is an agent and gets instructions; an image model gets a picture description.
+  const prompt = source.id === 'fal' ? buildImageModelArtPrompt(input) : buildArtPrompt(input);
   const id = `art_${Date.now().toString(36)}_${(seq++).toString(36)}`;
   const started = Date.now();
   const onAbort = () => void (source.id === 'fal' ? window.cutaway.gen.cancel(id) : window.cutaway.ai.cancel(id)).catch(() => undefined);
   req.signal.addEventListener('abort', onAbort, { once: true });
   try {
     if (source.id === 'fal') {
-      const r = await window.cutaway.gen.generate(req.projectPath, { jobId: id, provider: 'fal', kind: 'image', prompt, aspect: '16:9' });
+      // The default image model is built for speed; thumbnails get a better one, unless the creator chose their own.
+      const keys = await window.cutaway.gen.status().catch(() => null);
+      const model = !keys || keys.models.image === keys.defaults.image ? THUMBNAIL_FAL_MODEL : undefined;
+      const r = await window.cutaway.gen.generate(req.projectPath, { jobId: id, provider: 'fal', kind: 'image', prompt, aspect: '16:9', ...(model ? { model } : {}) });
       return { ok: true, art: { id: uid('art'), path: r.path, provider: source.consent, note: `fal.ai · ${r.model}`, direction: req.direction.trim(), at: new Date().toISOString() }, durationMs: Date.now() - started };
     }
     const res = await window.cutaway.ai.generateImage({ id, projectPath: req.projectPath, prompt, referencePaths: refs });
