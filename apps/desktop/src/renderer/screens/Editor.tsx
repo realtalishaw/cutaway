@@ -73,7 +73,7 @@ function AspectMenu() {
       {open ? (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 290 }} onMouseDown={() => setOpen(false)} />
-          <div className="menu" style={{ position: 'absolute', left: 0, bottom: 40, minWidth: 220 }} role="menu">
+          <div className="menu" style={{ position: 'absolute', left: 0, top: 'calc(100% + 6px)', minWidth: 220 }} role="menu">
             {ASPECTS.map((a) => (
               <button
                 key={a.id}

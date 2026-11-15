@@ -84,6 +84,11 @@ try {
   await shot('01-package-empty');
 
   await page.getByRole('button', { name: 'Create three concepts' }).click();
+  // Nothing on this test Mac can make pictures, so Cutaway asks first.
+  await page.locator('[data-testid="art-gate"]').waitFor({ timeout: 15000 });
+  check('without Codex or fal.ai, Cutaway asks about an image generator first', await page.getByRole('button', { name: 'Add a fal.ai key' }).isVisible());
+  await shot('01b-art-gate');
+  await page.locator('[data-testid="art-gate-continue"]').click();
   await page.waitForSelector('.concept', { timeout: 90000 });
   await page.waitForTimeout(2500); // stills decode
   const conceptCount = await page.locator('.concept').count();

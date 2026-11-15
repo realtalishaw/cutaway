@@ -59,13 +59,25 @@ function PathRow({ label, path, onChange, hint }: { label: string; path: string;
   );
 }
 
+/** The tab Settings opens on next time: set by `openSettingsAt`, used once. */
+let nextTab: Tab | null = null;
+/** Open Settings on one tab, for example AI generation from the thumbnail screen. */
+export function openSettingsAt(tab: Tab) {
+  nextTab = tab;
+  useApp.getState().go('settings');
+}
+
 export function Settings() {
   const settings = useApp((s) => s.settings);
   const project = useApp((s) => s.project);
   const projectPath = useApp((s) => s.projectPath);
   const info = useApp((s) => s.info);
   const jobRunning = useApp((s) => s.job?.status === 'running');
-  const [tab, setTab] = useState<Tab>('storage');
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = nextTab ?? 'storage';
+    nextTab = null;
+    return t;
+  });
   const [cache, setCache] = useState<CacheInfo | null>(null);
   const [clearing, setClearing] = useState(false);
   const [presetName, setPresetName] = useState('');

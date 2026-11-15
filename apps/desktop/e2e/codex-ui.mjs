@@ -124,6 +124,12 @@ try {
   check('the cards say "From Codex"', (await page.getByText('From Codex').count()) >= 1);
 
   // ── thumbnail pictures ──
+  // With Codex signed in, new concepts offer a picture each, asking permission first. Declining sends nothing.
+  await page.waitForSelector('[data-testid="consent-allow"]', { timeout: 15000 });
+  check('new concepts offer pictures through Codex, asking first', /Use Codex for thumbnail pictures\?/.test(await page.locator('.modal, [role="dialog"]').first().innerText()));
+  const beforeOffer = calls();
+  await page.locator('[data-testid="consent-decline"]').click();
+  check('declining the offer sends nothing', calls() === beforeOffer);
   await page.waitForSelector('[data-testid="art-generate"]', { timeout: 15000 });
   set('image.txt', '1');
   set('reply.json', JSON.stringify({ generated: true, note: 'A green studio backdrop with soft light.' }));
@@ -224,6 +230,16 @@ try {
     return { art: c?.art?.length ?? 0, layer: c?.layers.find((l) => l.generated)?.path ?? null, artConsent: p.artConsent?.provider ?? null };
   }, projectPath);
   check('after reopening, the picture, its label and the permission are all still there', reopened.art === 1 && /^media\/generated\//.test(reopened.layer ?? '') && reopened.artConsent === 'OpenAI via local Codex', JSON.stringify(reopened));
+  // ── once allowed, new concepts get a picture each, made one after another ──
+  set('image.txt', '1');
+  set('reply.json', JSON.stringify({ concepts: ['Render it right the first time', 'Export settings that matter', 'One panel, zero mistakes'].map((title, i) => ({ title, thumbnailText: ['RENDER RIGHT', 'SETTINGS', 'ZERO MISTAKES'][i], template: 'headline', frameIndex: 0, paletteIndex: i, rationale: 'The video walks through the export panel.', evidence: [] })), description: 'A walkthrough of the export panel.', chapters: [] }));
+  await page.evaluate(() => window.__cutaway.useApp.getState().setView('package'));
+  await page.getByRole('button', { name: 'New concepts' }).click();
+  await page.waitForFunction(() => window.__cutaway.useApp.getState().project.packaging.concepts.length >= 4, null, { timeout: 3 * 60000 });
+  set('reply.json', JSON.stringify({ generated: true, note: 'A bright render farm backdrop.' }));
+  await page.waitForFunction(() => window.__cutaway.useApp.getState().project.packaging.concepts.filter((c) => c.layers.some((l) => l.kind === 'image' && l.generated)).length >= 2, null, { timeout: 3 * 60000 });
+  const withArt = await page.evaluate(() => window.__cutaway.useApp.getState().project.packaging.concepts.filter((c) => c.layers.some((l) => l.kind === 'image' && l.generated)).length);
+  check('new concepts got pictures without asking again', withArt >= 2, `${withArt} concepts with a picture`);
   check('nothing was written outside the test folders', fs.readdirSync(codexHome).join() === 'generated_images' && libraryDir.startsWith(os.tmpdir().replace(/\/$/, '')) || libraryDir.includes('cutaway-e2e-'));
 } finally {
   await app.close().catch(() => {});

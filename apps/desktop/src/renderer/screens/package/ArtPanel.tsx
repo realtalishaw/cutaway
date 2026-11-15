@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClaudeStatus } from '@shared/api';
 import type { GeneratedArt, PackagingConcept } from '@cutaway/core';
-import { ART_PROVIDER, artAllowed, artInUse, generateArt, withArt, withoutArt } from '../../jobs/imagegen';
+import { artAllowed, artInUse, findArtSource, generateArt, withArt, withoutArt } from '../../jobs/imagegen';
+import { openSettingsAt } from '../Settings';
+import { FalArtConsent } from './FalArtConsent';
 import { useApp } from '../../state/store';
 import { ConsentSheet } from '../../ui/Consent';
 import { Icon } from '../../ui/icons';
@@ -18,13 +19,14 @@ function setConcept(conceptId: string, fn: (c: PackagingConcept) => PackagingCon
 
 /**
  * AI-generated background pictures for one concept's thumbnail. Pictures are
- * made by Codex, whatever app does the editing; nothing is sent until the
- * creator has allowed it for this project, and every picture is labelled.
+ * made by Codex when it is signed in, else by fal.ai with the creator's own key;
+ * nothing is sent until the creator has allowed it for this project, and every
+ * picture is labelled.
  */
 export function ArtPanel({ concept }: { concept: PackagingConcept }) {
   const project = useApp((s) => s.project)!;
   const projectPath = useApp((s) => s.projectPath)!;
-  const [codex, setCodex] = useState<ClaudeStatus | null>(null);
+  const [src, setSrc] = useState<Awaited<ReturnType<typeof findArtSource>> | null>(null);
   const [direction, setDirection] = useState('');
   const [run, setRun] = useState<Run>({ status: 'idle' });
   const [sheet, setSheet] = useState(false);
@@ -34,10 +36,7 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
   const used = artInUse(concept);
 
   const check = (force = false) =>
-    void window.cutaway.ai
-      .providers(force)
-      .then((p) => alive.current && setCodex(p.codex))
-      .catch(() => alive.current && setCodex({ found: false, path: null, version: null, signedIn: null, message: 'Codex could not be checked.' }));
+    void findArtSource(force).then((r) => alive.current && setSrc(r));
   useEffect(() => {
     alive.current = true;
     check();
@@ -56,7 +55,8 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
     return () => clearInterval(t);
   }, [run]);
 
-  const ready = !!codex?.found && codex.signedIn === true;
+  const source = src?.source ?? null;
+  const ready = !!source;
 
   const make = async () => {
     const abort = new AbortController();
@@ -65,7 +65,8 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
     const now = useApp.getState();
     const current = now.project!.packaging.concepts.find((c) => c.id === concept.id);
     if (!current) return setRun({ status: 'idle' });
-    const res = await generateArt({ projectPath, project: now.project!, concept: current, direction, signal: abort.signal, notes: now.settings?.playbookNotes?.thumbnails ?? null });
+    if (!source) return setRun({ status: 'idle' });
+    const res = await generateArt({ projectPath, project: now.project!, concept: current, direction, signal: abort.signal, notes: now.settings?.playbookNotes?.thumbnails ?? null, source });
     if (!alive.current) return;
     if (!res.ok) return setRun(res.code === 'cancelled' ? { status: 'note', message: res.message } : { status: 'failed', message: res.message });
     // The new picture goes straight into the thumbnail; earlier ones stay as spare variations. One undo step.
@@ -74,7 +75,8 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
   };
 
   const start = () => {
-    if (!artAllowed(useApp.getState().project)) return setSheet(true);
+    if (!source) return;
+    if (!artAllowed(useApp.getState().project, source)) return setSheet(true);
     void make();
   };
 
@@ -90,27 +92,32 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
     <section className="col art-panel" style={{ gap: 10 }} data-testid="art-panel">
       <div className="row between">
         <div className="pkg-heading">AI picture</div>
-        <span className="pill ai" title={`Pictures are made by ${ART_PROVIDER.app} and sent through ${ART_PROVIDER.company}`}>
-          <Icon name="sparkle" size={10} /> {ART_PROVIDER.app}
-        </span>
+        {source ? (
+          <span className="pill ai" title={`Pictures are made by ${source.app}${source.id === 'fal' ? ' with your own key' : ` and sent through ${source.company}`}`}>
+            <Icon name="sparkle" size={10} /> {source.app}
+          </span>
+        ) : null}
       </div>
-      {!codex ? (
-        <div className="tiny dim">Checking {ART_PROVIDER.app}…</div>
+      {!src ? (
+        <div className="tiny dim">Checking what can make pictures…</div>
       ) : !ready ? (
         <div className="col" style={{ gap: 8 }}>
           <div className="tiny muted" data-testid="art-unavailable">
-            {codex.found ? `${ART_PROVIDER.app} is not signed in on this Mac, so pictures cannot be made yet.` : `Pictures are made by ${ART_PROVIDER.app}, which was not found on this Mac. Everything else in the thumbnail works without it.`}
+            {src.codexFound ? 'Codex is not signed in on this Mac, and there is no fal.ai key, so pictures cannot be made yet.' : 'Pictures are made by Codex or fal.ai. Neither is set up yet: install Codex, or add a fal.ai key. Everything else in the thumbnail works without them.'}
           </div>
-          {codex.found ? (
-            <div className="row" style={{ gap: 8 }}>
+          <div className="row wrap" style={{ gap: 8 }}>
+            {src.codexFound ? (
               <Button size="sm" variant="primary" icon="external" onClick={() => void window.cutaway.ai.signIn('codex').then((r) => useApp.getState().toast(r.message))}>
-                Sign in to {ART_PROVIDER.app}…
+                Sign in to Codex…
               </Button>
-              <Button size="sm" icon="sync" onClick={() => check(true)}>
-                Check again
-              </Button>
-            </div>
-          ) : null}
+            ) : null}
+            <Button size="sm" icon="gear" onClick={() => openSettingsAt('generation')} data-testid="art-add-fal">
+              Add a fal.ai key…
+            </Button>
+            <Button size="sm" icon="sync" onClick={() => check(true)}>
+              Check again
+            </Button>
+          </div>
         </div>
       ) : (
         <>
@@ -130,13 +137,13 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
             <div className="col" style={{ gap: 6 }} role="status" aria-live="polite">
               <div className="row between">
                 <span className="row tiny" style={{ gap: 8 }}>
-                  <span className="spinner" /> {ART_PROVIDER.name} is making a picture… {elapsed}s
+                  <span className="spinner" /> {source?.app} is making a picture… {elapsed}s
                 </span>
                 <Button size="sm" variant="ghost" onClick={() => run.abort.abort()}>
                   Cancel
                 </Button>
               </div>
-              <div className="tiny dim">This usually takes under a minute. The title, a few of your words and up to two stills were sent to {ART_PROVIDER.company}.</div>
+              <div className="tiny dim">This usually takes under a minute. {source?.id === 'fal' ? 'The title and a few of your words were sent to fal.ai, using your own key and credits.' : `The title, a few of your words and up to two stills were sent to ${source?.company}.`}</div>
             </div>
           ) : (
             <div className="row between wrap" style={{ gap: 8 }}>
@@ -182,7 +189,7 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
         </div>
       ) : null}
       {art.length ? <div className="tiny dim">Made by {art[0]!.provider}. The exported package says the thumbnail contains an AI-generated picture.</div> : null}
-      {sheet ? (
+      {sheet && source?.id === 'codex' ? (
         <ConsentSheet
           purpose="thumbnail pictures"
           provider="codex"
@@ -195,7 +202,21 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
           }}
           onAllow={() => {
             setSheet(false);
-            useApp.getState().patch((p) => ({ ...p, artConsent: { provider: ART_PROVIDER.consent, grantedAt: new Date().toISOString() } }));
+            useApp.getState().patch((p) => ({ ...p, artConsent: { provider: source.consent, grantedAt: new Date().toISOString() } }));
+            void make();
+          }}
+        />
+      ) : null}
+      {sheet && source?.id === 'fal' ? (
+        <FalArtConsent
+          onClose={() => setSheet(false)}
+          onDecline={() => {
+            setSheet(false);
+            setRun({ status: 'note', message: 'Nothing was sent and no picture was made.' });
+          }}
+          onAllow={() => {
+            setSheet(false);
+            useApp.getState().patch((p) => ({ ...p, artConsent: { provider: source.consent, grantedAt: new Date().toISOString() } }));
             void make();
           }}
         />

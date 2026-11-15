@@ -29,6 +29,10 @@ import { Banner, Button, Modal, Segmented, Slider, Toggle } from '../ui/kit';
 import './package.css';
 import { CraftWarnings } from './package/CraftWarnings';
 import { ArtPanel } from './package/ArtPanel';
+import { FalArtConsent } from './package/FalArtConsent';
+import { ConsentSheet as ArtConsentSheet } from '../ui/Consent';
+import { artAllowed, artInUse, findArtSource, generateArt, withArt, type ArtSource } from '../jobs/imagegen';
+import { openSettingsAt } from './Settings';
 import { aiInfo, consentCovers, useAiInfo } from '../state/jobs';
 
 type TextLayer = Extract<ThumbnailLayer, { kind: 'text' }>;
@@ -955,6 +959,12 @@ export function Package() {
   const map = timeMapOf(project);
   const [gen, setGen] = useState<Gen>({ status: 'idle', stages: [], error: null, note: null, abort: null });
   const [consentOpen, setConsentOpen] = useState(false);
+  // Pictures: who can make them, the "nothing can make pictures" question, the consent to ask, and a run in progress.
+  const artSource = useRef<ArtSource | null>(null);
+  const [needArt, setNeedArt] = useState<Awaited<ReturnType<typeof findArtSource>> | null>(null);
+  const [artAsk, setArtAsk] = useState<ArtSource | null>(null);
+  const [pictures, setPictures] = useState<{ app: string; done: number; total: number; abort: AbortController } | null>(null);
+  const [picturesNote, setPicturesNote] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(pkg.selectedId);
   const [layerId, setLayerId] = useState<string | null>(null);
   const [slow, setSlow] = useState(false);
@@ -998,15 +1008,57 @@ export function Package() {
         const note = [r.ai.mode === 'local-rules' ? `Built on this Mac from your own words. ${whyLocal ?? r.ai.reason ?? ''}`.trim() : null, ...r.notes].filter(Boolean).join(' ');
         setGen({ status: 'idle', stages: [], error: null, note: note || null, abort: null });
         setFocusId(useApp.getState().project!.packaging.selectedId);
+        const src = artSource.current;
+        if (src) {
+          if (artAllowed(useApp.getState().project, src)) void makePictures(src);
+          else setArtAsk(src);
+        }
       } catch (e) {
         const cancelled = e instanceof JobError && e.code === 'cancelled';
         setGen((g) => ({ status: cancelled ? 'idle' : 'failed', stages: g.stages, error: cancelled ? null : e instanceof Error ? e.message : String(e), note: cancelled ? 'Cancelled. Nothing was changed.' : null, abort: null }));
       }
     },
-    [projectPath, settings],
+    [projectPath, settings], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  const create = useCallback(async () => {
+  /** An AI picture for each new concept that has none, one after another. Text stays the creator's own layer. */
+  const makePictures = async (src: ArtSource) => {
+    const app = useApp.getState();
+    const todo = app.project!.packaging.concepts.filter((c) => !artInUse(c) && !c.editedByCreator).slice(0, 3);
+    if (!todo.length) return;
+    const abort = new AbortController();
+    setPicturesNote(null);
+    let made = 0;
+    const failures: string[] = [];
+    for (let i = 0; i < todo.length; i++) {
+      setPictures({ app: src.app, done: i, total: todo.length, abort });
+      const now = useApp.getState();
+      const concept = now.project!.packaging.concepts.find((c) => c.id === todo[i]!.id);
+      if (!concept) continue;
+      const res = await generateArt({ projectPath, project: now.project!, concept, direction: '', signal: abort.signal, notes: now.settings?.playbookNotes?.thumbnails ?? null, source: src });
+      if (abort.signal.aborted) break;
+      if (!res.ok) {
+        failures.push(res.message);
+        continue;
+      }
+      made++;
+      useApp.getState().pack((p) => ({ ...p, concepts: p.concepts.map((c) => (c.id === concept.id ? { ...c, art: [...(c.art ?? []), res.art], layers: withArt(c.layers, res.art) } : c)) }), 'Add AI picture');
+    }
+    setPictures(null);
+    setPicturesNote(
+      abort.signal.aborted
+        ? `Stopped. ${made} picture${made === 1 ? '' : 's'} made.`
+        : failures.length
+          ? `${made} of ${todo.length} pictures made with ${src.app}. ${failures[0]}`
+          : `Made ${made} picture${made === 1 ? '' : 's'} with ${src.app}. Each thumbnail's text stays editable on top; make more in AI picture on the right.`,
+    );
+  };
+
+  const create = useCallback(async (skipArtCheck = false) => {
+    // Good thumbnails need a picture generator. Without one, say so and let the creator choose.
+    const art = await findArtSource().catch(() => null);
+    artSource.current = art?.source ?? null;
+    if (!skipArtCheck && art && !art.source) return void setNeedArt(art);
     let status = useApp.getState().claude;
     try {
       status = await window.cutaway.ai.status();
@@ -1035,7 +1087,65 @@ export function Package() {
   const claude = useApp((s) => s.claude);
   const ai = useAiInfo();
 
-  const consent = consentOpen ? <ConsentSheet onAllow={allow} onDecline={() => (setConsentOpen(false), void run(false))} onClose={() => setConsentOpen(false)} /> : null;
+  const allowArt = (src: ArtSource) => {
+    setArtAsk(null);
+    useApp.getState().patch((p) => ({ ...p, artConsent: { provider: src.consent, grantedAt: new Date().toISOString() } }));
+    void makePictures(src);
+  };
+  const consent = (
+    <>
+      {consentOpen ? <ConsentSheet onAllow={allow} onDecline={() => (setConsentOpen(false), void run(false))} onClose={() => setConsentOpen(false)} /> : null}
+      {needArt ? (
+        <Modal
+          eyebrow="Thumbnails"
+          title={<>Connect an image generator for better thumbnails</>}
+          onClose={() => setNeedArt(null)}
+          footer={
+            <>
+              <Button onClick={() => (setNeedArt(null), void create(true))} data-testid="art-gate-continue">Continue without pictures</Button>
+              <Button variant="primary" icon="gear" onClick={() => (setNeedArt(null), openSettingsAt('generation'))} data-autofocus data-testid="art-gate-fal">Add a fal.ai key</Button>
+            </>
+          }
+        >
+          <div className="col gap-4" data-testid="art-gate">
+            <div>Cutaway makes the best thumbnails with an AI picture behind your title. Nothing on this Mac can make pictures yet. Set up one of these:</div>
+            <div className="well" style={{ padding: 14 }}>
+              <div className="eyebrow" style={{ marginBottom: 6 }}>Codex</div>
+              <div className="col" style={{ gap: 8 }}>
+                <span>{needArt.codexFound ? 'Codex is installed but not signed in. Sign in with your ChatGPT account.' : 'Install Codex and sign in with your ChatGPT account. See Settings → AI tools.'}</span>
+                {needArt.codexFound ? (
+                  <div>
+                    <Button size="sm" icon="external" onClick={() => void window.cutaway.ai.signIn('codex').then((r) => useApp.getState().toast(r.message))}>Sign in to Codex…</Button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <div className="well" style={{ padding: 14 }}>
+              <div className="eyebrow" style={{ marginBottom: 6 }}>fal.ai</div>
+              <div>Add your fal.ai API key in Settings → AI generation. Each picture spends a little of your fal.ai credit.</div>
+            </div>
+            <div className="tiny dim">Without either, the three concepts are built from frames of your video and text. They work, but won't look as good.</div>
+          </div>
+        </Modal>
+      ) : null}
+      {artAsk?.id === 'codex' ? <ArtConsentSheet purpose="thumbnail pictures" provider="codex" scope={[]} images onClose={() => setArtAsk(null)} onDecline={() => setArtAsk(null)} onAllow={() => allowArt(artAsk)} /> : null}
+      {artAsk?.id === 'fal' ? <FalArtConsent onClose={() => setArtAsk(null)} onDecline={() => setArtAsk(null)} onAllow={() => allowArt(artAsk)} /> : null}
+    </>
+  );
+  const picturesBanner = pictures ? (
+    <div className="gen-progress" role="status" aria-live="polite" data-testid="pictures-progress">
+      <div className="row between">
+        <span className="row" style={{ gap: 8 }}>
+          <span className="spinner" />
+          <b>Making pictures with {pictures.app}: {pictures.done + 1} of {pictures.total}</b>
+        </span>
+        <Button size="sm" variant="ghost" onClick={() => pictures.abort.abort()}>Stop</Button>
+      </div>
+      <div className="tiny muted">Each takes up to a minute. Your thumbnails are ready to edit meanwhile.</div>
+    </div>
+  ) : picturesNote ? (
+    <Banner tone="info">{picturesNote}</Banner>
+  ) : null;
 
   const progress = running ? (
     <div className="gen-progress" role="status" aria-live="polite">
@@ -1138,6 +1248,7 @@ export function Package() {
           </Banner>
         ) : null}
         {gen.note ? <Banner tone="info">{gen.note}</Banner> : null}
+        {picturesBanner}
         {pkg.concepts.map((c, i) => (
           <ConceptCard key={c.id} concept={c} index={i} project={project} focused={c.id === focused?.id} selected={c.id === pkg.selectedId} onFocus={() => (setFocusId(c.id), setLayerId(null))} onChoose={() => (choose(c.id), setFocusId(c.id))} />
         ))}

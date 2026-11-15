@@ -18,7 +18,9 @@ Cutaway makes three ideas for you, from real moments in your video and the words
     Click **Package** in the top bar.
   </Step>
   <Step title="Press Create three concepts">
-    Cutaway makes three thumbnail and title ideas.
+    Cutaway makes three thumbnail and title ideas. If **Codex** or a **fal.ai** key is set up, it then makes an AI picture behind each one (it asks your permission the first time).
+
+    If neither is set up, Cutaway asks first, because thumbnails look much better with a picture. Press **Add a fal.ai key** to set one up, or **Continue without pictures** to get thumbnails made from frames of your video and text.
   </Step>
   <Step title="Pick one">
     Press **Choose this pair** under the one you like best.
@@ -43,15 +45,18 @@ Click a layer to change it. Drag it on the thumbnail to move it, or use the arro
 
 ## Make a background picture with AI
 
-Under **AI picture**, Cutaway can make a new background picture for your thumbnail. This needs **Codex** installed and signed in on your Mac.
+Under **AI picture**, Cutaway can make a new background picture for your thumbnail. It uses whichever of these is set up:
+
+- **Codex**, installed and signed in with your ChatGPT account. Used first if it's ready.
+- **fal.ai**, with your own API key in **Settings → AI generation**. Each picture spends a little of your fal.ai credit.
 
 1. Describe the picture in the box, or leave it empty to follow the title.
 2. Press **Generate picture**.
 
-The picture has no words, faces or logos, so your text stays editable. Press **Make another** for a new try.
+The picture has no words, faces or logos, so your text stays editable. Press **Make another** for a new try. Earlier pictures stay underneath as spare options: press **Use** on one to swap it in.
 
 <Note>
-  To make the picture, your title, a few of your words and up to two stills from your video are sent to OpenAI. Nothing else in the thumbnail needs Codex.
+  With Codex, your title, a few of your words and up to two stills from your video are sent to OpenAI. With fal.ai, only a description is sent: the title and a few of your words, no stills. Cutaway asks before the first picture for each project.
 </Note>
 
 ## Pick a different title
