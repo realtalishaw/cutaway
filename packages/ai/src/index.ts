@@ -13,7 +13,9 @@ import { PROVIDERS, type ProviderId } from './provider';
 import { EDITING_PLAYBOOK, THUMBNAILS_PLAYBOOK, TITLES_PLAYBOOK, withNotes, type PlaybookNotes } from './playbooks';
 
 export * from './playbooks';
+import { thumbnailFormat, thumbnailFormatsBlock } from './thumbnailFormats';
 export * from './provider';
+export * from './thumbnailFormats';
 
 // ───────────────────────────── shared ─────────────────────────────
 
@@ -501,8 +503,10 @@ export const PACKAGING_SCHEMA = {
           paletteIndex: { type: 'integer' },
           rationale: { type: 'string', description: 'One or two sentences tying the concept to what is actually in the video.' },
           evidence: { type: 'array', items: { type: 'object', properties: { sessionTime: { type: 'number' }, quote: { type: 'string' } }, required: ['sessionTime', 'quote'] } },
+          format: { type: 'integer', description: 'Number of the thumbnail format from the catalogue.' },
+          imagePrompt: { type: 'string', description: 'The whole thumbnail described for an image model, about 120 words, following THUMBNAIL DESIGN.' },
         },
-        required: ['title', 'thumbnailText', 'template', 'frameIndex', 'paletteIndex', 'rationale', 'evidence'],
+        required: ['title', 'thumbnailText', 'template', 'frameIndex', 'paletteIndex', 'rationale', 'evidence', 'format', 'imagePrompt'],
       },
     },
     description: { type: 'string', description: 'YouTube description, plain text, under 1500 characters, no < or >.' },
@@ -510,6 +514,19 @@ export const PACKAGING_SCHEMA = {
   },
   required: ['concepts', 'description', 'chapters'],
 } as const;
+
+/**
+ * How to describe a whole thumbnail for an image model (Codex or fal.ai), the YouTube way: a designed image built on one
+ * proven format, not a video frame with words on it.
+ */
+export const THUMBNAIL_DESIGN = `THUMBNAIL DESIGN (each concept's "imagePrompt")
+A thumbnail is a designed image, generated whole: a person (the creator), one or two props that tell the story, and the words. Pick a format from the catalogue that fits the video and its proof, then describe the finished thumbnail for an image model:
+1. Start with "YouTube thumbnail, 16:9." and the format's name, then the composition in concrete positions: what is on the left, right and centre, and how big.
+2. The creator: "the person from image 1" (a photo of them is attached when the picture is made), from the chest up unless the format needs more, with a strong expression and a gesture that suits the format (pointing at the prop, holding it up, surprised, excited). Never describe their looks, clothes or identity: the photo decides that.
+3. The props that carry the story, as objects: a laptop, a glowing app-style icon, a dashboard with one big number, arrows, a before/after card. Use only what the video really shows or says. Draw screens and documents slightly blurred, with no readable words on them.
+4. The thumbnail words exactly, in double quotes, with their style and place. Keep them to one to three short words (image models drop words from longer lines), for example: the words "COPY ME" in huge bold white sans-serif capitals with a thick black outline, top left. These are the only words in the picture.
+5. The look: high contrast, saturated, clean studio lighting, a background colour that makes the person and words pop, bold modern YouTube style, no clutter.
+About 120 words. No brand logos except ones the video is about; no famous people; no claims or numbers the video does not show.`;
 
 export const PACKAGING_RULES = `PACKAGING RULES (non-negotiable)
 1. Everything must be true of the FINISHED video below. Use only what is said or shown in it.
@@ -538,6 +555,11 @@ ${withNotes(TITLES_PLAYBOOK, input.playbookNotes?.titles)}
 
 ${withNotes(THUMBNAILS_PLAYBOOK, input.playbookNotes?.thumbnails)}
 
+${THUMBNAIL_DESIGN}
+
+THUMBNAIL FORMAT CATALOGUE (#number name: what is in it. Why it gets clicks.)
+${thumbnailFormatsBlock()}
+
 <video>
 ${
   input.hasSpeech && input.sentences.length
@@ -561,6 +583,8 @@ Palettes are numbered 0–${Math.max(0, input.paletteCount - 1)}; vary them acro
 WHAT TO RETURN
 {"concepts": [exactly 3 × {"title","thumbnailText","template","frameIndex","paletteIndex","rationale","evidence":[{"sessionTime","quote"}]}], "description": string, "chapters": [{"sessionTime","title"}]}
 - "title": at most 100 characters; aim for 40–70 with the important words in the first 50.
+- "format": the catalogue number of the format this thumbnail uses. Three different formats, from at least two different parts of the catalogue.
+- "imagePrompt": the whole finished thumbnail, written as THUMBNAIL DESIGN says. "template", "frameIndex" and "paletteIndex" are still required: they build a simple fallback thumbnail if no picture can be made.
 - "description": two short paragraphs in the creator's voice describing what the video actually covers. No hashtags spam, no links, no promises.
 - "chapters": session times of real section starts in the finished video; at least three sections of ten seconds or more, otherwise [].`;
 }
@@ -573,6 +597,10 @@ export interface PackagingConceptReply {
   paletteIndex: number;
   rationale: string;
   evidence: { sessionTime: number; quote: string }[];
+  /** Catalogue number of the thumbnail format, when the model gave a known one. */
+  format: number | null;
+  /** The whole thumbnail described for an image model; empty when the model gave none. */
+  imagePrompt: string;
 }
 
 export interface PackagingReply {
@@ -611,6 +639,8 @@ export function parsePackaging(data: unknown, limits: { frameCount: number; pale
       paletteIndex: idx(r.paletteIndex, limits.paletteCount),
       rationale: clampText(r.rationale, 400),
       evidence,
+      format: isNum(r.format) && thumbnailFormat(Math.round(r.format)) ? Math.round(r.format) : null,
+      imagePrompt: clampText(r.imagePrompt, 1500).replace(/[<>]/g, ''),
     });
     if (concepts.length === 3) break;
   }

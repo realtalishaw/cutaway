@@ -11,7 +11,7 @@
  * Thumbnail pictures come from Codex only (its built-in image tool).
  */
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { app, type IpcMain } from 'electron';
 import { PROVIDERS, pickProvider, providerChoice, type ProviderId } from '@cutaway/ai';
@@ -30,6 +30,14 @@ const THINKING: Partial<Record<string, number>> = { 'first-cut': 8000, 'local-re
 const EFFORT: Partial<Record<string, 'low' | 'medium' | 'high'>> = { 'first-cut': 'low', 'local-revision': 'low', packaging: 'low' };
 const MAX_PROMPT_CHARS = 1_500_000;
 const GENERATED_DIR = join('media', 'generated');
+
+/** Where the creator's thumbnail photo is kept. */
+const photoDir = () => join(app.getPath('userData'), 'thumbnail-photo');
+async function currentPhoto(): Promise<string | null> {
+  const names = await readdir(photoDir()).catch(() => [] as string[]);
+  const name = names.find((n) => /^photo-.*\.(png|jpe?g|webp)$/i.test(n));
+  return name ? join(photoDir(), name) : null;
+}
 
 export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): void {
   const running = new Map<string, AbortController>();
@@ -131,7 +139,7 @@ export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): vo
     const root = await projectRoot(req.projectPath);
     if (!root) return bad('Pictures can only be made for an open project.');
     const refs = (Array.isArray(req.referencePaths) ? req.referencePaths : []).filter((p): p is string => typeof p === 'string').slice(0, 2);
-    if (!imagesInsideDir(join(root, 'cache'), refs)) return bad('Reference stills must be inside the project cache folder.');
+    if (!refs.every((r) => imagesInsideDir(join(root, 'cache'), [r]) || imagesInsideDir(photoDir(), [r]))) return bad('Reference pictures must be inside the project cache folder or your saved thumbnail photo.');
     if (disabled.codex) return bad(off('codex').message, 'not-found');
     if (running.has(req.id)) return bad('This picture is already being made.');
     const controller = new AbortController();
@@ -147,6 +155,21 @@ export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): vo
     } finally {
       running.delete(req.id);
     }
+  });
+
+  // The creator's own photo for thumbnails: one file, kept in Cutaway's folder and reused in every project.
+  ipcMain.handle('ai:photo', async (): Promise<string | null> => currentPhoto());
+  ipcMain.handle('ai:setPhoto', async (_e, from: string | null): Promise<string | null> => {
+    const dir = photoDir();
+    await rm(dir, { recursive: true, force: true });
+    if (!from) return null;
+    if (typeof from !== 'string' || !isAbsolute(from) || !/\.(png|jpe?g|webp|heic)$/i.test(from)) throw new Error('Choose a PNG, JPEG, WebP or HEIC photo.');
+    await mkdir(dir, { recursive: true });
+    const ext = from.toLowerCase().endsWith('.heic') ? 'jpg' : (from.split('.').pop() ?? 'jpg').toLowerCase();
+    const dest = join(dir, `photo-${Date.now().toString(36)}.${ext}`);
+    if (ext === 'jpg' && /\.heic$/i.test(from)) await new Promise<void>((ok, fail) => execFile('/usr/bin/sips', ['-s', 'format', 'jpeg', from, '--out', dest], (err) => (err ? fail(new Error('The photo could not be read.')) : ok())));
+    else await copyFile(from, dest);
+    return dest;
   });
 
   ipcMain.handle('ai:removeImage', async (_e, projectPath: string, relPath: string): Promise<void> => {

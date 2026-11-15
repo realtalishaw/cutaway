@@ -209,6 +209,52 @@ export function buildImageModelArtPrompt(input: ArtPromptInput): string {
     .join(' ');
 }
 
+export interface FullThumbnailInput {
+  /** The concept's whole-thumbnail description (from the packaging reply). */
+  imagePrompt: string;
+  /** A photo of the creator is attached as image 1. */
+  hasPhoto: boolean;
+  /** A change the creator asked for, if any. */
+  direction?: string;
+  /** The creator's standing thumbnail notes (Settings → Playbooks). */
+  notes?: string | null;
+}
+
+/** The finished-thumbnail description for an image model (fal.ai). Pure. */
+export function buildFullThumbnailPrompt(input: FullThumbnailInput): string {
+  let body = oneLine(input.imagePrompt, 1500);
+  if (!/^youtube thumbnail/i.test(body)) body = `YouTube thumbnail, 16:9. ${body}`;
+  if (!input.hasPhoto) body = body.replace(/the person from image 1/gi, 'the props');
+  return [
+    body,
+    input.direction?.trim() ? `Change from before: ${oneLine(input.direction, 400)}.` : null,
+    input.notes ? `Style notes: ${oneLine(input.notes, 200)}.` : null,
+    input.hasPhoto
+      ? 'Keep the face, hair, skin tone and glasses (if any) of the person in image 1 exactly; they must be clearly recognisable as the same person.'
+      : 'Do not show any person or face.',
+    'Any screens, documents or cards are drawn without readable words. The thumbnail words are the only text in the image, spelled exactly as given.',
+  ]
+    .filter((l): l is string => !!l)
+    .join(' ');
+}
+
+/** The same, wrapped as an instruction for Codex's built-in image tool, answered with ART_REPLY_SCHEMA. Pure. */
+export function buildCodexFullThumbnailPrompt(input: FullThumbnailInput): string {
+  return [
+    'Use your built-in image generation tool exactly once to make ONE image, then answer with the JSON described at the end. Do not run shell commands. Do not read, write, move or copy files.',
+    input.hasPhoto ? 'Image 1, attached, is a photo of the creator.' : null,
+    'Make it a finished YouTube thumbnail, landscape 16:9 (for example 1536x864).',
+    '',
+    'THE IMAGE',
+    buildFullThumbnailPrompt(input),
+    '',
+    'ANSWER',
+    'Reply with JSON only: {"generated": true, "note": "<one sentence describing the image>"} or {"generated": false, "note": "<why not>"}.',
+  ]
+    .filter((l): l is string => l !== null)
+    .join('\n');
+}
+
 export const ART_REPLY_SCHEMA = {
   type: 'object',
   properties: { generated: { type: 'boolean' }, note: { type: 'string' } },

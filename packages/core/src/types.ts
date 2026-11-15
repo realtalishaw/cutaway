@@ -686,6 +686,12 @@ export interface PackagingConcept {
   aiProvider?: 'claude' | 'codex';
   /** Pictures an AI image model made for this concept. One may be in use as an image layer; the rest are spare variations. */
   art?: GeneratedArt[];
+  /** The thumbnail format it uses (number in the format catalogue), when an AI designed it. */
+  format?: number;
+  /** The whole thumbnail described for an image model, when an AI designed it. */
+  imagePrompt?: string;
+  /** The layers from before a whole AI thumbnail replaced them, so the creator can go back to them. */
+  baseLayers?: ThumbnailLayer[];
   editedByCreator: boolean;
 }
 
@@ -700,6 +706,8 @@ export interface GeneratedArt {
   note: string;
   /** What the creator asked for, if anything. */
   direction: string;
+  /** 'thumbnail' = the whole finished thumbnail (words included); otherwise a background behind Cutaway's own layers. */
+  kind?: 'background' | 'thumbnail';
   at: string;
 }
 

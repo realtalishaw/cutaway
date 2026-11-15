@@ -504,6 +504,11 @@ export interface GenRequest {
   resolution?: '360p' | '540p' | '720p' | '1080p';
   /** fal.ai: a model other than the one chosen in Settings. */
   model?: string;
+  /**
+   * Images only, fal.ai: pictures to work from (absolute paths inside the project or Cutaway's own folder), such as a
+   * photo of the creator. With them the request goes to an image-editing model that keeps faces.
+   */
+  referencePaths?: string[];
 }
 
 export interface GenResult {
@@ -696,6 +701,10 @@ export interface CutawayApi {
     generateImage(req: AiImageRequest): Promise<AiImageResult>;
     /** Delete a generated picture that is no longer used. Only files in media/generated/ are touched. */
     removeImage(projectPath: string, relPath: string): Promise<void>;
+    /** The creator's saved photo for thumbnails (absolute path), or null to use frames from the video. */
+    photo(): Promise<string | null>;
+    /** Save a copy of this photo for thumbnails, or forget it (null). Returns the saved copy's path. */
+    setPhoto(from: string | null): Promise<string | null>;
   };
   /** Look assets kept inside the project folder: colour LUTs and downloaded background photos. */
   looks: {

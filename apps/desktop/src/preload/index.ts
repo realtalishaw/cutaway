@@ -53,7 +53,7 @@ const api: CutawayApi = {
     onPreview: (cb) => on('record:preview', cb),
   },
   ai: {
-    ...ns<Omit<CutawayApi['ai'], 'onProgress'>>('ai', ['status', 'providers', 'signIn', 'run', 'cancel', 'generateImage', 'removeImage']),
+    ...ns<Omit<CutawayApi['ai'], 'onProgress'>>('ai', ['status', 'providers', 'signIn', 'run', 'cancel', 'generateImage', 'removeImage', 'photo', 'setPhoto']),
     onProgress: (cb) => on<AiProgress>('ai:progress', cb),
   },
   motion: {

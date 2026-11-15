@@ -24,3 +24,43 @@ describe('buildImageModelArtPrompt (fal.ai)', () => {
     expect(buildArtPrompt(input)).toMatch(/built-in image generation tool/);
   });
 });
+
+import { buildCodexFullThumbnailPrompt, buildFullThumbnailPrompt, thumbnailFormatsBlock, THUMBNAIL_FORMATS } from '../src/index';
+import { buildPackagingPrompt, parsePackaging } from '../src/index';
+
+describe('whole thumbnails', () => {
+  const base = { imagePrompt: 'Glowing Icon: a huge glowing app icon on the left; the person from image 1 on the right pointing at it. The words "I BUILT THIS" in huge white capitals, top left.', hasPhoto: true };
+  it('keeps the face from the photo and the words exactly', () => {
+    const p = buildFullThumbnailPrompt(base);
+    expect(p).toMatch(/^YouTube thumbnail, 16:9\. Glowing Icon/);
+    expect(p).toMatch(/recognisable as the same person/);
+    expect(p).toMatch(/only text in the image/);
+  });
+  it('shows no person when there is no photo', () => {
+    const p = buildFullThumbnailPrompt({ ...base, hasPhoto: false });
+    expect(p).not.toMatch(/image 1/);
+    expect(p).toMatch(/Do not show any person/);
+  });
+  it('wraps it for Codex with the answer format', () => {
+    const p = buildCodexFullThumbnailPrompt({ ...base, direction: 'make the background red' });
+    expect(p).toMatch(/built-in image generation tool exactly once/);
+    expect(p).toMatch(/Change from before: make the background red/);
+    expect(p).toMatch(/"generated": true/);
+  });
+  it('ships 100 formats and offers them all in the packaging prompt', () => {
+    expect(THUMBNAIL_FORMATS).toHaveLength(100);
+    expect(new Set(THUMBNAIL_FORMATS.map((f) => f.id)).size).toBe(100);
+    expect(thumbnailFormatsBlock()).toContain('#73 Glowing Icon');
+    const prompt = buildPackagingPrompt({ projectName: 'x', brief: { audience: '', notes: '' } as never, outDuration: 60, hasSpeech: true, sentences: [{ outputTime: 1, sessionTime: 1, text: 'hi' }], visualMoments: [], frames: [], paletteCount: 4, chapters: [], editSummary: '' } as never);
+    expect(prompt).toContain('THUMBNAIL DESIGN');
+    expect(prompt).toContain('#91 Six Arms');
+    expect(prompt).toContain('"imagePrompt"');
+  });
+  it('reads the format and image description from a reply', () => {
+    const c = { title: 'I Built My Own AI Video Editor', thumbnailText: 'I BUILT THIS', template: 'headline', frameIndex: 0, paletteIndex: 0, rationale: 'r', evidence: [], format: 73, imagePrompt: 'YouTube thumbnail…' };
+    const r = parsePackaging({ concepts: [c, { ...c, format: 999 }, { ...c, format: undefined, imagePrompt: undefined }], description: '', chapters: [] }, { frameCount: 1, paletteCount: 4 });
+    expect(r.concepts.map((x) => x.format)).toEqual([73, null, null]);
+    expect(r.concepts[0]!.imagePrompt).toBe('YouTube thumbnail…');
+    expect(r.concepts[2]!.imagePrompt).toBe('');
+  });
+});

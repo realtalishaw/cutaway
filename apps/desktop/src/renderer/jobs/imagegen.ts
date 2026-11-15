@@ -12,8 +12,8 @@
  * (`generated`), shown as such in the editor and written to the package
  * manifest.
  */
-import { PROVIDERS, buildArtPrompt, buildImageModelArtPrompt } from '@cutaway/ai';
-import { uid, type GeneratedArt, type PackagingConcept, type Project, type ThumbnailLayer } from '@cutaway/core';
+import { PROVIDERS, buildArtPrompt, buildCodexFullThumbnailPrompt, buildFullThumbnailPrompt, buildImageModelArtPrompt } from '@cutaway/ai';
+import { toSourceTime, uid, type GeneratedArt, type PackagingConcept, type Project, type ThumbnailLayer } from '@cutaway/core';
 import { resolveSourcePath } from '../../shared/api';
 
 export const ART_PROVIDER = PROVIDERS.codex;
@@ -173,4 +173,88 @@ export async function generateArt(req: ArtRequest): Promise<ArtOutcome> {
   } finally {
     req.signal.removeEventListener('abort', onAbort);
   }
+}
+
+
+// ───────────────────────────── whole thumbnails ─────────────────────────────
+
+/** fal.ai model for a whole thumbnail when there is no photo of the creator to work from. */
+export const THUMBNAIL_TEXT_MODEL = 'fal-ai/nano-banana-pro';
+
+/** Is the concept's thumbnail one finished AI picture (words included)? */
+export function isWholeThumbnail(concept: PackagingConcept): boolean {
+  return concept.layers.length > 0 && concept.layers.every((l) => l.kind === 'image' && !!l.generated);
+}
+
+/** The thumbnail becomes this one finished picture, full size. Undo brings the layers back. */
+export function withWholeThumbnail(art: GeneratedArt): ThumbnailLayer[] {
+  return [{ id: uid('tl'), kind: 'image', path: art.path, x: 0.5, y: 0.5, scale: 1, opacity: 1, generated: { provider: art.provider, note: art.note, direction: art.direction, at: art.at } }];
+}
+
+/** For a concept no AI described (built from templates): a simple description of a whole thumbnail. Pure. */
+export function fallbackImagePrompt(concept: PackagingConcept): string {
+  const words = concept.layers.flatMap((l) => (l.kind === 'text' && l.text.trim() ? [l.text.trim()] : [])).slice(0, 1)[0] ?? concept.title.split(' ').slice(0, 4).join(' ');
+  return `YouTube thumbnail, 16:9. The person from image 1 on the right third, from the chest up, with an excited, surprised expression, pointing toward the words. On the left, the words "${words.toUpperCase()}" in huge bold white sans-serif capitals with a thick black outline. A bold, saturated background with one prop that shows the video's topic: ${concept.title}. High contrast, clean studio lighting, bold modern YouTube style.`;
+}
+
+/**
+ * The picture of the creator to build thumbnails on: their saved photo if they chose one, otherwise a frame of them
+ * from the video's camera (the moment the concept is about). Null when there is neither.
+ */
+export async function creatorPhoto(projectPath: string, project: Project, concept: PackagingConcept): Promise<{ path: string; from: 'photo' | 'video' } | null> {
+  const saved = await window.cutaway.ai.photo().catch(() => null);
+  if (saved) return { path: saved, from: 'photo' };
+  const cams = project.sources.filter((s) => (s.role === 'cameraA' || s.role === 'cameraB') && s.available && s.kind === 'video').sort((a, b) => a.role.localeCompare(b.role));
+  const cam = cams[0];
+  if (!cam) return null;
+  const frame = concept.layers.find((l) => l.kind === 'frame' && l.sourceId === cam.id) as FrameLayer | undefined;
+  const session = concept.evidence[0]?.sessionTime;
+  const t = frame ? frame.time : session !== undefined ? toSourceTime(cam.sync, session) : cam.duration / 2;
+  try {
+    const frames = await window.cutaway.native.frames(projectPath, resolveSourcePath(projectPath, cam.path), [Math.max(0, Math.min(t, cam.duration - 0.05))], 1280);
+    return frames[0]?.path ? { path: frames[0].path, from: 'video' } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Make the whole finished thumbnail (person, props and words) as one picture, from the concept's description and a
+ * photo of the creator. Never called without `artAllowed(project, source)`; it checks again.
+ */
+export async function generateThumbnail(req: ArtRequest): Promise<ArtOutcome> {
+  const source = req.source ?? ART_SOURCES.codex;
+  if (!artAllowed(req.project, source)) return { ok: false, code: 'no-consent', message: 'Nothing was sent: making pictures has not been allowed for this project.' };
+  const photo = await creatorPhoto(req.projectPath, req.project, req.concept);
+  if (req.signal.aborted) return { ok: false, code: 'cancelled', message: 'Cancelled. Nothing was changed.' };
+  const input = { imagePrompt: req.concept.imagePrompt || fallbackImagePrompt(req.concept), hasPhoto: !!photo, direction: req.direction, notes: req.notes ?? null };
+  const id = `thumb_${Date.now().toString(36)}_${(seq++).toString(36)}`;
+  const started = Date.now();
+  const onAbort = () => void (source.id === 'fal' ? window.cutaway.gen.cancel(id) : window.cutaway.ai.cancel(id)).catch(() => undefined);
+  req.signal.addEventListener('abort', onAbort, { once: true });
+  const made = (path: string, note: string): ArtOutcome => ({ ok: true, art: { id: uid('art'), path, provider: source.consent, note, direction: req.direction.trim(), at: new Date().toISOString(), kind: 'thumbnail' }, durationMs: Date.now() - started });
+  try {
+    if (source.id === 'fal') {
+      const r = await window.cutaway.gen.generate(req.projectPath, { jobId: id, provider: 'fal', kind: 'image', prompt: buildFullThumbnailPrompt(input), aspect: '16:9', ...(photo ? { referencePaths: [photo.path] } : { model: THUMBNAIL_TEXT_MODEL }) });
+      return made(r.path, `fal.ai · ${r.model}${photo ? ` · from ${photo.from === 'photo' ? 'your photo' : 'a frame of you in the video'}` : ''}`);
+    }
+    const res = await window.cutaway.ai.generateImage({ id, projectPath: req.projectPath, prompt: buildCodexFullThumbnailPrompt(input), referencePaths: photo ? [photo.path] : [] });
+    if (!res.ok || !res.path) return { ok: false, code: res.error?.code ?? 'failed', message: res.error?.code === 'cancelled' ? 'Cancelled. Nothing was changed.' : (res.error?.message ?? 'No picture was made.') };
+    return made(res.path, res.note ?? '');
+  } catch (e) {
+    if (req.signal.aborted) return { ok: false, code: 'cancelled', message: 'Cancelled. Nothing was changed.' };
+    return { ok: false, code: 'failed', message: e instanceof Error ? e.message : String(e) };
+  } finally {
+    req.signal.removeEventListener('abort', onAbort);
+  }
+}
+
+/** The concept with this finished thumbnail in use (and kept as a variation); its earlier layers are kept to go back to. */
+export function applyWholeThumbnail(c: PackagingConcept, art: GeneratedArt, add = true): PackagingConcept {
+  return { ...c, art: add ? [...(c.art ?? []), art] : (c.art ?? []), layers: withWholeThumbnail(art), baseLayers: c.baseLayers ?? (isWholeThumbnail(c) ? undefined : c.layers) };
+}
+
+/** Back to the layers from before the whole thumbnail. */
+export function withoutWholeThumbnail(c: PackagingConcept): PackagingConcept {
+  return c.baseLayers ? { ...c, layers: c.baseLayers } : c;
 }

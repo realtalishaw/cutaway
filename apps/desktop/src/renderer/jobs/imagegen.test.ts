@@ -108,3 +108,24 @@ describe('the gate names whichever provider is in use', () => {
     expect(status).not.toHaveBeenCalled();
   });
 });
+
+describe('whole AI thumbnails', async () => {
+  const { applyWholeThumbnail, isWholeThumbnail, withoutWholeThumbnail, fallbackImagePrompt } = await import('./imagegen');
+  const base = { id: 'c1', title: 'I Built My Own AI Video Editor', layers: [{ id: 't', kind: 'text', text: 'I BUILT THIS', x: 0.1, y: 0.2, size: 0.2, color: '#fff', font: 'display', weight: 800, align: 'left', stroke: null, background: null, rotation: 0, uppercase: true } as never], rationale: '', evidence: [], origin: 'ai' as const, editedByCreator: false };
+  const art = (n: number) => ({ id: `a${n}`, path: `media/generated/image-${n}.png`, provider: 'fal.ai with your own key', note: '', direction: '', at: '2026-11-15T00:00:00Z', kind: 'thumbnail' as const });
+  it('replaces the layers with one picture and keeps the earlier layers to go back to', () => {
+    const one = applyWholeThumbnail(base, art(1));
+    expect(isWholeThumbnail(one)).toBe(true);
+    expect(one.layers).toHaveLength(1);
+    expect(one.baseLayers).toEqual(base.layers);
+    // a second picture keeps the original layers, not the first picture
+    const two = applyWholeThumbnail(one, art(2));
+    expect(two.baseLayers).toEqual(base.layers);
+    expect(two.art).toHaveLength(2);
+    expect(withoutWholeThumbnail(two).layers).toEqual(base.layers);
+  });
+  it('describes a whole thumbnail for concepts no AI designed', () => {
+    expect(fallbackImagePrompt(base)).toMatch(/^YouTube thumbnail, 16:9\. The person from image 1/);
+    expect(fallbackImagePrompt(base)).toContain('"I BUILT THIS"');
+  });
+});

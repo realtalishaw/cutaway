@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GeneratedArt, PackagingConcept } from '@cutaway/core';
-import { artAllowed, artInUse, findArtSource, generateArt, withArt, withoutArt } from '../../jobs/imagegen';
+import { applyWholeThumbnail, artAllowed, artInUse, findArtSource, generateThumbnail, isWholeThumbnail, withArt, withoutArt, withoutWholeThumbnail } from '../../jobs/imagegen';
+import { thumbnailFormat } from '@cutaway/ai';
+import { PhotoPicker } from './PhotoPicker';
 import { openSettingsAt } from '../Settings';
 import { FalArtConsent } from './FalArtConsent';
 import { useApp } from '../../state/store';
@@ -66,12 +68,12 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
     const current = now.project!.packaging.concepts.find((c) => c.id === concept.id);
     if (!current) return setRun({ status: 'idle' });
     if (!source) return setRun({ status: 'idle' });
-    const res = await generateArt({ projectPath, project: now.project!, concept: current, direction, signal: abort.signal, notes: now.settings?.playbookNotes?.thumbnails ?? null, source });
+    const res = await generateThumbnail({ projectPath, project: now.project!, concept: current, direction, signal: abort.signal, notes: now.settings?.playbookNotes?.thumbnails ?? null, source });
     if (!alive.current) return;
     if (!res.ok) return setRun(res.code === 'cancelled' ? { status: 'note', message: res.message } : { status: 'failed', message: res.message });
-    // The new picture goes straight into the thumbnail; earlier ones stay as spare variations. One undo step.
-    setConcept(concept.id, (c) => ({ ...c, art: [...(c.art ?? []), res.art], layers: withArt(c.layers, res.art), editedByCreator: true }), 'Add AI picture');
-    setRun({ status: 'note', message: `Picture made in ${Math.max(1, Math.round(res.durationMs / 1000))}s and set as the background. Your text is still your own layer on top.` });
+    // The finished thumbnail goes straight in; earlier ones stay as spare variations, and the layers from before are kept. One undo step.
+    setConcept(concept.id, (c) => ({ ...applyWholeThumbnail(c, res.art), editedByCreator: true }), 'Make AI thumbnail');
+    setRun({ status: 'note', message: `Thumbnail made in ${Math.max(1, Math.round(res.durationMs / 1000))}s.` });
   };
 
   const start = () => {
@@ -80,8 +82,10 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
     void make();
   };
 
-  const use = (a: GeneratedArt) => setConcept(concept.id, (c) => ({ ...c, layers: withArt(c.layers, a), editedByCreator: true }), 'Use AI picture');
-  const takeOut = () => setConcept(concept.id, (c) => ({ ...c, layers: withoutArt(c.layers), editedByCreator: true }), 'Remove AI picture');
+  const use = (a: GeneratedArt) => setConcept(concept.id, (c) => (a.kind === 'thumbnail' ? { ...applyWholeThumbnail(c, a, false), editedByCreator: true } : { ...c, layers: withArt(c.layers, a), editedByCreator: true }), 'Use AI thumbnail');
+  const whole = isWholeThumbnail(concept);
+  const takeOut = () => setConcept(concept.id, (c) => (isWholeThumbnail(c) ? { ...withoutWholeThumbnail(c), editedByCreator: true } : { ...c, layers: withoutArt(c.layers), editedByCreator: true }), 'Remove AI thumbnail');
+  const format = concept.format ? thumbnailFormat(concept.format) : null;
   const discard = (a: GeneratedArt) => {
     // The file is deleted, so this is not an undo step that could bring back a missing picture.
     setConcept(concept.id, (c) => ({ ...c, art: (c.art ?? []).filter((x) => x.id !== a.id), layers: c.layers.filter((l) => !(l.kind === 'image' && l.generated && l.path === a.path)) }), 'Discard AI picture', false);
@@ -91,13 +95,19 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
   return (
     <section className="col art-panel" style={{ gap: 10 }} data-testid="art-panel">
       <div className="row between">
-        <div className="pkg-heading">AI picture</div>
+        <div className="pkg-heading">AI thumbnail</div>
         {source ? (
           <span className="pill ai" title={`Pictures are made by ${source.app}${source.id === 'fal' ? ' with your own key' : ` and sent through ${source.company}`}`}>
             <Icon name="sparkle" size={10} /> {source.app}
           </span>
         ) : null}
       </div>
+      {format ? (
+        <div className="tiny muted" data-testid="thumb-format" title={format.why}>
+          Format #{format.id} · <b>{format.name}</b>: {format.look}.
+        </div>
+      ) : null}
+      <PhotoPicker />
       {!src ? (
         <div className="tiny dim">Checking what can make pictures…</div>
       ) : !ready ? (
@@ -126,8 +136,8 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
             rows={2}
             value={direction}
             maxLength={400}
-            placeholder="Describe the picture, or leave empty to let it follow the title"
-            aria-label="Describe the picture"
+            placeholder={art.length ? 'What should change? For example: make me look surprised, use a red background' : 'Anything to add? Leave empty to follow the design'}
+            aria-label="What should change in the thumbnail"
             data-testid="art-direction"
             disabled={run.status === 'running'}
             onChange={(e) => setDirection(e.target.value)}
@@ -137,19 +147,19 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
             <div className="col" style={{ gap: 6 }} role="status" aria-live="polite">
               <div className="row between">
                 <span className="row tiny" style={{ gap: 8 }}>
-                  <span className="spinner" /> {source?.app} is making a picture… {elapsed}s
+                  <span className="spinner" /> {source?.app} is making the thumbnail… {elapsed}s
                 </span>
                 <Button size="sm" variant="ghost" onClick={() => run.abort.abort()}>
                   Cancel
                 </Button>
               </div>
-              <div className="tiny dim">This usually takes under a minute. {source?.id === 'fal' ? 'The title and a few of your words were sent to fal.ai, using your own key and credits.' : `The title, a few of your words and up to two stills were sent to ${source?.company}.`}</div>
+              <div className="tiny dim">This usually takes under a minute. The design and your photo were sent to {source?.id === 'fal' ? 'fal.ai, using your own key and credits' : source?.company}.</div>
             </div>
           ) : (
             <div className="row between wrap" style={{ gap: 8 }}>
-              <span className="tiny dim" style={{ maxWidth: 190 }}>No words, faces or logos are drawn. Your text stays editable.</span>
+              <span className="tiny dim" style={{ maxWidth: 190 }}>The whole thumbnail is made as one picture: you, the props and the words.</span>
               <Button size="sm" variant="primary" icon="sparkle" onClick={start} data-testid="art-generate">
-                {art.length ? 'Make another' : 'Generate picture'}
+                {art.length ? 'Make another' : 'Make the thumbnail'}
               </Button>
             </div>
           )}
@@ -187,6 +197,11 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
             );
           })}
         </div>
+      ) : null}
+      {whole ? (
+        <Button size="sm" variant="ghost" icon="undo" onClick={takeOut} data-testid="thumb-back">
+          Back to the simple thumbnail
+        </Button>
       ) : null}
       {art.length ? <div className="tiny dim">Made by {art[0]!.provider}. The exported package says the thumbnail contains an AI-generated picture.</div> : null}
       {sheet && source?.id === 'codex' ? (

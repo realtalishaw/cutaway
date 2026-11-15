@@ -4,7 +4,7 @@
  * (Electron safeStorage) and never reach the editor window, which only learns whether a key is set.
  * Generated files are written into the project's media/generated folder.
  */
-import { safeStorage } from 'electron';
+import { app, safeStorage } from 'electron';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { GenKind, GenProvider, GenRequest, GenResult, GenKeyStatus, GenVoice, GenModels } from '../shared/api';
@@ -167,6 +167,19 @@ export function cancel(jobId: string) {
 }
 
 /** Make one piece of media and save it in the project. */
+/** Reference pictures as data URLs. Only files inside the project or Cutaway's own folder are read. */
+async function referenceImages(projectPath: string, paths: string[] | undefined): Promise<string[]> {
+  const roots = [path.resolve(projectPath), path.resolve(app.getPath('userData'))];
+  const out: string[] = [];
+  for (const p of (paths ?? []).slice(0, 4)) {
+    const abs = path.resolve(p);
+    if (!path.isAbsolute(p) || !roots.some((r) => abs.startsWith(r + path.sep))) throw new GenError('A reference picture must be inside the project or Cutaway\'s own folder.', 'rejected');
+    const type = /\.png$/i.test(abs) ? 'image/png' : /\.webp$/i.test(abs) ? 'image/webp' : 'image/jpeg';
+    out.push(`data:${type};base64,${(await fsp.readFile(abs)).toString('base64')}`);
+  }
+  return out;
+}
+
 export async function generate(projectPath: string, req: GenRequest, onStatus: (s: string) => void): Promise<GenResult> {
   if (!CAN[req.provider].includes(req.kind)) throw new GenError(`${req.provider === 'fal' ? 'fal.ai' : 'ElevenLabs'} cannot make ${req.kind}.`, 'unsupported');
   const prompt = req.prompt.trim();
@@ -181,7 +194,7 @@ export async function generate(projectPath: string, req: GenRequest, onStatus: (
     if (req.provider === 'elevenlabs') {
       ({ bytes, ext, model } = await eleven(req, prompt, signal));
     } else {
-      ({ bytes, ext, model } = await fal(req, prompt, signal, onStatus));
+      ({ bytes, ext, model } = await fal(req, prompt, signal, onStatus, await referenceImages(projectPath, req.referencePaths)));
     }
     const dir = path.join(projectPath, 'media', 'generated');
     await fsp.mkdir(dir, { recursive: true });
@@ -218,7 +231,7 @@ async function eleven(req: GenRequest, prompt: string, signal: AbortSignal): Pro
 }
 
 /** The input a fal model expects, for the default models (other models get the common fields). */
-function falInput(req: GenRequest, prompt: string): Record<string, unknown> {
+function falInput(req: GenRequest, prompt: string, refs: string[] = []): Record<string, unknown> {
   switch (req.kind) {
     case 'voice':
       return { text: prompt, voice: req.voiceId || 'Rachel' };
@@ -227,6 +240,9 @@ function falInput(req: GenRequest, prompt: string): Record<string, unknown> {
     case 'music':
       return { prompt, seconds_total: Math.round(clamp(req.seconds ?? 30, 1, 190)) };
     case 'image':
+      if (refs.length) return { prompt, image_urls: refs, aspect_ratio: req.aspect ?? '16:9', resolution: '1K', num_images: 1, output_format: 'png' };
+      // Google's image models take an aspect ratio rather than an image size.
+      if (/nano-banana/.test(req.model ?? '')) return { prompt, aspect_ratio: req.aspect ?? '16:9', resolution: '1K', num_images: 1, output_format: 'png' };
       return { prompt, image_size: req.aspect === '9:16' ? 'portrait_16_9' : req.aspect === '1:1' ? 'square_hd' : 'landscape_16_9', num_images: 1 };
     case 'video':
       // the cheapest settings that still look right: 360p, 5 s
@@ -246,11 +262,14 @@ function resultUrl(out: unknown): { url: string; contentType?: string } | null {
   return null;
 }
 
-async function fal(req: GenRequest, prompt: string, signal: AbortSignal, onStatus: (s: string) => void): Promise<{ bytes: Buffer; ext: string; model: string }> {
+/** fal.ai model for images made from reference pictures (it keeps a face from a photo, and draws legible words). */
+export const FAL_REFERENCE_IMAGE_MODEL = 'fal-ai/nano-banana-pro/edit';
+
+async function fal(req: GenRequest, prompt: string, signal: AbortSignal, onStatus: (s: string) => void, refs: string[] = []): Promise<{ bytes: Buffer; ext: string; model: string }> {
   const key = need('fal');
-  const model = req.model?.trim() || models[req.kind];
+  const model = req.model?.trim() || (refs.length && req.kind === 'image' ? FAL_REFERENCE_IMAGE_MODEL : models[req.kind]);
   const auth = { Authorization: `Key ${key}` };
-  const submit = await fetch(`${FAL_QUEUE}/${model}`, { method: 'POST', signal, headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(falInput(req, prompt)) });
+  const submit = await fetch(`${FAL_QUEUE}/${model}`, { method: 'POST', signal, headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(falInput(req, prompt, refs)) });
   if (!submit.ok) throw await failure('fal', submit);
   const job = (await submit.json()) as { status_url: string; response_url: string; queue_position?: number };
   const deadline = Date.now() + (req.kind === 'video' ? 15 : 5) * 60_000;

@@ -151,19 +151,18 @@ try {
     page.evaluate(() => {
       const p = window.__cutaway.useApp.getState().project;
       const c = p.packaging.concepts.find((x) => (x.art ?? []).length) ?? p.packaging.concepts[0];
-      return { artConsent: p.artConsent, art: c.art ?? [], layers: c.layers.map((l) => ({ kind: l.kind, path: l.path, generated: l.generated ?? null })), consent: p.consent };
+      return { artConsent: p.artConsent, art: c.art ?? [], layers: c.layers.map((l) => ({ kind: l.kind, path: l.path, generated: l.generated ?? null })), baseLayers: (c.baseLayers ?? []).length, consent: p.consent };
     });
   let st = await artState();
   const made = st.art[0];
   check('one picture was made and saved inside the project', st.art.length === 1 && /^media\/generated\/art-[a-z0-9-]+\.png$/.test(made.path) && fs.statSync(path.join(projectPath, made.path)).size > 100, made?.path);
   check('it is recorded as made by OpenAI, with the creator\'s direction', made.provider === 'OpenAI via local Codex' && made.direction === 'a calm green studio backdrop' && /green studio/.test(made.note));
-  const kinds = st.layers.map((l) => (l.generated ? 'art' : l.kind));
-  check('it sits above the video frame and below the text, which is still an editable layer', kinds.indexOf('art') === kinds.lastIndexOf('frame') + 1 && kinds.indexOf('text') > kinds.indexOf('art'), kinds.join(' › '));
+  check('the whole thumbnail replaces the layers, and the earlier ones are kept to go back to', st.layers.length === 1 && !!st.layers[0].generated && st.baseLayers > 0, `${st.layers.length} layer(s), ${st.baseLayers} kept`);
   check('picture permission is its own record; edit consent is unchanged', st.artConsent?.provider === 'OpenAI via local Codex' && st.consent?.scope.length === 3);
   const ia = lastArgs();
   const ip = lastPrompt();
   check('the request was read-only with at most two reference stills', ia[ia.indexOf('--sandbox') + 1] === 'read-only' && ia.filter((x) => x === '--image').length <= 2);
-  check('the instruction carries the fixed rules and the direction', /No words, letters, numbers/.test(ip) && /no realistic human faces/.test(ip) && /No logos/.test(ip) && /a calm green studio backdrop/.test(ip) && /do not draw it yourself/.test(ip));
+  check('the instruction asks for one whole thumbnail with exact words, and carries the direction', /built-in image generation tool exactly once/.test(ip) && /YouTube thumbnail/.test(ip) && /only text in the image/.test(ip) && /a calm green studio backdrop/.test(ip) && /"generated": true/.test(ip));
   await page.waitForTimeout(800);
   check('the concept is labelled as having an AI picture', (await page.locator('[data-testid="art-pill"]').count()) >= 1 && (await page.getByText('AI-generated').count()) >= 1);
   // The preview canvas really shows it: sample the thumbnail in the editor.

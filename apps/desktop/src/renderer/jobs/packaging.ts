@@ -204,7 +204,7 @@ export async function generatePackaging(ctx: JobContext): Promise<PackagingResul
             }
             const evidence = c.evidence.filter((e) => e.sessionTime <= p.duration && (!hasSpeech || quoteIsSpoken(e.quote, spoken)));
             const still = stills[c.frameIndex];
-            return { ...conceptFromTemplate(c.template, c.title, c.thumbnailText, still ? { sourceId: still.sourceId, time: still.sourceTime } : null, PALETTES[c.paletteIndex] ?? PALETTES[i % PALETTES.length]!, c.rationale, evidence, 'ai'), aiProvider: res.provider ?? gate.provider };
+            return { ...conceptFromTemplate(c.template, c.title, c.thumbnailText, still ? { sourceId: still.sourceId, time: still.sourceTime } : null, PALETTES[c.paletteIndex] ?? PALETTES[i % PALETTES.length]!, c.rationale, evidence, 'ai'), aiProvider: res.provider ?? gate.provider, ...(c.format ? { format: c.format } : {}), ...(c.imagePrompt ? { imagePrompt: c.imagePrompt } : {}) };
           });
           if (checkDescription(reply.description).ok && !makesGuarantee(reply.description) && unsupportedNumbers(reply.description, p).length === 0) description = reply.description;
           chapters = reply.chapters.filter((c) => c.sessionTime <= p.duration);

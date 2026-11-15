@@ -31,7 +31,7 @@ import { CraftWarnings } from './package/CraftWarnings';
 import { ArtPanel } from './package/ArtPanel';
 import { FalArtConsent } from './package/FalArtConsent';
 import { ConsentSheet as ArtConsentSheet } from '../ui/Consent';
-import { artAllowed, artInUse, findArtSource, generateArt, withArt, type ArtSource } from '../jobs/imagegen';
+import { applyWholeThumbnail, artAllowed, artInUse, findArtSource, generateThumbnail, isWholeThumbnail, type ArtSource } from '../jobs/imagegen';
 import { openSettingsAt } from './Settings';
 import { aiInfo, consentCovers, useAiInfo } from '../state/jobs';
 
@@ -604,7 +604,9 @@ function Inspector({ concept, selectedId, onSelect }: { concept: PackagingConcep
   };
   return (
     <aside className="pkg-right scroll" aria-label="Thumbnail inspector">
-      <section className="col" style={{ gap: 8 }}>
+{/* A whole AI thumbnail is one picture: layouts and palettes do not apply to it. */}
+      {isWholeThumbnail(concept) ? null : (
+            <section className="col" style={{ gap: 8 }}>
         <div className="pkg-heading">Layout</div>
         <Segmented
           full
@@ -626,6 +628,7 @@ function Inspector({ concept, selectedId, onSelect }: { concept: PackagingConcep
           </div>
         </div>
       </section>
+      )}
       <hr className="hr" />
       <Layers concept={concept} selectedId={selectedId} onSelect={onSelect} />
       <hr className="hr" />
@@ -1024,7 +1027,7 @@ export function Package() {
   /** An AI picture for each new concept that has none, one after another. Text stays the creator's own layer. */
   const makePictures = async (src: ArtSource) => {
     const app = useApp.getState();
-    const todo = app.project!.packaging.concepts.filter((c) => !artInUse(c) && !c.editedByCreator).slice(0, 3);
+    const todo = app.project!.packaging.concepts.filter((c) => !artInUse(c) && !isWholeThumbnail(c) && !c.editedByCreator).slice(0, 3);
     if (!todo.length) return;
     const abort = new AbortController();
     setPicturesNote(null);
@@ -1035,22 +1038,22 @@ export function Package() {
       const now = useApp.getState();
       const concept = now.project!.packaging.concepts.find((c) => c.id === todo[i]!.id);
       if (!concept) continue;
-      const res = await generateArt({ projectPath, project: now.project!, concept, direction: '', signal: abort.signal, notes: now.settings?.playbookNotes?.thumbnails ?? null, source: src });
+      const res = await generateThumbnail({ projectPath, project: now.project!, concept, direction: '', signal: abort.signal, notes: now.settings?.playbookNotes?.thumbnails ?? null, source: src });
       if (abort.signal.aborted) break;
       if (!res.ok) {
         failures.push(res.message);
         continue;
       }
       made++;
-      useApp.getState().pack((p) => ({ ...p, concepts: p.concepts.map((c) => (c.id === concept.id ? { ...c, art: [...(c.art ?? []), res.art], layers: withArt(c.layers, res.art) } : c)) }), 'Add AI picture');
+      useApp.getState().pack((p) => ({ ...p, concepts: p.concepts.map((c) => (c.id === concept.id ? applyWholeThumbnail(c, res.art) : c)) }), 'Make AI thumbnail');
     }
     setPictures(null);
     setPicturesNote(
       abort.signal.aborted
         ? `Stopped. ${made} picture${made === 1 ? '' : 's'} made.`
         : failures.length
-          ? `${made} of ${todo.length} pictures made with ${src.app}. ${failures[0]}`
-          : `Made ${made} picture${made === 1 ? '' : 's'} with ${src.app}. Each thumbnail's text stays editable on top; make more in AI picture on the right.`,
+          ? `${made} of ${todo.length} thumbnails made with ${src.app}. ${failures[0]}`
+          : `Made ${made} thumbnail${made === 1 ? '' : 's'} with ${src.app}. Ask for changes or make more under AI thumbnail on the right.`,
     );
   };
 
@@ -1108,7 +1111,7 @@ export function Package() {
           }
         >
           <div className="col gap-4" data-testid="art-gate">
-            <div>Cutaway makes the best thumbnails with an AI picture behind your title. Nothing on this Mac can make pictures yet. Set up one of these:</div>
+            <div>Cutaway designs each thumbnail as one finished AI picture: you, the props and the words, in a format that is working on YouTube now. Nothing on this Mac can make pictures yet. Set up one of these:</div>
             <div className="well" style={{ padding: 14 }}>
               <div className="eyebrow" style={{ marginBottom: 6 }}>Codex</div>
               <div className="col" style={{ gap: 8 }}>
@@ -1124,7 +1127,7 @@ export function Package() {
               <div className="eyebrow" style={{ marginBottom: 6 }}>fal.ai</div>
               <div>Add your fal.ai API key in Settings → AI generation. Each picture spends a little of your fal.ai credit.</div>
             </div>
-            <div className="tiny dim">Without either, the three concepts are built from frames of your video and text. They work, but won't look as good.</div>
+            <div className="tiny dim">Without either, the three thumbnails are simple layouts: a frame of your video with text on it. They work, but won't look as good.</div>
           </div>
         </Modal>
       ) : null}
@@ -1137,7 +1140,7 @@ export function Package() {
       <div className="row between">
         <span className="row" style={{ gap: 8 }}>
           <span className="spinner" />
-          <b>Making pictures with {pictures.app}: {pictures.done + 1} of {pictures.total}</b>
+          <b>Making thumbnails with {pictures.app}: {pictures.done + 1} of {pictures.total}</b>
         </span>
         <Button size="sm" variant="ghost" onClick={() => pictures.abort.abort()}>Stop</Button>
       </div>
