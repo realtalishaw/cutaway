@@ -4,6 +4,7 @@ import { mediaUrl, resolveSourcePath } from '@shared/api';
 import { useApp, useShownProject } from '../../state/store';
 import { Button, Segmented } from '../../ui/kit';
 import { playheadSource } from './ops';
+import { detectBrowserBars } from '../../engine/browserBar';
 
 const MIN = 0.08;
 
@@ -85,6 +86,7 @@ export function CropSheet({ onClose }: { onClose(): void }) {
   const [lock, setLock] = useState<Lock>('free');
   const [still, setStill] = useState<string | null>(null);
   const [stillFailed, setStillFailed] = useState(false);
+  const [bars, setBars] = useState<{ state: 'idle' | 'looking' | 'found' | 'none'; text: string }>({ state: 'idle', text: '' });
   const boxRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ handle: Handle; start: Rect; x: number; y: number } | null>(null);
 
@@ -176,6 +178,28 @@ export function CropSheet({ onClose }: { onClose(): void }) {
     });
   };
 
+  // Look at frames across the whole recording for a browser's toolbar and side bars, and crop them away.
+  const hideBrowserBar = async () => {
+    if (!screen || !projectPath) return;
+    setBars({ state: 'looking', text: 'Looking for the browser bar…' });
+    try {
+      const n = 10;
+      const times = Array.from({ length: n }, (_, i) => ((i + 0.5) / n) * Math.max(0.1, screen.duration - 0.1));
+      const shots = await window.cutaway.native.frames(projectPath, resolveSourcePath(projectPath, screen.path), times, 640);
+      const found = await detectBrowserBars(shots.map((f) => mediaUrl(f.path)));
+      if (!found) {
+        setBars({ state: 'none', text: 'No browser bar found in this recording. Drag the edges to crop by hand.' });
+        return;
+      }
+      setLock('free');
+      setRect({ x: found.left, y: found.top, w: 1 - found.left - found.right, h: 1 - found.top - found.bottom });
+      const parts = [found.top > 0 ? 'the tabs and address bar' : null, found.left > 0 ? 'the side bar' : null, found.right > 0 ? 'the strip on the right' : null].filter(Boolean);
+      setBars({ state: 'found', text: `Found ${parts.join(', ').replace(/, ([^,]*)$/, ' and $1')}. Check the frame, adjust if needed, then apply.` });
+    } catch {
+      setBars({ state: 'none', text: 'Could not read frames from the recording. Drag the edges to crop by hand.' });
+    }
+  };
+
   const full = isFull(rect);
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -210,6 +234,15 @@ export function CropSheet({ onClose }: { onClose(): void }) {
               <span className="label">Shape</span>
               <Segmented label="Crop shape" value={lock} onChange={chooseLock} options={LOCKS} />
             </div>
+            {screen && screen.kind !== 'image' ? (
+              <div className="field" style={{ gap: 6 }}>
+                <span className="label">Recorded a browser?</span>
+                <Button icon="globe" onClick={() => void hideBrowserBar()} disabled={bars.state === 'looking'} data-testid="crop-browser-bar" title="Find the browser's tabs, address bar and side bars in the recording and crop them away">
+                  {bars.state === 'looking' ? 'Looking…' : 'Hide browser bar'}
+                </Button>
+                {bars.text ? <span className="tiny dim" data-testid="crop-browser-note">{bars.text}</span> : null}
+              </div>
+            ) : null}
             <div className="crop-fields">
               {(['x', 'y', 'w', 'h'] as const).map((key) => (
                 <label key={key} className="crop-field">

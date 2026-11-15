@@ -307,6 +307,11 @@ function pageCrop(t: BrowserTabTarget, trim: number): WindowInsets {
   return { top, left: Math.max(0, Math.round(t.content.left)), bottom: Math.max(0, Math.round(t.content.bottom)), right: Math.max(0, Math.round(t.content.right)) };
 }
 
+/** Browsers the Tab target can record page-only (kept in step with native BrowserTabs.swift). */
+const TAB_BROWSERS = new Set(['com.apple.Safari', 'com.apple.SafariTechnologyPreview', 'com.google.Chrome', 'com.microsoft.edgemac', 'com.brave.Browser', 'com.vivaldi.Vivaldi', 'company.thebrowser.Browser']);
+/** Other browsers: their bar is recorded, and can be cropped away afterwards. */
+const OTHER_BROWSER = /firefox|perplexity|comet|dia|opera|orion|zen|thebrowser|chromium|arc|browser/i;
+
 const short = (s: string, n = 18) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
 // ───────────────────────────── remembered options ─────────────────────────────
@@ -1291,6 +1296,17 @@ export function Record() {
           </PermissionNote>
         ) : null}
         {duplicate ? <div className="perm-note denied" role="alert"><Icon name="warn" size={14} /><span className="grow">The same device cannot be both cameras. Choose a different camera for B, or turn it off.</span></div> : null}
+        {mode === 'window' && win && (TAB_BROWSERS.has(win.bundleId) || OTHER_BROWSER.test(`${win.bundleId} ${win.app}`)) ? (
+          <div className="perm-note" role="status" data-testid="browser-window-note">
+            <Icon name="globe" size={14} />
+            <span className="grow">
+              {TAB_BROWSERS.has(win.bundleId)
+                ? `Recording ${win.app}: its tabs and address bar will be in the video. Choose Tab to record just the page.`
+                : `Recording ${win.app}: its tabs and address bar will be in the video. To hide them afterwards, use Crop → Hide browser bar in the editor.`}
+            </span>
+            {TAB_BROWSERS.has(win.bundleId) ? <Button size="sm" icon="globe" onClick={() => setMode('tab')} data-testid="browser-window-tab">Record just the page</Button> : null}
+          </div>
+        ) : null}
         {resizeNote ? (
           <div className={`perm-note${resizeNote.tone === 'warn' ? ' denied' : ''}`} role="status">
             <Icon name={resizeNote.tone === 'warn' ? 'warn' : 'check'} size={14} />
