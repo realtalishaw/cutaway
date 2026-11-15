@@ -5,7 +5,7 @@ import { resolveSourcePath } from '@shared/api';
 import { useApp, useProject } from '../../../state/store';
 import { Icon } from '../../../ui/icons';
 import { Button, Field, Segmented, Slider, Toggle } from '../../../ui/kit';
-import { addBroll, addMask, addOverlay, addZoom, camerasFor, cutRange, lockRange, patchItem, removeSelected, restore, restoreOne, seekSource, setLayout, setSpeed, toggleItemLock } from '../ops';
+import { addBroll, addMask, addOverlay, addZoom, camerasFor, cutRange, lockRange, patchItem, removeSelected, restore, restoreOne, revealLayout, seekSource, setLayout, setSpeed, toggleItemLock } from '../ops';
 import { Section, TimesRow, Why, app, pct } from './shared';
 import { musicClipsOf, soundsOf } from '@cutaway/core';
 import { addText, setOverlaySound } from '../titleSoundOps';
@@ -150,10 +150,10 @@ export function SelectionPanel({ pickTarget }: { pickTarget: (what: 'zoom' | 'ma
     return (
       <Section title="View" action={<div className="row gap-2">{lockBtn('layouts', l.meta)}{del}</div>}>
         <TimesRow project={project} range={l} />
-        <Segmented full value={l.mode} onChange={(m) => patchItem('layouts', l.id, { mode: m }, 'Change view', false)} options={modes.map(([value, label, icon]) => ({ value, label, icon }))} />
+        <Segmented full value={l.mode} onChange={(m) => (patchItem('layouts', l.id, { mode: m }, 'Change view', false), revealLayout(l.id))} options={modes.map(([value, label, icon]) => ({ value, label, icon }))} />
         {l.mode !== 'screen' ? (
           <Field label="Camera angle" hint={cams.length < 2 && project.sources.some((s) => s.role === 'cameraB') ? 'A camera is only offered where it has footage for this whole range.' : undefined}>
-            <Segmented full value={l.camera} onChange={(c) => patchItem('layouts', l.id, { camera: c }, 'Change angle', false)} options={[{ value: 'A', label: 'Camera A', disabled: !cams.includes('A') }, { value: 'B', label: 'Camera B', disabled: !cams.includes('B') }]} />
+            <Segmented full value={l.camera} onChange={(c) => (patchItem('layouts', l.id, { camera: c }, 'Change angle', false), revealLayout(l.id))} options={[{ value: 'A', label: 'Camera A', disabled: !cams.includes('A') }, { value: 'B', label: 'Camera B', disabled: !cams.includes('B') }]} />
           </Field>
         ) : null}
         <Field label="Transition in">

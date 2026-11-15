@@ -361,6 +361,7 @@ try {
   }, fake);
   check('the generated screen recording imports as the screen source', imported[0] === 'screen', imported.join(','));
   await page.waitForSelector('.editor .timeline', { timeout: 15000 });
+  await page.click('[data-testid="tools-hide"]');
   await page.click('.ed-tools button[aria-label^="Find sensitive data"]');
   await page.waitForSelector('[data-testid="sensitive-sheet"]', { timeout: 5000 });
   const before = await state(() => window.__cutaway.useApp.getState().project.edit.masks.length);

@@ -129,8 +129,13 @@ function TopControls({ onCrop }: { onCrop(): void }) {
 }
 
 /** Floating tool pill on the left edge of the stage: add a zoom, a camera layout or a mask at the playhead. */
+/**
+ * The "Add" toolbar on the left of the preview: things to put in the video at the playhead. (The bar on the right
+ * opens settings panels.) Every button is labelled, and the view choices sit in one menu.
+ */
 function PreviewToolbar({ pickMask, findSensitive }: { pickMask(): void; findSensitive(): void }) {
   const project = useShownProject();
+  const [menu, setMenu] = useState<'view' | 'hide' | null>(null);
   const hasScreen = project.sources.some((s) => s.role === 'screen');
   const hasCam = project.sources.some((s) => s.role === 'cameraA' || s.role === 'cameraB');
   const twoCams = project.sources.some((s) => s.role === 'cameraA') && project.sources.some((s) => s.role === 'cameraB');
@@ -138,37 +143,56 @@ function PreviewToolbar({ pickMask, findSensitive }: { pickMask(): void; findSen
     const t = playheadSource(project);
     return { start: t, end: Math.min(project.duration, t + len) };
   };
-  const tool = (icon: Parameters<typeof Icon>[0]['name'], label: string, run: () => void) => (
-    <button key={label} className="tbtn" title={label} aria-label={label} onClick={run}>
-      <Icon name={icon} size={19} />
+  const tool = (icon: Parameters<typeof Icon>[0]['name'], short: string, label: string, run: () => void, opts: { menu?: 'view' | 'hide'; testId?: string } = {}) => (
+    <button
+      key={short}
+      className={`tbtn labelled${opts.menu && menu === opts.menu ? ' on' : ''}`}
+      title={label}
+      aria-label={label}
+      aria-haspopup={opts.menu ? 'menu' : undefined}
+      aria-expanded={opts.menu ? menu === opts.menu : undefined}
+      data-testid={opts.testId}
+      onClick={opts.menu ? () => setMenu(menu === opts.menu ? null : opts.menu!) : () => (setMenu(null), run())}
+    >
+      <Icon name={icon} size={18} />
+      <span>{short}</span>
     </button>
   );
-  const groups = [
-    hasScreen ? [tool('zoom', 'Add zoom at the playhead', () => addZoom(range(3)))] : [],
-    hasCam
-      ? [
-          tool('camera', 'Fullscreen camera from the playhead', () => setLayout(range(4), 'camera')),
-          ...(twoCams ? [tool('sync', 'Show the other camera (A or B) from the playhead (Ctrl+A)', () => void switchCamera(range(4)))] : []),
-          ...(hasScreen ? [tool('split', 'Split screen from the playhead', () => setLayout(range(4), 'split')), tool('layout', 'Camera overlay from the playhead', () => setLayout(range(4), 'overlay')), tool('screen', 'Screen only from the playhead', () => setLayout(range(4), 'screen'))] : []),
-        ]
-      : [],
-    hasScreen
-      ? [
-          tool('mask', 'Hide sensitive content: drag over it on the preview', () => (addMask(range(5), 'screen'), pickMask())),
-          tool('shield', 'Find sensitive data: emails, keys, card numbers, passwords', findSensitive),
-          tool('chat', 'Add a callout at the playhead', () => addOverlay(range(4), 'callout', 'Callout')),
-        ]
-      : [],
-    [tool('text', 'Add text at the playhead (T). Titles and lower thirds are in the Text tab.', () => addText('plain'))],
-  ].filter((g) => g.length);
-  if (!groups.length) return null;
+  const item = (icon: Parameters<typeof Icon>[0]['name'], text: string, label: string, run: () => void, hint?: string) => (
+    <button key={text} className="menu-item" role="menuitem" aria-label={label} title={label} onClick={() => (setMenu(null), run())}>
+      <Icon name={icon} size={15} />
+      <span className="grow">{text}</span>
+      {hint ? <span className="dim tiny mono">{hint}</span> : null}
+    </button>
+  );
+  const buttons = [
+    hasScreen ? tool('zoom', 'Zoom', 'Add zoom at the playhead', () => addZoom(range(3))) : null,
+    hasCam ? tool('layout', 'View', 'Change what shows from the playhead: camera, split, screen…', () => undefined, { menu: 'view', testId: 'tools-view' }) : null,
+    hasScreen ? tool('mask', 'Hide', 'Hide private things: blur an area, or find emails, keys and passwords', () => undefined, { menu: 'hide', testId: 'tools-hide' }) : null,
+    hasScreen ? tool('chat', 'Callout', 'Add a callout at the playhead', () => addOverlay(range(4), 'callout', 'Callout')) : null,
+    tool('text', 'Text', 'Add text at the playhead (T). Titles and lower thirds are in the Text tab.', () => addText('plain')),
+  ].filter(Boolean);
   return (
-    <div className="ed-tools" role="toolbar" aria-label="Add to the video">
-      {groups.map((g, i) => (
-        <div key={i} className="ed-tools-group">
-          {g}
+    <div className="ed-tools" role="toolbar" aria-label="Add to the video at the playhead">
+      <div className="ed-tools-head">Add</div>
+      {buttons}
+      {menu ? <div className="rb-veil" onMouseDown={() => setMenu(null)} /> : null}
+      {menu === 'view' ? (
+        <div className="menu ed-tools-menu" role="menu" data-testid="tools-view-menu">
+          <div className="menu-head">Show from the playhead, for 4 seconds</div>
+          {item('camera', 'Camera only', 'Fullscreen camera from the playhead', () => setLayout(range(4), 'camera'), '⌃L')}
+          {hasScreen ? item('layout', 'Screen + camera', 'Camera overlay from the playhead', () => setLayout(range(4), 'overlay'), '⌃B') : null}
+          {hasScreen ? item('split', 'Split screen', 'Split screen from the playhead', () => setLayout(range(4), 'split')) : null}
+          {hasScreen ? item('screen', 'Screen only', 'Screen only from the playhead', () => setLayout(range(4), 'screen'), '⌃S') : null}
+          {twoCams ? item('sync', 'Other camera (A ↔ B)', 'Show the other camera (A or B) from the playhead (Ctrl+A)', () => void switchCamera(range(4)), '⌃A') : null}
         </div>
-      ))}
+      ) : null}
+      {menu === 'hide' ? (
+        <div className="menu ed-tools-menu hide" role="menu" data-testid="tools-hide-menu">
+          {item('mask', 'Blur an area', 'Hide sensitive content: drag over it on the preview', () => (addMask(range(5), 'screen'), pickMask()))}
+          {item('shield', 'Find private info', 'Find sensitive data: emails, keys, card numbers, passwords', findSensitive)}
+        </div>
+      ) : null}
     </div>
   );
 }

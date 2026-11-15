@@ -6,6 +6,7 @@ import {
   cameraSource,
   coversRange,
   resolveLayout,
+  MOTION,
   dismissSuggestion,
   manualCut,
   meta,
@@ -111,6 +112,23 @@ export function camerasFor(project: Project, range: Range): CameraSlot[] {
   return (['A', 'B'] as CameraSlot[]).filter((slot) => coversRange(cameraSource(project, slot), range));
 }
 
+/**
+ * A view's animated transition starts on its first frame, so a paused playhead sitting there still shows the view
+ * before it, and a change looks like it did nothing. Move a paused playhead just past the transition so the change
+ * shows. The video itself is unchanged.
+ */
+export function revealLayout(id: string) {
+  const p = app().project;
+  const pb = usePlayback.getState();
+  const l = p?.edit.layouts.find((x) => x.id === id);
+  if (!p || !l || pb.playing || l.transition !== 'smooth') return;
+  const map = timeMapOf(p);
+  const startOut = map.toOutput(l.start);
+  const endOut = map.toOutput(l.end);
+  const settle = MOTION[p.edit.appearance.motion ?? 'balanced']?.layout ?? 0.55;
+  if (pb.time >= startOut - 1e-3 && pb.time < startOut + settle) pb.seek(Math.min(endOut - 1 / 60, startOut + settle + 0.05));
+}
+
 export function setLayout(range: Range, mode: LayoutMode, camera?: CameraSlot) {
   let id = '';
   app().edit((e, p) => {
@@ -121,7 +139,7 @@ export function setLayout(range: Range, mode: LayoutMode, camera?: CameraSlot) {
     id = next.layouts.find((l) => !e.layouts.includes(l) && l.start >= range.start - 1e-3 && l.end <= range.end + 1e-3)?.id ?? '';
     return next;
   }, 'Change view');
-  if (id) app().select({ kind: 'layout', id });
+  if (id) (app().select({ kind: 'layout', id }), revealLayout(id));
 }
 
 /**
@@ -138,6 +156,7 @@ export function switchCamera(range: Range): boolean {
       const other: CameraSlot = block.camera === 'A' ? 'B' : 'A';
       if (!camerasFor(p, block).includes(other)) return false;
       app().edit((e) => ({ ...e, layouts: e.layouts.map((l) => (l.id === block.id ? { ...l, camera: other } : l)) }), `Show Camera ${other}`);
+      revealLayout(block.id);
       return true;
     }
   }
