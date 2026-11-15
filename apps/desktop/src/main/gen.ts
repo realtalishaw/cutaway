@@ -112,11 +112,12 @@ async function failure(provider: GenProvider, res: Response): Promise<GenError> 
     /* not JSON */
   }
   const name = provider === 'fal' ? 'fal.ai' : 'ElevenLabs';
+  // Checked first: an account that has run out answers 403 too ("User is locked. Reason: Exhausted balance").
+  if (res.status === 402 || /quota|credit|balance|insufficient/i.test(detail)) return new GenError(`Your ${name} account is out of credits: ${detail}`, 'no-credits');
   if (res.status === 401 || res.status === 403) {
     if (/permission|scope/i.test(detail)) return new GenError(`Your ${name} key is not allowed to do this: ${detail}`, 'bad-key');
     return new GenError(`${name} did not accept the API key. Check it in Settings › AI generation.`, 'bad-key');
   }
-  if (res.status === 402 || /quota|credit|balance|insufficient/i.test(detail)) return new GenError(`Your ${name} account is out of credits: ${detail}`, 'no-credits');
   if (res.status === 422 || res.status === 400) return new GenError(`${name} refused the request: ${detail}`, 'rejected');
   return new GenError(`${name} could not make it (${res.status}): ${detail}`, 'failed');
 }
