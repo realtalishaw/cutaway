@@ -773,7 +773,16 @@ export function Record() {
       const isDemo = !!cfg.screen?.includeCutaway;
       if (isDemo) useDemoTake.setState({ projectPath });
       await api().app.recordingMode(true, { cameras: takeCameras.current.length ? takeCameras.current : cfg.cameras.map((c) => `camera${c.slot}`), keepWindow: isDemo });
-      if (isDemo) useApp.getState().toast('Recording Cutaway. Go anywhere in the app; stop from the recording controls when you are done.');
+      if (isDemo) {
+        // A demo of Cutaway shows Cutaway, not its recorder: go back into the app straight away. The take keeps
+        // running in the background, and stops from the floating controls (which are not in the video). No toast
+        // either: it would be in the recording.
+        const p = useApp.getState().project;
+        if (p && p.sources.some((x) => x.role === 'screen' || x.role === 'cameraA' || x.role === 'cameraB')) {
+          useApp.getState().setView('edit');
+          useApp.getState().go('project');
+        } else await backToLibrary();
+      }
     } catch (e) {
       const code = (e as { code?: string }).code;
       setStartError(code === 'permission-denied' ? `${errorText(e)} Check the permissions, or record with the remaining sources.` : `${errorText(e)} Nothing was recorded. Press Start recording to try again.`);

@@ -53,8 +53,14 @@ try {
   await page.waitForFunction(() => document.querySelector('.rec-live'), null, { timeout: 15000 }).catch(() => {});
   const main = await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows().find((x) => /#?$/.test(x.webContents.getURL()) && !/#(notes|controller|countdown|selfview)$/.test(x.webContents.getURL())); return { minimized: w.isMinimized(), visible: w.isVisible() }; });
   check('Cutaway’s window stays up when the take starts (not minimised)', main.visible && !main.minimized, JSON.stringify(main));
+  // the app, not the recorder: Cutaway goes back to the Library by itself as soon as the take starts
+  const backOnItsOwn = await page.waitForSelector('button:has-text("New recording")', { timeout: 10000 }).then(() => true, () => false);
+  const route = await page.evaluate(() => window.__cutaway.useApp.getState().route);
+  const toasts = await page.evaluate(() => window.__cutaway.useApp.getState().toasts.map((t) => t.text));
+  check('when the take starts, Cutaway shows its projects instead of the recorder, ready to demo', backOnItsOwn && route === 'library', route);
+  check('…with no toast on screen (it would be in the video)', !toasts.some((t) => /Recording Cutaway/.test(t)), JSON.stringify(toasts));
   await sleep(1800);
-  // move around the app mid-take: the Library
+  // move around the app mid-take: open the Library again (still allowed while recording)
   await page.evaluate(() => window.__cutaway.actions.backToLibrary());
   await page.waitForSelector('button:has-text("New recording")', { timeout: 10000 });
   await addPatch();
