@@ -78,14 +78,15 @@ function ProjectName() {
   if (editing) {
     return (
       <div className="tb-title no-drag">
-        <input className="input" style={{ width: 260, height: 28, textAlign: 'center' }} value={draft} autoFocus onChange={(e) => setDraft(e.target.value)} onBlur={() => void commit()} onKeyDown={(e) => (e.key === 'Enter' ? void commit() : e.key === 'Escape' ? (setDraft(name), setEditing(false)) : null)} aria-label="Project name" />
+        <input className="input" style={{ width: 260, height: 28, textAlign: 'center' }} value={draft} autoFocus onFocus={(e) => e.currentTarget.select()} maxLength={80} data-testid="project-name-input" onChange={(e) => setDraft(e.target.value)} onBlur={() => void commit()} onKeyDown={(e) => (e.key === 'Enter' ? void commit() : e.key === 'Escape' ? (setDraft(name), setEditing(false)) : null)} aria-label="Project name" />
       </div>
     );
   }
   return (
-    <button className="tb-title no-drag" style={{ background: 'none', border: 0, color: 'inherit' }} onClick={() => setEditing(true)} title="Rename project">
+    <button className="tb-title tb-rename no-drag" onClick={() => setEditing(true)} title="Rename project" aria-label={`${name}. Rename project`} data-testid="project-rename">
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
       <span className="ext">.cutaway</span>
+      <Icon name="pencil" size={11} className="tb-pencil" />
     </button>
   );
 }

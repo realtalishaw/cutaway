@@ -183,8 +183,20 @@ export async function save(p: string, project: Project): Promise<{ savedAt: stri
 }
 
 export async function rename(p: string, name: string): Promise<{ path: string }> {
-  const target = await uniquePath(path.dirname(p), safeName(name), PROJECT_EXT);
-  await fsp.rename(p, target);
+  if (!p.endsWith(PROJECT_EXT)) throw new Error('Not a Cutaway project.');
+  const wanted = path.join(path.dirname(p), `${safeName(name)}${PROJECT_EXT}`);
+  let target: string;
+  if (wanted === p) target = p;
+  else if (wanted.toLowerCase() === p.toLowerCase()) {
+    // Only the capitals change: on a case-insensitive disk the new name "exists" already, so go through a temporary name.
+    const tmp = `${p}.renaming-${Date.now().toString(36)}`;
+    await fsp.rename(p, tmp);
+    await fsp.rename(tmp, wanted);
+    target = wanted;
+  } else {
+    target = await uniquePath(path.dirname(p), safeName(name), PROJECT_EXT);
+    await fsp.rename(p, target);
+  }
   const project = JSON.parse(await fsp.readFile(projectFile(target), 'utf8')) as Project;
   await atomicWrite(projectFile(target), JSON.stringify({ ...project, name: path.basename(target, PROJECT_EXT) }));
   return { path: target };

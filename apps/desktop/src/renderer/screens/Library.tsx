@@ -12,6 +12,18 @@ const ROLE_ICON: Record<string, IconName> = { screen: 'screen', cameraA: 'camera
 function ProjectCard({ p, index, onChanged }: { p: ProjectSummary; index: number; onChanged: () => void }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const rename = async (value: string) => {
+    setRenaming(false);
+    const next = value.trim();
+    if (!next || next === p.name) return;
+    try {
+      await window.cutaway.library.rename(p.path, next);
+      onChanged();
+    } catch (e) {
+      useApp.getState().toast(`Could not rename: ${errorText(e)}`, 'error');
+    }
+  };
   const roles = [...new Set(p.sourceRoles.filter((r) => ROLE_ICON[r]))];
   const cams = p.sourceRoles.filter((r) => r === 'cameraA' || r === 'cameraB').length;
   const status = p.missingSources > 0 ? { cls: 'danger', text: `${p.missingSources} missing` } : p.exported ? { cls: 'ok', text: 'Exported' } : p.hasFirstCut ? { cls: 'ai', text: 'First cut' } : { cls: '', text: 'Raw footage' };
@@ -23,8 +35,8 @@ function ProjectCard({ p, index, onChanged }: { p: ProjectSummary; index: number
         tabIndex={0}
         role="button"
         aria-label={`Open ${p.name}`}
-        onClick={() => void openProjectAt(p.path)}
-        onKeyDown={(e) => e.key === 'Enter' && void openProjectAt(p.path)}
+        onClick={() => !renaming && void openProjectAt(p.path)}
+        onKeyDown={(e) => !renaming && e.key === 'Enter' && void openProjectAt(p.path)}
         onContextMenu={(e) => (e.preventDefault(), setMenu({ x: e.clientX, y: e.clientY }))}
       >
         <div className="poster">
@@ -33,7 +45,26 @@ function ProjectCard({ p, index, onChanged }: { p: ProjectSummary; index: number
           <span className={`pill ${status.cls} status`}>{status.text}</span>
         </div>
         <div className="meta">
-          <div className="name">{p.name}</div>
+          {renaming ? (
+            <input
+              className="input name-input"
+              defaultValue={p.name}
+              autoFocus
+              maxLength={80}
+              aria-label="Project name"
+              data-testid="card-name-input"
+              onFocus={(e) => e.currentTarget.select()}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') void rename(e.currentTarget.value);
+                if (e.key === 'Escape') setRenaming(false);
+              }}
+              onBlur={(e) => void rename(e.currentTarget.value)}
+            />
+          ) : (
+            <div className="name">{p.name}</div>
+          )}
           <div className="row between tiny dim">
             <span className="row gap-2">
               {roles.slice(0, 5).map((r) => (
@@ -52,6 +83,7 @@ function ProjectCard({ p, index, onChanged }: { p: ProjectSummary; index: number
         <div style={{ position: 'fixed', inset: 0, zIndex: 290 }} onMouseDown={() => setMenu(null)}>
           <div className="menu" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 120) }} onMouseDown={(e) => e.stopPropagation()}>
             <button onClick={() => (setMenu(null), void openProjectAt(p.path))}><Icon name="chevron" size={13} /> Open</button>
+            <button onClick={() => (setMenu(null), setRenaming(true))} data-testid="card-rename"><Icon name="pencil" size={13} /> Rename…</button>
             <button onClick={() => (setMenu(null), void window.cutaway.app.reveal(p.path))}><Icon name="folder" size={13} /> Show in Finder</button>
             <div className="sep" />
             <button className="danger" onClick={() => (setMenu(null), setConfirm(true))}><Icon name="trash" size={13} /> Move to Trash…</button>

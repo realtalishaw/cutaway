@@ -673,6 +673,19 @@ body.reduce-motion *::after {
   max-width: 34vw;
   white-space: nowrap;
 }
+.titlebar .tb-rename {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: text;
+  gap: 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  align-items: center;
+}
+.titlebar .tb-rename:hover, .titlebar .tb-rename:focus-visible { background: var(--bg-2); }
+.titlebar .tb-rename .tb-pencil { margin-left: 6px; color: var(--text-4); opacity: 0; transition: opacity .15s; }
+.titlebar .tb-rename:hover .tb-pencil, .titlebar .tb-rename:focus-visible .tb-pencil { opacity: 1; }
 .titlebar .tb-title .ext {
   color: var(--text-4);
   font-weight: 500;

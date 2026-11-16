@@ -12,6 +12,7 @@
 .project-card .status:not(.ai):not(.ok):not(.danger) { background: rgba(10, 8, 7, .7); }
 .project-card .meta { padding: 11px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
 .project-card .name { font-weight: 620; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 22px; }
+.project-card .name-input { width: 100%; height: 24px; font-weight: 620; font-size: 13.5px; padding: 0 6px; margin: -3px 0 -1px -6px; }
 .project-card .more { position: absolute; right: 6px; bottom: 30px; opacity: 0; transition: opacity .15s; }
 .project-card:hover .more, .project-card:focus-within .more { opacity: 1; }
 .project-card.skeleton { height: 210px; background: linear-gradient(100deg, var(--bg-1) 30%, var(--bg-2) 50%, var(--bg-1) 70%); background-size: 200% 100%; animation: sweep 1.6s linear infinite; }
