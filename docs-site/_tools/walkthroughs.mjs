@@ -3,12 +3,12 @@
 //  2. Imports each capture into a new Cutaway project, adds step captions, zooms, title/end cards and cuts
 //     with Cutaway's own edit model, and exports the MP4 with Cutaway's own exporter.
 // Usage: node docs-site/_tools/walkthroughs.mjs <footageDir> <outDir> [only-regex]
-import { launch } from '../../apps/desktop/e2e/harness.mjs';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { speak, VOICES } from './gen.mjs';
+import { keepTidy, patchRenderer, prepareMedia, renderLogo, setOpenFiles, setSaveFile, startApp } from './docs-app.mjs';
 
 // What the narrator says at each step (ElevenLabs). Each step waits until its sentence is finished.
 const NARRATION = {
@@ -43,6 +43,53 @@ const NARRATION = {
     s5: 'Now play it.',
     done: 'Nice. Now everyone can see the detail.',
   },
+  'ai-thumbnail': {
+    intro: "Let's make a thumbnail people want to click.",
+    s1: 'Open Package, and press Create three concepts.',
+    s2: 'Cutaway asks before it sends anything to fal.ai. Press Allow.',
+    s3: 'A minute later, you have three finished thumbnails, each made by AI.',
+    s4: 'For a better likeness, press Use a photo, and pick a clear photo of yourself.',
+    s5: 'Then add your logo, so the thumbnail shows the real one.',
+    s6: 'Say what to change, and press Make another.',
+    s7: 'Love it? Press Choose this pair.',
+    done: 'Your thumbnail and title are ready for YouTube.',
+  },
+  'two-cameras': {
+    intro: "Let's record with two cameras, like your Mac's camera and your iPhone.",
+    s1: 'In the recorder, your first camera is Camera A.',
+    s2: 'Open the B menu, and pick your iPhone.',
+    s3: 'Now both cameras show. Drag a bubble to move it, or press the button on it to change its shape.',
+    s4: 'Then press Start recording, as usual.',
+    s5: 'In the editor, open the Camera tab, and pick Camera B to watch it.',
+    s6: 'To switch cameras at one moment, click View, then Other camera.',
+    s7: 'Play it. The other camera shows for a few seconds.',
+    done: "Two angles, and you didn't have to line anything up.",
+  },
+  'hide-browser-bar': {
+    intro: "Recorded a website? Let's hide the browser's tabs and address bar.",
+    s1: 'Press Crop, above the preview.',
+    s2: 'Press Hide browser bar. Cutaway finds it for you.',
+    s3: 'Check the frame, then press Apply crop.',
+    s4: 'Play it. Only the page shows now.',
+    done: 'Clean, and nothing private on show.',
+  },
+  'make-a-short': {
+    intro: "Let's turn your video into a Short for phones.",
+    s1: 'Open Shorts, and press Find shorts.',
+    s2: 'Press Keep on the one you like.',
+    s3: 'Give it a title, and pick a caption style.',
+    s4: 'Play it to check it.',
+    s5: 'Then press Export this short.',
+    done: 'Your Short is saved, ready to post.',
+  },
+  'youtube-package': {
+    intro: "Let's export everything YouTube needs, in one folder.",
+    s1: 'Press Export, in the top corner.',
+    s2: 'Under Export to, choose YouTube package.',
+    s3: 'Check the list on the right. Green means ready.',
+    s4: 'Then press Export YouTube package.',
+    done: 'One folder: the video, thumbnail, title, description, chapters and captions.',
+  },
   'captions-and-music': {
     intro: "Let's add captions, and some music.",
     s1: 'Open the Captions panel.',
@@ -71,22 +118,19 @@ const outDir = path.resolve(process.argv[3] ?? 'videos');
 const only = process.argv[4] ? new RegExp(process.argv[4]) : null;
 fs.mkdirSync(outDir, { recursive: true });
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cutaway-walk-'));
-const f = (n) => path.join(work, n);
-fs.copyFileSync(path.join(demo, 'screen.mp4'), f('Screen recording.mp4'));
-fs.copyFileSync(path.join(demo, 'camera.mp4'), f('Camera.mp4'));
-execSync(`ffmpeg -hide_banner -loglevel error -y -ss 26 -i "${path.join(demo, 'screen.mp4')}" -frames:v 1 "${f('frame.png')}"`);
-fs.copyFileSync(path.join(demo, 'music.mp3'), f('Upbeat acoustic.mp3'));
+// the demo footage under friendly names, made-up devices, and the demo presenter as the camera (see docs-app.mjs)
+const media = prepareMedia(demo);
+const f = media.f;
 
-const { app, page, exportDir } = await launch({ profile: fs.mkdtempSync(path.join(os.tmpdir(), 'cutaway-docs-walk-')) });
+const { app, page, exportDir } = await startApp({ media });
+await renderLogo(page, f('listful-logo.png'));
 const S = (fn, arg) => page.evaluate(fn, arg);
 const W = 1480, H = 940;
 const sleep = (ms) => page.waitForTimeout(ms);
 
-// Native file dialogs would block a scripted run: answer them from the main process.
-await app.evaluate(({ dialog }, { music, saveTo }) => {
-  dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [music] });
-  dialog.showSaveDialog = async () => ({ canceled: false, filePath: saveTo });
-}, { music: f('Upbeat acoustic.mp3'), saveTo: path.join(exportDir, 'my-first-video.mp4') });
+// Native file dialogs would block a scripted run: they are answered from the main process.
+await setOpenFiles(app, [f('Upbeat acoustic.mp3')]);
+await setSaveFile(app, path.join(exportDir, 'my-first-video.mp4'));
 
 // ── visible pointer ──
 async function pointer() {
@@ -182,6 +226,7 @@ async function capture(name, script) {
     gate = now() + (d ? d + 0.35 : 0);
   };
   await pointer();
+  await keepTidy(page);
   // Cutaway's preview briefly draws a "source unavailable" slate while a video seeks during playback.
   // Note when that happens, so those frames can be replaced by the last good one.
   await S(() => {
@@ -226,6 +271,8 @@ const seekOut = (t) => S((x) => window.__cutaway.usePlayback.getState().seek(x),
 const outOf = (t) => S((x) => { const { useApp, timeMapOf } = window.__cutaway; return timeMapOf(useApp.getState().project).toOutput(x); }, t);
 const clearToasts = () => S(() => { const s = window.__cutaway.useApp.getState(); s.toasts.forEach((t) => s.dismissToast(t.id)); });
 async function coverRecorderPreviews(on) {
+  // The recorder now shows the demo footage and the made-up cameras (docs-app.mjs), so there is nothing to cover.
+  if (on !== 'legacy') return;
   const frame = 'data:image/png;base64,' + fs.readFileSync(f('frame.png')).toString('base64');
   await S(({ src, on }) => {
     clearInterval(window.__covers);
@@ -277,6 +324,7 @@ if (firstA) {
   await S(() => window.__cutaway.actions.backToLibrary());
   await page.reload();
   await page.waitForFunction(() => !!window.__cutaway, null, { timeout: 20000 });
+  await patchRenderer(page);
   await sleep(1500);
   await S((files) => window.__cutaway.actions.importIntoNewProject(files), [f('Screen recording.mp4'), f('Camera.mp4')]);
   await page.waitForFunction(() => !!window.__cutaway.useApp.getState().project, null, { timeout: 30000 });
@@ -402,6 +450,7 @@ if (want('captions-and-music')) {
     await step('s1'); await click('button[aria-label="Captions"]', { ms: 900 }); await sleep(1500);
     await step('s2'); const sw = await click('[role="switch"][aria-label="Hide transcript"]', { ms: 900 }); mark('z2', norm(sw)); await sleep(1800);
     await step('s3'); await click('.insp-card button:has-text("Bold")', { ms: 800 }); await sleep(1800);
+    await setOpenFiles(app, [f('Upbeat acoustic.mp3')]);
     await step('s4'); const add = await click('[data-testid="audio-add"]', { ms: 1000 }); mark('z4', norm(add)); await sleep(1300);
     await click('text=Music or sound from my files', { ms: 800 }); await sleep(2500);
     await S(() => window.__cutaway.useApp.getState().select(null));
@@ -410,6 +459,182 @@ if (want('captions-and-music')) {
     await click('button[aria-label="Play"]', { ms: 900 });
     await sleep(6500);
     await click('button[aria-label="Pause"]', { ms: 400 });
+    await step('done'); await step('end'); await sleep(700); mark('end');
+  });
+}
+
+// ════════ helpers for the newer walkthroughs ════════
+/** A new project from these files, its cameras marked as recorded together (so nothing asks to check the sync), with a first cut. */
+async function readyProject(files, name, { roles = {}, firstCut = true } = {}) {
+  await S(() => window.__cutaway.actions.backToLibrary());
+  await sleep(600);
+  await S((fs) => window.__cutaway.actions.importIntoNewProject(fs), files);
+  await page.waitForFunction(() => !!window.__cutaway.useApp.getState().project, null, { timeout: 30000 });
+  await sleep(1200);
+  await S(({ name, roles }) => window.__cutaway.useApp.getState().patch((p) => ({
+    ...p,
+    name,
+    sources: p.sources.map((s) => {
+      const role = roles[s.name] ?? roles[s.path?.split('/').pop()] ?? s.role;
+      return role === 'screen' || s.kind === 'audio' ? { ...s, role } : { ...s, role, sync: { ...s.sync, method: 'recorded-clock', status: 'aligned', offset: 0, confirmedByCreator: true } };
+    }),
+  })), { name, roles });
+  if (firstCut) {
+    await S(() => window.__cutaway.jobs.startFirstCut(false));
+    await page.waitForFunction(() => !window.__cutaway.useApp.getState().job, null, { timeout: 300000 });
+  }
+  await S(() => window.__cutaway.saveNow());
+}
+async function typeInto(sel, text) {
+  await click(sel, { ms: 700 });
+  await page.keyboard.press('Meta+a');
+  await page.keyboard.type(text, { delay: 45 });
+}
+const nav = (label) => `nav.steps button:has-text("${label}")`;
+
+// ════════ 5. AI thumbnail (fal.ai: about $0.15 a thumbnail) ════════
+if (want('ai-thumbnail') || want('youtube-package')) {
+  await readyProject([f('Screen recording.mp4'), f('Camera.mp4')], 'Grocery lists made easy');
+}
+if (want('ai-thumbnail')) {
+  await panel('background'); await seekOut(0); await sleep(800); await clearToasts();
+  results['ai-thumbnail'] = await capture('ai-thumbnail', async ({ mark, norm, step }) => {
+    await step('intro'); await sleep(2400);
+    await step('s1'); await click(nav('Package'), { ms: 900 }); await sleep(1400);
+    const c = await click('button:has-text("Create three concepts")', { ms: 900 }); mark('z1', norm(c));
+    await page.waitForSelector('[data-testid="consent-allow"]', { timeout: 30000 }); await sleep(800);
+    await step('s2'); const a = await click('[data-testid="consent-allow"]', { ms: 900 }); mark('z2', norm(a));
+    await sleep(2500);
+    await step('cutA');
+    await page.waitForSelector('[data-testid="pictures-progress"]', { state: 'detached', timeout: 400000 });
+    await clearToasts(); await sleep(600);
+    await step('s3'); mark('cutAEnd');
+    await hover('.pkg-left [data-testid], .pkg-left article, .pkg-left .concept', 900).catch(() => {});
+    await sleep(1200);
+    await hover('.pkg-center img, .pkg-center canvas', 900).catch(() => {});
+    await sleep(1600);
+    await setOpenFiles(app, [f('Headshot.jpg')]);
+    await step('s4'); const ph = await click('[data-testid="thumb-photo-choose"]', { ms: 900 }); mark('z4', norm(ph)); await sleep(1600); await clearToasts();
+    await setOpenFiles(app, [f('listful-logo.png')]);
+    await step('s5'); const lg = await click('[data-testid="thumb-logo-add"]', { ms: 900 }); mark('z5', norm(lg)); await sleep(1800); await clearToasts();
+    await step('s6'); await typeInto('[data-testid="art-direction"]', 'Show the Listful logo on a phone in my hand');
+    const g = await click('[data-testid="art-generate"]', { ms: 700 }); mark('z6', norm(g)); await sleep(2500);
+    await step('cutB');
+    await page.waitForSelector('[data-testid="art-note"]', { timeout: 400000 });
+    await clearToasts(); await sleep(400);
+    mark('cutBEnd');
+    await hover('.pkg-center img, .pkg-center canvas', 900).catch(() => {}); await sleep(2200);
+    await step('s7'); const ch = await click(page.locator('.pkg-left button:has-text("Choose this pair")').first(), { ms: 900 }); mark('z7', norm(ch)); await sleep(2500);
+    await step('done'); await step('end'); await sleep(700); mark('end');
+  });
+}
+
+// ════════ 6. YouTube package ════════
+if (want('youtube-package')) {
+  // a chosen thumbnail makes it a finished (not draft) package
+  await S(() => { const s = window.__cutaway.useApp.getState(); if (!s.project.packaging.selectedId && s.project.packaging.concepts[0]) s.pack((p) => ({ ...p, selectedId: p.concepts[0].id, reviewed: true }), 'Choose'); });
+  await panel('background'); await seekOut(0); await sleep(800); await clearToasts();
+  results['youtube-package'] = await capture('youtube-package', async ({ mark, norm, step }) => {
+    await step('intro'); await sleep(2400);
+    await step('s1'); const e = await click('header.titlebar button:has-text("Export")', { ms: 900 }); mark('z1', norm(e)); await sleep(1500);
+    await step('s2'); const y = await click(page.getByText('YouTube package', { exact: true }).first(), { ms: 900 }); mark('z2', norm(y)); await sleep(1500);
+    await step('s3'); const pf = await hover(page.getByText('Preflight', { exact: true }).first(), 900); mark('z3', { x: (pf.x + 180) / W, y: (pf.y + 160) / H }); await sleep(2600);
+    await step('s4'); const b = await click(page.locator('button').filter({ hasText: /^Export YouTube package|^Export draft package/ }).last(), { ms: 900 }); mark('z4', norm(b)); await sleep(1500);
+    await step('cutA');
+    await page.waitForFunction(() => /exported|Exported|Package saved|saved to/i.test(document.body.innerText), null, { timeout: 300000 }).catch(() => {});
+    await sleep(500); await clearToasts();
+    mark('cutAEnd');
+    await sleep(1500);
+    await step('done'); await step('end'); await sleep(700); mark('end');
+  });
+}
+
+// ════════ 7. Two cameras ════════
+if (want('two-cameras')) {
+  await S(() => window.__cutaway.actions.backToLibrary());
+  await sleep(800); await clearToasts();
+  const partA = await capture('two-cameras-a', async ({ mark, norm, step }) => {
+    await step('intro'); await sleep(2000);
+    await click('button:has-text("New recording")', { ms: 900 });
+    await page.waitForSelector('[aria-label="What to record"]', { timeout: 20000 });
+    await sleep(3500);
+    if (/No camera/.test(await page.locator('[data-testid="camera-a"]').innerText())) { await click('[data-testid="camera-a"]'); await click('.rb-pop [role="menuitemradio"]:has-text("FaceTime HD Camera")'); }
+    await step('s1'); const a = await hover('[data-testid="camera-a"]', 900); mark('z1', norm(a)); await sleep(1800);
+    await step('s2'); const b = await click('[data-testid="camera-b"]', { ms: 900 }); mark('z2', norm(b)); await sleep(900);
+    await click('.rb-pop [role="menuitemradio"]:has-text("iPhone Camera")', { ms: 800 }); await sleep(2200);
+    await step('s3'); const bub = await hover('[data-testid="cam-bubble-a"]', 900); mark('z3', norm(bub)); await sleep(900);
+    await click('[data-testid="cam-shape"]', { ms: 500 }); await sleep(1600);
+    await step('s4'); const st = await hover('[data-testid="start-recording"]', 900); mark('z4', norm(st)); await sleep(2200);
+    await step('cutA');
+  });
+  // the recorder's live previews hold the Mac's video decoders: reload before the editor part
+  await S(() => window.__cutaway.actions.backToLibrary());
+  await page.reload();
+  await page.waitForFunction(() => !!window.__cutaway, null, { timeout: 20000 });
+  await patchRenderer(page);
+  await sleep(1500);
+  await readyProject([f('Screen recording.mp4'), f('Camera.mp4'), f('iPhone camera.mp4')], 'Two cameras', { roles: { 'Camera.mp4': 'cameraA', 'iPhone camera.mp4': 'cameraB' } });
+  await panel('background'); await seekOut(0); await sleep(800); await clearToasts();
+  const partB = await capture('two-cameras-b', async ({ mark, norm, step }) => {
+    await step('s5'); const cam = await click('button[aria-label="Camera"]', { ms: 900 }); mark('z5', norm(cam)); await sleep(1200);
+    const cb = await click(page.locator('.inspector button', { hasText: /^Camera B$/ }).first(), { ms: 900 }); mark('z5b', norm(cb));
+    await S(() => window.__cutaway.usePlayback.getState().seek(17));
+    await click('button[aria-label="Play"]', { ms: 800 }); await sleep(3200); await click('button[aria-label="Pause"]', { ms: 400 });
+    await click(page.locator('.inspector button', { hasText: /^Camera A$/ }).first(), { ms: 800 }); await sleep(600);
+    await S(() => { window.__cutaway.useApp.getState().select(null); window.__cutaway.usePlayback.getState().seek(6); });
+    await step('s6'); const v = await click('[data-testid="tools-view"]', { ms: 900 }); mark('z6', norm(v)); await sleep(1000);
+    await click('[data-testid="tools-view-menu"] >> text=Other camera', { ms: 800 }); await sleep(1200);
+    await step('s7');
+    await S(() => { window.__cutaway.useApp.getState().select(null); window.__cutaway.usePlayback.getState().seek(5); });
+    await click('button[aria-label="Play"]', { ms: 800 }); await sleep(5500); await click('button[aria-label="Pause"]', { ms: 400 });
+    await step('done'); await step('end'); await sleep(700); mark('end');
+  });
+  const joined = path.join(work, 'screen-two-cameras.mp4');
+  fs.writeFileSync(path.join(work, 'join2.txt'), `file '${partA.raw}'\nfile '${partB.raw}'\n`);
+  execSync(`ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "${path.join(work, 'join2.txt')}" -c copy "${joined}"`);
+  const da = Number(execSync(`ffprobe -v error -show_entries format=duration -of csv=p=0 "${partA.raw}"`).toString());
+  const marks = { ...partA.marks };
+  for (const [k, v] of Object.entries(partB.marks)) marks[k] = { ...v, t: v.t + da };
+  marks.cutAEnd = { t: da };
+  results['two-cameras'] = { raw: joined, marks, duration: da + partB.duration };
+}
+
+// ════════ 8. Hide the browser bar ════════
+if (want('hide-browser-bar')) {
+  await readyProject([f('Browser recording.mp4'), f('Camera.mp4')], 'Weekend groceries in Listful');
+  await panel('background'); await S(() => window.__cutaway.usePlayback.getState().seek(15)); await sleep(1500); await clearToasts();
+  results['hide-browser-bar'] = await capture('hide-browser-bar', async ({ mark, norm, step }) => {
+    await step('intro'); await sleep(2600);
+    await step('s1'); const c = await click('[data-testid="crop-open"]', { ms: 900 }); mark('z1', norm(c)); await sleep(1600);
+    await step('s2'); const h = await click('[data-testid="crop-browser-bar"]', { ms: 900 }); mark('z2', norm(h));
+    await page.waitForSelector('[data-testid="crop-browser-note"]:has-text("Found")', { timeout: 30000 }).catch(() => {}); await sleep(1800);
+    await step('s3'); const r = await hover('[data-testid="crop-rect"]', 900); mark('z3', { x: (r.x + r.width / 2) / W, y: (r.y + 30) / H }); await sleep(1400);
+    await click('[data-testid="crop-apply"]', { ms: 900 }); await sleep(1500);
+    await step('s4');
+    await S(() => window.__cutaway.usePlayback.getState().seek(14));
+    await click('button[aria-label="Play"]', { ms: 900 }); await sleep(4500); await click('button[aria-label="Pause"]', { ms: 400 });
+    await step('done'); await step('end'); await sleep(700); mark('end');
+  });
+}
+
+// ════════ 9. Make a Short ════════
+if (want('make-a-short')) {
+  await readyProject([f('Screen recording.mp4'), f('Camera.mp4')], 'Share a list in Listful');
+  await panel('background'); await seekOut(0); await sleep(800); await clearToasts();
+  await setSaveFile(app, path.join(exportDir, 'short.mp4'));
+  results['make-a-short'] = await capture('make-a-short', async ({ mark, norm, step }) => {
+    await step('intro'); await sleep(2400);
+    await step('s1'); await click(nav('Shorts'), { ms: 900 }); await sleep(1300);
+    const fs1 = await click('[data-testid="shorts-find"]', { ms: 900 }); mark('z1', norm(fs1));
+    await page.waitForSelector('[data-testid="short-candidate"]', { timeout: 60000 }); await sleep(1500);
+    await step('s2'); const k = await click(page.locator('[data-testid="short-keep"]').first(), { ms: 900 }); mark('z2', norm(k)); await sleep(1800);
+    await step('s3'); await typeInto('[data-testid="short-title"]', 'Share a list in 20 seconds'); await page.keyboard.press('Tab'); await sleep(600);
+    const cap = await click('[data-testid="short-cap-boxed"], .sh-cap:has-text("Boxed")', { ms: 900 }); mark('z3', norm(cap)); await sleep(1500);
+    await step('s4'); await click('[data-testid="short-play"]', { ms: 900 }); await sleep(6000); await click('[data-testid="short-play"]', { ms: 400 });
+    await step('s5'); const ex = await click('[data-testid="short-export"]', { ms: 900 }); mark('z5', norm(ex)); await sleep(1200);
+    await step('cutA');
+    await page.waitForSelector('[data-testid="short-export-result"]', { timeout: 300000 }).catch(() => {});
+    await sleep(600); await clearToasts(); mark('cutAEnd'); await sleep(1500);
     await step('done'); await step('end'); await sleep(700); mark('end');
   });
 }
@@ -437,6 +662,43 @@ const PLAN = {
     zooms: [['s2', 2.2, 'z2', 1.7], ['s3', 2.0, 'z3', 1.5]],
     cuts: [],
     end: ['Nice zoom!', 'Viewers can see the detail now'],
+  },
+  'ai-thumbnail': {
+    title: ['Make an AI thumbnail', 'Tutorial · 1 minute'],
+    steps: [['s1', 's2', '1. Open Package, press Create three concepts'], ['s2', 'cutA', '2. Press Allow'], ['s3', 's4', '3. Three finished thumbnails, made by AI'], ['s4', 's5', '4. Use a photo of yourself'], ['s5', 's6', '5. Add your logo'], ['s6', 's7', '6. Say what to change, press Make another'], ['s7', 'done', '7. Press Choose this pair']],
+    zooms: [['s1', 2.6, 'z1', 1.6], ['s4', 2.2, 'z4', 1.6], ['s5', 2.2, 'z5', 1.6], ['s6', 3.2, 'z6', 1.5]],
+    cuts: [['cutA+0.2', 'cutAEnd-0.3'], ['cutB+0.2', 'cutBEnd-0.2']],
+    cards: [['cutAEnd', 1.6, 'About a minute later…', 'fal.ai made three thumbnails']],
+    end: ['Ready to click', 'Thumbnail and title, done'],
+  },
+  'two-cameras': {
+    title: ['Record with two cameras', 'Tutorial · 1 minute'],
+    steps: [['s1', 's2', '1. Camera A: your first camera'], ['s2', 's3', '2. In the B menu, pick your iPhone'], ['s3', 's4', '3. Drag a bubble, or change its shape'], ['s4', 'cutA', '4. Press Start recording'], ['s5', 's6', '5. Camera tab: pick Camera B to watch it'], ['s6', 's7', '6. View → Other camera'], ['s7', 'done', '7. Play it']],
+    zooms: [['s2', 2.4, 'z2', 1.6], ['s3', 2.6, 'z3', 1.5], ['s6', 2.4, 'z6', 1.6]],
+    cuts: [],
+    cards: [['cutAEnd', 1.8, '…after you record', 'In the editor']],
+    end: ['Two angles', 'Always in sync'],
+  },
+  'hide-browser-bar': {
+    title: ['Hide the browser bar', 'Tutorial · 30 seconds'],
+    steps: [['s1', 's2', '1. Press Crop'], ['s2', 's3', '2. Press Hide browser bar'], ['s3', 's4', '3. Check the frame, press Apply crop'], ['s4', 'done', '4. Play it']],
+    zooms: [['s1', 2.0, 'z1', 1.7], ['s2', 2.6, 'z2', 1.6]],
+    cuts: [],
+    end: ['Tabs and address bar: gone', 'Only your page shows'],
+  },
+  'make-a-short': {
+    title: ['Make a Short', 'Tutorial · 1 minute'],
+    steps: [['s1', 's2', '1. Open Shorts, press Find shorts'], ['s2', 's3', '2. Press Keep'], ['s3', 's4', '3. Add a title, pick a caption style'], ['s4', 's5', '4. Play it'], ['s5', 'cutA', '5. Press Export this short']],
+    zooms: [['s1', 2.2, 'z1', 1.6], ['s2', 2.0, 'z2', 1.6], ['s5', 2.2, 'z5', 1.6]],
+    cuts: [['cutA+0.2', 'cutAEnd-0.2']],
+    end: ['Short exported', 'Ready for Shorts, TikTok and Reels'],
+  },
+  'youtube-package': {
+    title: ['Export a YouTube package', 'Tutorial · 30 seconds'],
+    steps: [['s1', 's2', '1. Press Export'], ['s2', 's3', '2. Choose YouTube package'], ['s3', 's4', '3. Check the Preflight list'], ['s4', 'cutA', '4. Press Export YouTube package']],
+    zooms: [['s1', 2.0, 'z1', 1.7], ['s2', 2.2, 'z2', 1.6], ['s3', 2.4, 'z3', 1.4]],
+    cuts: [['cutA+0.2', 'cutAEnd-0.2']],
+    end: ['Ready to upload', 'Video, thumbnail, title, chapters, captions'],
   },
   'captions-and-music': {
     title: ['Add captions and music', 'Tutorial · 30 seconds'],

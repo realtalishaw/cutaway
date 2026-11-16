@@ -2,6 +2,8 @@
 //   demo/screen.mp4  – a 1920x1080 "screen recording" of a made-up list app (Listful), with narration
 //   demo/camera.mp4  – a 1280x720 "camera": a realistic talking presenter, same narration (so sync works)
 //   demo/music.mp3   – background music for the music docs and tutorial
+//   demo/camera-b.mp4        – a second camera angle (a close-up of the same take), for the two-camera docs
+//   demo/screen-browser.mp4  – the screen recording inside a made-up browser's tabs and address bar (1920x1200)
 // Narration and music come from ElevenLabs; the presenter photo from fal (Flux) and her lip-synced
 // talking video from fal (Kling AI Avatar). Everything generated is cached in _tools/cache, so re-runs are free.
 // The screen recording frames are rendered deterministically in Chrome.
@@ -83,6 +85,16 @@ if (!fs.existsSync(talking)) {
   await download(r.video.url, talking);
 }
 execSync(`ffmpeg -hide_banner -loglevel error -y -i "${talking}" -i "${out}/narration.wav" -filter_complex "[0:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30,tpad=stop_mode=clone:stop_duration=5[v];[1:a]volume=0.6[a]" -map "[v]" -map "[a]" -c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p -c:a aac -b:a 128k -t ${TOTAL} "${out}/camera.mp4"`);
+// a second camera angle for the two-camera docs: a warmer close-up of the same take, so it is in sync
+execSync(`ffmpeg -hide_banner -loglevel error -y -i "${out}/camera.mp4" -vf "crop=880:495:180:80,hflip,scale=1280:720:flags=lanczos,eq=saturation=1.12:brightness=0.02,colorbalance=rs=0.05:bs=-0.05" -c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p -c:a aac -b:a 128k "${out}/camera-b.mp4"`);
+// the same screen recorded in a browser window, tabs and address bar included (for "Hide browser bar"), 1920x1200
+{
+  const page = await browser.newPage({ viewport: { width: 1920, height: 120 }, deviceScaleFactor: 1 });
+  await page.goto('file://' + path.join(here, 'browser.html'));
+  await page.screenshot({ path: path.join(out, 'parts', 'browser-bar.png') });
+  await page.close();
+  execSync(`ffmpeg -hide_banner -loglevel error -y -i "${out}/screen.mp4" -i "${path.join(out, 'parts', 'browser-bar.png')}" -filter_complex "[0:v]pad=1920:1200:0:120:color=white[p];[p][1:v]overlay=0:0" -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -c:a copy "${out}/screen-browser.mp4"`);
+}
 // background music
 await music('Light, warm, upbeat acoustic background music for a friendly how-to video. Soft guitar and gentle percussion, no vocals.', 45, path.join(cache, 'music.mp3'));
 fs.copyFileSync(path.join(cache, 'music.mp3'), path.join(out, 'music.mp3'));

@@ -11,14 +11,17 @@ export const FAL_KEY = process.env.FAL_KEY || read('fal.key');
 /** Voices used in the docs: the made-up creator in the demo footage, and the tutorial narrator. */
 export const VOICES = { creator: 'cgSgspJ2msm6clMCkdW9' /* Jessica */, narrator: 'EXAVITQu4vr4xnSDxMaL' /* Sarah */ };
 
-/** Text to speech with ElevenLabs; writes an mp3. */
+/** Text to speech with ElevenLabs (directly, or through fal.ai's ElevenLabs models when only a fal key is set); writes an mp3. */
 export async function speak(text, file, voice = VOICES.creator, { stability = 0.45, style = 0.25 } = {}) {
   if (fs.existsSync(file)) return file; // generated media is cached: re-runs cost nothing
+  const viaFal = async () => download((await fal('fal-ai/elevenlabs/tts/multilingual-v2', { text, voice, stability, similarity_boost: 0.8, style }, { log: () => {} })).audio.url, file);
+  if (!ELEVEN_KEY || process.env.DOCS_TTS === 'fal') return viaFal();
   const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}?output_format=mp3_44100_128`, {
     method: 'POST',
     headers: { 'xi-api-key': ELEVEN_KEY, 'content-type': 'application/json' },
     body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', voice_settings: { stability, similarity_boost: 0.8, style, use_speaker_boost: true } }),
   });
+  if ((r.status === 401 || r.status === 403) && FAL_KEY) return viaFal(); // an expired ElevenLabs key: same voice through fal.ai
   if (!r.ok) throw new Error(`ElevenLabs ${r.status}: ${(await r.text()).slice(0, 300)}`);
   fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()));
   return file;

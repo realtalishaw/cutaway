@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- A made-up browser's tabs and address bar (dark theme) (no real browser's branding), drawn above the demo screen
+     to make demo/screen-browser.mp4 for the "Hide browser bar" docs. 1920x120, the page goes underneath. -->
+<html><head><meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1920px; height: 120px; overflow: hidden; font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif; background: #35363a; }
+  .tabs { height: 52px; display: flex; align-items: flex-end; padding: 0 16px 0 110px; gap: 4px; position: relative; }
+  .lights { position: absolute; left: 22px; top: 20px; display: flex; gap: 9px; }
+  .lights i { width: 13px; height: 13px; border-radius: 50%; display: block; }
+  .tab { height: 40px; width: 250px; border-radius: 11px 11px 0 0; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 15px; color: #a9acb4; }
+  .tab.on { background: #3d3e43; color: #eceef2; }
+  .fav { width: 18px; height: 18px; border-radius: 5px; flex: none; }
+  .x { margin-left: auto; color: #80838c; font-size: 15px; }
+  .plus { font-size: 24px; color: #9a9da6; padding: 0 12px 8px; }
+  .bar { height: 68px; background: #35363a; display: flex; align-items: center; gap: 18px; padding: 0 22px; }
+  .nav { display: flex; gap: 20px; color: #b4b7bf; font-size: 22px; }
+  .url { flex: 1; height: 42px; border-radius: 21px; background: #2d2e32; display: flex; align-items: center; padding: 0 20px; gap: 12px; font-size: 18px; color: #eceef2; }
+  .url .lock { color: #8fc39d; font-size: 15px; }
+  .url .dim { color: #9a9da6; }
+  .ico { width: 30px; height: 30px; border-radius: 50%; background: #4a4b50; }
+</style></head>
+<body>
+  <div class="tabs">
+    <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+    <div class="tab on"><span class="fav" style="background:linear-gradient(135deg,#7c5cff,#ff7ab6)"></span>Listful – My lists<span class="x">×</span></div>
+    <div class="tab"><span class="fav" style="background:#4cc38a"></span>Weekly meal plan<span class="x">×</span></div>
+    <div class="tab"><span class="fav" style="background:#f08a5d"></span>Recipe ideas<span class="x">×</span></div>
+    <div class="plus">+</div>
+  </div>
+  <div class="bar">
+    <div class="nav"><span>←</span><span>→</span><span>↻</span></div>
+    <div class="url"><span class="lock">🔒</span>listful.example<span class="dim">/lists/weekend-groceries</span></div>
+    <div class="ico"></div><div class="ico"></div>
+  </div>
+</body></html>

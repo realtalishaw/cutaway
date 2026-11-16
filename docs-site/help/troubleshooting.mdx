@@ -13,9 +13,16 @@ description: "Quick fixes for common problems."
   <Accordion title="The recorder says it can't record my screen">
     Your Mac needs to give Cutaway permission.
 
-    1. Open **System Settings → Privacy & Security → Screen & System Audio Recording**.
-    2. Find **Cutaway** and switch it on.
-    3. Go back to Cutaway. You don't need to restart it.
+    1. On the recorder, press **Allow…** if you see it (**1** below).
+    2. Open **System Settings → Privacy & Security → Screen & System Audio Recording**.
+    3. Find **Cutaway** and switch it on.
+    4. Go back to Cutaway. You don't need to restart it.
+
+    <Frame>
+      <img src="/images/annotated/record-permission.png" alt="The recorder before screen recording is allowed, with the Allow button marked 1" />
+    </Frame>
+
+    Already on, but it still doesn't work? An update can leave an old entry behind. Select **Cutaway** in that list, press **−** to remove it, then press **+** and add Cutaway again.
   </Accordion>
 
   <Accordion title="My camera or microphone doesn't show up">
@@ -33,21 +40,36 @@ description: "Quick fixes for common problems."
   </Accordion>
 
   <Accordion title="There's no sound in my recording">
-    Before recording, check the microphone menu in the bottom bar doesn't say **No microphone**. Pick your microphone there.
+    Before recording, check the microphone menu in the bottom bar (**5** below) doesn't say **No microphone**. Pick your microphone there. The small bar under its name moves when you talk.
 
-    Want the sound from your Mac too (like a video playing)? Turn on **system audio** in the same bar.
+    Want the sound from your Mac too (like a video playing)? Turn on **system audio** in the same bar (**6**).
+
+    <Frame>
+      <img src="/images/annotated/record.png" alt="The recorder's bottom bar, with the microphone menu marked 5 and the system audio menu marked 6" />
+    </Frame>
   </Accordion>
 
   <Accordion title="Cutaway cut out something I wanted">
     Nothing is deleted for good.
 
     - Open the **AI review** panel (sparkle icon) and press **Restore** on that change.
+
+      <Frame>
+        <img src="/images/screens/tab-review.png" alt="The AI review panel listing each pause and filler word the first cut removed, each with a Restore button" />
+      </Frame>
+
     - Or open the **Transcript**, select the crossed-out words, and press **Restore**.
     - Or press **Command + Z** to undo.
   </Accordion>
 
   <Accordion title="My camera and screen are out of sync">
-    Your lips don't match your voice? Click **Sources** in the top bar and press **Review sync** next to your camera. Press **Find sync from audio** to let Cutaway line them up, or change the **Offset** yourself until your lips match.
+    Your lips don't match your voice? Click **Sources** in the top bar and press **Review sync** next to your camera (**1** below).
+
+    <Frame>
+      <img src="/images/annotated/sources.png" alt="The Sources page with the Review sync button next to the camera file marked 1" />
+    </Frame>
+
+    Press **Find sync from audio** to let Cutaway line them up, or change the **Offset** yourself until your lips match.
   </Accordion>
 
   <Accordion title="My screen recording was imported as a camera">
@@ -73,4 +95,4 @@ description: "Quick fixes for common problems."
   </Accordion>
 </AccordionGroup>
 
-Still stuck? Get in touch and tell us what you tried.
+Still stuck? [Open an issue on GitHub](https://github.com/realtalishaw/cutaway/issues) and tell us what you tried.

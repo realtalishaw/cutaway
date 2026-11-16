@@ -1,48 +1,113 @@
 ---
 title: "Welcome to Cutaway"
 sidebarTitle: "Welcome"
-description: "Record your screen and your face, and Cutaway helps you turn it into a finished video. No editing experience needed."
+description: "Record your screen and your face, and Cutaway turns it into a finished video, with a thumbnail, a title and Shorts. Free and open source. No editing experience needed."
 ---
 
 <Frame>
-  <img src="/images/screens/editor.png" alt="The Cutaway editor showing a finished video with a colorful background and a camera bubble" />
+  <img src="/images/hero.jpg" alt="The Cutaway editor with a finished how-to video, next to an AI-made YouTube thumbnail and an upright Short" />
 </Frame>
 
 ## What is Cutaway?
 
-Cutaway is a Mac app for making videos, like a how-to video for YouTube.
+Cutaway is a free Mac app for making videos, like a how-to video for YouTube. It records your screen and your camera, cuts out the boring bits for you, and gets everything ready to post.
 
 You do three things:
 
-1. **Record.** Cutaway records your screen, and your camera if you want.
-2. **Let Cutaway make a first cut.** It removes long pauses and "um"s for you, and puts everything together.
-3. **Export.** You get a video file you can upload anywhere.
+1. **Record.** Cutaway records your screen, and one or two cameras if you want.
+2. **Let Cutaway make a first cut.** It removes long pauses and "um"s, adds zooms and switches between your screen and your face.
+3. **Export.** You get a video file, or a whole YouTube package with a thumbnail, title, chapters and captions.
 
 That's it. You can change anything you like in between, but you don't have to.
 
 <Note>
-  **Never edited a video before?** You're in the right place. These docs explain every step in plain words. If you see a word you don't know, check [Words to know](/words-to-know).
+  **Never edited a video before?** You're in the right place. These docs explain every step in plain words, with pictures. If you see a word you don't know, check [Words to know](/words-to-know).
 </Note>
 
 ## Where to start
 
 <CardGroup cols={2}>
+  <Card title="Install Cutaway" icon="download" href="/install">
+    Get the app and give it permission to record.
+  </Card>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
     Make your first video in about 5 minutes.
   </Card>
   <Card title="Tutorials" icon="circle-play" href="/tutorials/index">
     Short videos that show you how, step by step.
   </Card>
-  <Card title="Install Cutaway" icon="download" href="/install">
-    Get the app and give it permission to record.
-  </Card>
-  <Card title="Words to know" icon="book-open" href="/words-to-know">
-    Simple meanings for video words like "timeline" and "export".
+  <Card title="A tour of the editor" icon="map" href="/edit/editor-tour">
+    What every part of the screen is for, in one picture.
   </Card>
 </CardGroup>
 
+## What you can make
+
+<CardGroup cols={3}>
+  <Card title="A first cut, made for you" icon="wand-magic-sparkles" href="/edit/first-cut">
+    Pauses and "um"s gone, zooms and camera views added.
+  </Card>
+  <Card title="Edit by text" icon="align-left" href="/edit/edit-by-transcript">
+    Delete words from the transcript, and they're gone from the video.
+  </Card>
+  <Card title="Zooms and callouts" icon="magnifying-glass-plus" href="/edit/zoom">
+    Help viewers see the small stuff.
+  </Card>
+  <Card title="Two cameras" icon="camera" href="/edit/two-cameras">
+    Your Mac's camera and your iPhone, always in sync.
+  </Card>
+  <Card title="Captions and music" icon="closed-captioning" href="/edit/captions">
+    Words on screen and a little background music.
+  </Card>
+  <Card title="Animations" icon="sparkles" href="/edit/animations">
+    A subscribe button, an arrow, a counter, and more.
+  </Card>
+  <Card title="AI thumbnails" icon="image" href="/share/thumbnail-and-title">
+    You, your logo and a few huge words, as one finished picture.
+  </Card>
+  <Card title="Shorts" icon="mobile-screen" href="/share/shorts">
+    Upright videos for phones, from your best moments.
+  </Card>
+  <Card title="Work with Claude or Codex" icon="robot" href="/ai/make-videos-from-claude-or-codex">
+    Ask your AI assistant to edit the video for you.
+  </Card>
+</CardGroup>
+
+## New in 0.3.0
+
+<AccordionGroup>
+  <Accordion title="AI thumbnails that look like real YouTube thumbnails" icon="image" defaultOpen>
+    The **Package** tab makes the *whole* thumbnail as one picture: you, the props and the words, built on a thumbnail format that works on YouTube. Use your own photo, add your logo, ask for changes, and keep every version. It works with **Codex** or your own **fal.ai** key.
+
+    <Frame>
+      <img src="/images/annotated/art-variations.png" alt="An AI thumbnail in the Package tab, with earlier versions under AI thumbnail on the right" />
+    </Frame>
+
+    Try it: [Make a click-worthy AI thumbnail](/tutorials/ai-thumbnail).
+  </Accordion>
+  <Accordion title="Two cameras in the editor" icon="camera">
+    Pick the main camera in the **Camera** tab, switch cameras at any moment with **View → Other camera** (or **Control + A**), and cut both at once. See [Record and edit with two cameras](/tutorials/two-cameras).
+  </Accordion>
+  <Accordion title="Hide the browser bar" icon="globe">
+    Recorded a website? **Crop → Hide browser bar** finds the tabs, address bar and side bars, and crops them away. See [Hide your browser's tabs and address bar](/tutorials/hide-browser-bar).
+  </Accordion>
+  <Accordion title="A faster first cut, with live status" icon="bolt">
+    The first cut takes minutes, not a quarter of an hour. While the AI works, you see what it's doing, with a clock and a running count of cuts, zooms and view changes. See [Your first cut](/edit/first-cut).
+  </Accordion>
+  <Accordion title="A labelled Add bar" icon="plus">
+    The bar on the left of the preview now says what each button does: **Zoom**, **View**, **Hide**, **Callout** and **Text**. See [A tour of the editor](/edit/editor-tour).
+  </Accordion>
+  <Accordion title="Move and reshape your camera" icon="circle-user">
+    Drag the camera bubble to any corner and change its shape, before and while you record. See [Layouts and cameras](/record/layouts-and-cameras#move-your-camera-and-change-its-shape).
+  </Accordion>
+  <Accordion title="Rename projects, and see their thumbnails" icon="pen">
+    Rename a project from the title bar or the projects list. Each project card shows the thumbnail you chose.
+  </Accordion>
+</AccordionGroup>
+
 ## Good to know
 
+- **It's free and open source.** The code is on [GitHub](https://github.com/realtalishaw/cutaway).
 - **Your videos stay on your Mac.** Recording, editing and exporting all happen on your computer. Nothing is uploaded.
 - **The AI helpers are optional.** Cutaway works without them. If you want them, see [Set up the AI helpers](/ai/set-up-ai).
 - **You can't break anything.** Every change can be undone, and Cutaway never deletes your original recording.

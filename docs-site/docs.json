@@ -94,13 +94,35 @@
         "tab": "Tutorials",
         "groups": [
           {
-            "group": "Tutorials",
+            "group": "Start here",
             "pages": [
               "tutorials/index",
               "tutorials/your-first-video",
               "tutorials/cut-out-mistakes",
               "tutorials/zoom-in-on-a-detail",
               "tutorials/captions-and-music"
+            ]
+          },
+          {
+            "group": "Record better",
+            "pages": [
+              "tutorials/read-from-the-teleprompter",
+              "tutorials/two-cameras",
+              "tutorials/hide-browser-bar"
+            ]
+          },
+          {
+            "group": "Publish",
+            "pages": [
+              "tutorials/ai-thumbnail",
+              "tutorials/make-a-short",
+              "tutorials/youtube-package"
+            ]
+          },
+          {
+            "group": "Let AI do it",
+            "pages": [
+              "tutorials/edit-from-claude-code"
             ]
           }
         ]
