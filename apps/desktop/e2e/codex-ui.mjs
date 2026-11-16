@@ -136,7 +136,7 @@ try {
   await page.locator('[data-testid="art-generate"]').click();
   await page.waitForSelector('[data-testid="consent-allow"]', { timeout: 10000 });
   const artSheet = await page.locator('.modal, [role="dialog"]').first().innerText();
-  check('pictures ask separately and say what is sent', /Use Codex for thumbnail pictures\?/.test(artSheet) && /thumbnail art: the concept title/i.test(artSheet) && /labelled as AI-generated/.test(artSheet), artSheet.slice(0, 80).replace(/\n/g, ' '));
+  check('pictures ask separately and say what is sent', /Use Codex for thumbnail pictures\?/.test(artSheet) && /thumbnail pictures: .*your photo .*logos/i.test(artSheet) && /labelled as AI-generated/.test(artSheet), artSheet.slice(0, 80).replace(/\n/g, ' '));
   await shot(page, '4-consent-pictures');
   await page.locator('[data-testid="consent-decline"]').click();
   await page.waitForSelector('[data-testid="art-note"]');

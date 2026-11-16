@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { suggestRole } from '../src/project';
 
-const video = (path: string, width = 1920, height = 1080) => ({ path, kind: 'video' as const, duration: 30, video: { width, height } });
+const video = (path: string, width = 1920, height = 1080) => ({ path, ok: true, kind: 'video' as const, duration: 30, video: { width, height, fps: 30 } });
 
 describe('suggestRole', () => {
   it('reads B-roll from the file name', () => {

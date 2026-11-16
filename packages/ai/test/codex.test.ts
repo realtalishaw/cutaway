@@ -53,7 +53,7 @@ describe('providers', () => {
     expect(o.destination).toMatch(/^OpenAI, through the Codex app/);
     expect(o.text).not.toMatch(/Anthropic|Claude/);
     expect(o.provider).toBe('OpenAI via local Codex');
-    expect(o.leaves.some((l) => /thumbnail art/i.test(l))).toBe(true);
+    expect(o.leaves.some((l) => /thumbnail pictures: .*your photo .*logos/i.test(l))).toBe(true);
     expect(o.purpose).toMatch(/labelled as AI-generated/);
     expect(disclosure(['transcript']).provider).toBe('Anthropic via local Claude Code');
   });

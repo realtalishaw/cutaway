@@ -718,7 +718,7 @@ export function disclosure(scope: DisclosureScope[], providerId: ProviderId = 'c
   const order: DisclosureScope[] = ['transcript', 'edit-metadata', 'frames'];
   const p = PROVIDERS[providerId];
   const leaves = order.filter((s) => scope.includes(s)).map((s) => SCOPE_TEXT[s]);
-  if (opts.images) leaves.push('For thumbnail art: the concept title, a few of your own words, your direction and up to two still frames as reference');
+  if (opts.images) leaves.push('For thumbnail pictures: the thumbnail’s description and words, your direction, and as reference pictures your photo (or a frame of you from the video) and any of your saved logos the thumbnail shows');
   const d = {
     provider: p.consent,
     providerId,

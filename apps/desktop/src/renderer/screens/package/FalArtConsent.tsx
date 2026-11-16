@@ -17,7 +17,7 @@ export function FalArtConsent({ onAllow, onDecline, onClose }: { onAllow(): void
       <div className="col gap-4">
         <div className="well" style={{ padding: 14 }}>
           <div className="eyebrow" style={{ marginBottom: 6 }}>What is sent</div>
-          <div>A description of the picture: the concept's title, why it fits, and a few words you say in the video. No video, audio or stills.</div>
+          <div>A description of the thumbnail and its words, plus reference pictures: your photo (or a frame of you from the video) and any of your saved logos the thumbnail shows. Never your video or audio.</div>
         </div>
         <div className="well" style={{ padding: 14 }}>
           <div className="eyebrow" style={{ marginBottom: 6 }}>Cost</div>
