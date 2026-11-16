@@ -2,6 +2,10 @@
 
 **Record once. Get the first cut.**
 
+[![A raw take with a filler word and a retake, about to be cut. Click to watch the launch film, made in Cutaway.](docs/screenshots/launch-film.jpg)](https://cutaway-1jk.pages.dev/assets/v7/launch.mp4)
+
+▶ **[Watch the 48-second launch film](https://cutaway-1jk.pages.dev/assets/v7/launch.mp4)**. It was edited and exported in Cutaway: Claude built it through Cutaway's MCP tools. · **[Website](https://cutaway-1jk.pages.dev)** · **[Docs](https://cutaway-docs.mintlify.site)**
+
 Cutaway is a free, open-source Mac app for making YouTube videos. Record your
 screen and camera (or import footage you already have), let AI assemble a first
 cut, fix anything by editing the transcript, the timeline or just asking, then
