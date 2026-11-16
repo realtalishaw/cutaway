@@ -58,7 +58,8 @@ export function suggestRole(probe: ProbeLike, existing: MediaSource[]): SourceRo
   if (probe.kind === 'image') return 'image';
   if (probe.kind === 'audio') return has('voice') || (probe.duration ?? 0) < 20 ? 'music' : 'voice';
   const name = probe.path.toLowerCase();
-  if (/b-?roll|cutaway|insert|stock/.test(name)) return 'broll';
+  // "cutaway" is also this app's name (and its own recordings and exports carry it), so it is not a B-roll hint.
+  if (/b-?roll|insert|stock/.test(name)) return 'broll';
   if (/screen|display|capture|recording|demo/.test(name) && !has('screen')) return 'screen';
   if (/cam|face|webcam|selfie|a-?cam|iphone|dslr/.test(name)) return !has('cameraA') ? 'cameraA' : !has('cameraB') ? 'cameraB' : 'broll';
   if (!has('screen') && !has('cameraA')) {

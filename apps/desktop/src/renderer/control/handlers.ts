@@ -28,6 +28,7 @@ import {
 } from '@cutaway/core';
 import type { GenKind, GenProvider } from '@shared/api';
 import { runFileExport } from '../engine/packageExport';
+import { motionStatus } from '../engine/motionFrames';
 import { runFirstCut } from '../jobs/firstCut';
 import { addMotion, setMotionBox } from '../motion/actions';
 import { motionContract } from '../motion/author';
@@ -148,7 +149,16 @@ async function frame(params: Params) {
     await new Promise((r) => setTimeout(r, 120));
     if (document.querySelector('.preview-canvas')) break;
   }
-  await new Promise((r) => setTimeout(r, 700));
+  // Animations are drawn from frames rendered ahead of time: wait for the ones on screen at this moment,
+  // so the picture really is what the export will show.
+  const out = p.edit.appearance.output;
+  const src = map.toSource(t);
+  const showing = p.edit.overlays.filter((o) => o.kind === 'motion' && o.motion && src >= o.start && src < o.end);
+  await Promise.race([
+    Promise.all(showing.map((o) => { const e = motionStatus(project().path, o.motion!, { width: out.width, height: out.height, fps: out.fps }); return e.state === 'rendering' ? e.promise : null; })),
+    new Promise((r) => setTimeout(r, 90_000)),
+  ]);
+  await new Promise((r) => setTimeout(r, showing.length ? 1200 : 700));
   const canvas = document.querySelector<HTMLCanvasElement>('.preview-canvas');
   if (!canvas) throw new Error('The preview is not showing.');
   const width = Math.max(160, Math.min(1280, num(params.width, 'width', true) ?? 960));
@@ -186,7 +196,7 @@ async function importMedia(params: Params) {
   if (!paths.length) throw new Error('"paths" needs one or more absolute file paths.');
   const as = typeof params.as === 'string' ? params.as : 'auto';
   const before = new Set(project().p.sources.map((s) => s.id));
-  const report = await importFiles(paths, { audioAsMusic: as === 'music', asOverlay: as === 'over' });
+  const report = await importFiles(paths, { audioAsMusic: as === 'music', asOverlay: as === 'over', asClips: as === 'clips' });
   const added = project().p.sources.filter((s) => !before.has(s.id));
   // pictures asked for as clips go on the video row
   if (as === 'clips') {

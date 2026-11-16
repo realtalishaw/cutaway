@@ -219,6 +219,8 @@ export interface ImportOptions {
   audioAsMusic?: boolean;
   /** Treat every video as B-roll and every picture as an image over the video (Add photo / B-roll). */
   asOverlay?: boolean;
+  /** Put every video on the video row as a clip, even when its name reads like B-roll (an AI tool asked for clips). */
+  asClips?: boolean;
 }
 
 export async function importFiles(paths: string[], opts: ImportOptions = {}): Promise<ImportReport | null> {
@@ -241,7 +243,7 @@ export async function importFiles(paths: string[], opts: ImportOptions = {}): Pr
     // A project that already has footage on its timeline: each new video becomes a clip after it, unless
     // its name says it is B-roll. (It can be moved to the supporting media, or back, in Sources.)
     if (hasFootage(project.sources)) {
-      const clips = report.accepted.filter(({ source, probe }) => source.kind === 'video' && suggestRole(probe, []) !== 'broll');
+      const clips = report.accepted.filter(({ source, probe }) => source.kind === 'video' && (opts.asClips || suggestRole(probe, []) !== 'broll'));
       const rest = report.accepted.filter((a) => !clips.includes(a)).map(({ source }) =>
         source.kind === 'video' ? { ...source, role: 'broll' as const, sync: defaultSync('reference') } : isTimelineSource(source) ? { ...source, sync: { ...source.sync, method: 'unsynced' as const, status: 'needs-review' as const, confirmedByCreator: false } } : source,
       );
