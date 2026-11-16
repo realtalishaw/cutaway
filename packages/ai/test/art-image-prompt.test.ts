@@ -64,3 +64,34 @@ describe('whole thumbnails', () => {
     expect(r.concepts[2]!.imagePrompt).toBe('');
   });
 });
+
+describe('saved logos', async () => {
+  const { logosBlock, logosNamedIn, logoNameFromFile, buildPackagingPrompt } = await import('../src/index');
+  const { buildFullThumbnailPrompt } = await import('../src/provider');
+  it('names a logo from its file', () => {
+    expect(logoNameFromFile('/Users/me/Desktop/cutaway-icon@2x.png')).toBe('Cutaway');
+    expect(logoNameFromFile('acme_studio_logo_final_v2.png')).toBe('Acme Studio');
+    expect(logoNameFromFile('logo.png')).toBe('My brand');
+  });
+  it('tells Claude the names, and only when there are logos', () => {
+    expect(logosBlock([])).toBe('');
+    expect(logosBlock(undefined)).toBe('');
+    const b = logosBlock(['Cutaway']);
+    expect(b).toContain('"Cutaway"');
+    expect(b).toContain('"the Cutaway logo"');
+    expect(logosBlock(['a "b"\ninjected'])).toContain('"a  b  injected"');
+  });
+  it('finds the logos a description names, ignoring case', () => {
+    expect(logosNamedIn('holding up the CUTAWAY logo', ['Cutaway', 'Figma'])).toEqual(['Cutaway']);
+    expect(logosNamedIn('a graph', ['Cutaway'])).toEqual([]);
+  });
+  it('asks the image model to copy each attached logo', () => {
+    const p = buildFullThumbnailPrompt({ imagePrompt: 'YouTube thumbnail, 16:9. The Cutaway logo glowing.', hasPhoto: true, logos: [{ name: 'Cutaway', image: 2 }] });
+    expect(p).toContain('The Cutaway logo is image 2: copy it exactly');
+  });
+  it('puts the logo block in the packaging prompt', () => {
+    const p = buildPackagingPrompt({ projectName: 'Demo', brief: { audience: '', notes: '' }, outDuration: 60, hasSpeech: false, sentences: [], visualMoments: [], frames: [], paletteCount: 4, chapters: [], editSummary: '', logos: ['Cutaway'] });
+    expect(p).toContain("CREATOR'S LOGOS");
+    expect(buildPackagingPrompt({ projectName: 'Demo', brief: { audience: '', notes: '' }, outDuration: 60, hasSpeech: false, sentences: [], visualMoments: [], frames: [], paletteCount: 4, chapters: [], editSummary: '' })).not.toContain("CREATOR'S LOGOS");
+  });
+});

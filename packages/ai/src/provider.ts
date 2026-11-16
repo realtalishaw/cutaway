@@ -218,7 +218,12 @@ export interface FullThumbnailInput {
   direction?: string;
   /** The creator's standing thumbnail notes (Settings → Playbooks). */
   notes?: string | null;
+  /** Saved logos attached after the photo, with their image number. */
+  logos?: { name: string; image: number }[];
 }
+
+const logoLines = (logos: FullThumbnailInput['logos']): string[] =>
+  (logos ?? []).map((l) => `The ${oneLine(l.name, 60)} logo is image ${l.image}: copy it exactly, with the same shape, colours and lettering, without redrawing or restyling it.`);
 
 /** The finished-thumbnail description for an image model (fal.ai). Pure. */
 export function buildFullThumbnailPrompt(input: FullThumbnailInput): string {
@@ -232,6 +237,7 @@ export function buildFullThumbnailPrompt(input: FullThumbnailInput): string {
     input.hasPhoto
       ? 'Keep the face, hair, skin tone and glasses (if any) of the person in image 1 exactly; they must be clearly recognisable as the same person.'
       : 'Do not show any person or face.',
+    ...logoLines(input.logos),
     'Any screens, documents or cards are drawn without readable words. The thumbnail words are the only text in the image, spelled exactly as given.',
   ]
     .filter((l): l is string => !!l)
@@ -243,6 +249,7 @@ export function buildCodexFullThumbnailPrompt(input: FullThumbnailInput): string
   return [
     'Use your built-in image generation tool exactly once to make ONE image, then answer with the JSON described at the end. Do not run shell commands. Do not read, write, move or copy files.',
     input.hasPhoto ? 'Image 1, attached, is a photo of the creator.' : null,
+    ...(input.logos ?? []).map((l) => `Image ${l.image}, attached, is the ${oneLine(l.name, 60)} logo.`),
     'Make it a finished YouTube thumbnail, landscape 16:9 (for example 1536x864).',
     '',
     'THE IMAGE',

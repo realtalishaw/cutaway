@@ -175,8 +175,10 @@ export async function generatePackaging(ctx: JobContext): Promise<PackagingResul
 
     if (gate.usable) {
       const frames: PackagingFrame[] = stills.map((s, i) => ({ index: i, file: s.file, source: s.source, sessionTime: s.sessionTime, outputTime: map.toOutput(s.sessionTime) }));
+      const logos = ((await window.cutaway.ai.logos?.().catch(() => null)) ?? []).map((l) => l.name);
       const prompt = buildPackagingPrompt({
         projectName: p.name,
+        logos,
         playbookNotes: ctx.settings.playbookNotes,
         brief: p.brief,
         outDuration: map.outDuration,

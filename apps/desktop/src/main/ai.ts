@@ -11,13 +11,13 @@
  * Thumbnail pictures come from Codex only (its built-in image tool).
  */
 import { execFile } from 'node:child_process';
-import { chmod, copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { app, type IpcMain } from 'electron';
-import { PROVIDERS, pickProvider, providerChoice, type ProviderId } from '@cutaway/ai';
+import { PROVIDERS, logoNameFromFile, pickProvider, providerChoice, type ProviderId } from '@cutaway/ai';
 import { codexStatus, findCodex, generateCodexImage, runCodex } from '@cutaway/ai/codex';
 import { claudeStatus, findClaude, imagesInsideDir, resetShellContext, runClaude, signInScript } from '@cutaway/ai/node';
-import type { AiImageRequest, AiImageResult, AiProviders, AiRequest, AiResult, AppSettings, ClaudeStatus } from '../shared/api';
+import type { AiImageRequest, AiImageResult, AiProviders, AiRequest, AiResult, AppSettings, ClaudeStatus, ThumbnailLogo } from '../shared/api';
 
 const STATUS_TTL_MS = 60_000;
 const TIMEOUTS: Partial<Record<string, number>> = { 'first-cut': 15 * 60_000, 'local-revision': 6 * 60_000, packaging: 8 * 60_000, motion: 6 * 60_000 };
@@ -38,6 +38,27 @@ async function currentPhoto(): Promise<string | null> {
   const name = names.find((n) => /^photo-.*\.(png|jpe?g|webp)$/i.test(n));
   return name ? join(photoDir(), name) : null;
 }
+
+/** Where the creator's logos for thumbnails are kept: the pictures plus logos.json with their names, in order. */
+const logoDir = () => join(app.getPath('userData'), 'thumbnail-logos');
+const MAX_LOGOS = 3;
+async function currentLogos(): Promise<ThumbnailLogo[]> {
+  const list = JSON.parse(await readFile(join(logoDir(), 'logos.json'), 'utf8').catch(() => '[]')) as unknown;
+  if (!Array.isArray(list)) return [];
+  const out: ThumbnailLogo[] = [];
+  for (const e of list as { file?: unknown; name?: unknown }[]) {
+    if (typeof e?.file !== 'string' || !/^logo-[a-z0-9]+\.(png|jpe?g|webp)$/i.test(e.file) || typeof e.name !== 'string') continue;
+    const path = join(logoDir(), e.file);
+    if (await stat(path).then((st) => st.isFile()).catch(() => false)) out.push({ path, name: e.name });
+  }
+  return out.slice(0, MAX_LOGOS);
+}
+async function saveLogos(logos: ThumbnailLogo[]): Promise<ThumbnailLogo[]> {
+  await mkdir(logoDir(), { recursive: true });
+  await writeFile(join(logoDir(), 'logos.json'), JSON.stringify(logos.map((l) => ({ file: l.path.slice(logoDir().length + 1), name: l.name }))));
+  return logos;
+}
+const cleanLogoName = (n: unknown): string => (typeof n === 'string' ? n.replace(/["<>\n\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40) : '');
 
 export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): void {
   const running = new Map<string, AbortController>();
@@ -138,8 +159,8 @@ export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): vo
     if (req.prompt.length > 20_000) return bad('The picture request is too long.');
     const root = await projectRoot(req.projectPath);
     if (!root) return bad('Pictures can only be made for an open project.');
-    const refs = (Array.isArray(req.referencePaths) ? req.referencePaths : []).filter((p): p is string => typeof p === 'string').slice(0, 2);
-    if (!refs.every((r) => imagesInsideDir(join(root, 'cache'), [r]) || imagesInsideDir(photoDir(), [r]))) return bad('Reference pictures must be inside the project cache folder or your saved thumbnail photo.');
+    const refs = (Array.isArray(req.referencePaths) ? req.referencePaths : []).filter((p): p is string => typeof p === 'string').slice(0, 4);
+    if (!refs.every((r) => imagesInsideDir(join(root, 'cache'), [r]) || imagesInsideDir(photoDir(), [r]) || imagesInsideDir(logoDir(), [r]))) return bad('Reference pictures must be inside the project cache folder or your saved thumbnail photo and logos.');
     if (disabled.codex) return bad(off('codex').message, 'not-found');
     if (running.has(req.id)) return bad('This picture is already being made.');
     const controller = new AbortController();
@@ -170,6 +191,32 @@ export function registerAi(ipcMain: IpcMain, getSettings: () => AppSettings): vo
     if (ext === 'jpg' && /\.heic$/i.test(from)) await new Promise<void>((ok, fail) => execFile('/usr/bin/sips', ['-s', 'format', 'jpeg', from, '--out', dest], (err) => (err ? fail(new Error('The photo could not be read.')) : ok())));
     else await copyFile(from, dest);
     return dest;
+  });
+
+  // The creator's logos for thumbnails: up to three, named, reused in every project.
+  ipcMain.handle('ai:logos', async (): Promise<ThumbnailLogo[]> => currentLogos());
+  ipcMain.handle('ai:addLogo', async (_e, from: string): Promise<ThumbnailLogo[]> => {
+    if (typeof from !== 'string' || !isAbsolute(from) || !/\.(png|jpe?g|webp|heic)$/i.test(from)) throw new Error('Choose a PNG, JPEG, WebP or HEIC picture of your logo.');
+    const logos = await currentLogos();
+    if (logos.length >= MAX_LOGOS) throw new Error(`You can save up to ${MAX_LOGOS} logos. Remove one first.`);
+    await mkdir(logoDir(), { recursive: true });
+    const heic = /\.heic$/i.test(from);
+    const ext = heic ? 'png' : (from.split('.').pop() ?? 'png').toLowerCase();
+    const dest = join(logoDir(), `logo-${Date.now().toString(36)}.${ext}`);
+    if (heic) await new Promise<void>((ok, fail) => execFile('/usr/bin/sips', ['-s', 'format', 'png', from, '--out', dest], (err) => (err ? fail(new Error('The picture could not be read.')) : ok())));
+    else await copyFile(from, dest);
+    return saveLogos([...logos, { path: dest, name: logoNameFromFile(from) }]);
+  });
+  ipcMain.handle('ai:renameLogo', async (_e, path: string, name: string): Promise<ThumbnailLogo[]> => {
+    const clean = cleanLogoName(name);
+    const logos = await currentLogos();
+    return clean ? saveLogos(logos.map((l) => (l.path === path ? { ...l, name: clean } : l))) : logos;
+  });
+  ipcMain.handle('ai:removeLogo', async (_e, path: string): Promise<ThumbnailLogo[]> => {
+    const logos = await currentLogos();
+    const gone = logos.find((l) => l.path === path);
+    if (gone) await rm(gone.path, { force: true });
+    return saveLogos(logos.filter((l) => l !== gone));
   });
 
   ipcMain.handle('ai:removeImage', async (_e, projectPath: string, relPath: string): Promise<void> => {

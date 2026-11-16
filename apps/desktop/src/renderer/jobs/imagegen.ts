@@ -12,7 +12,7 @@
  * (`generated`), shown as such in the editor and written to the package
  * manifest.
  */
-import { PROVIDERS, buildArtPrompt, buildCodexFullThumbnailPrompt, buildFullThumbnailPrompt, buildImageModelArtPrompt } from '@cutaway/ai';
+import { PROVIDERS, buildArtPrompt, buildCodexFullThumbnailPrompt, buildFullThumbnailPrompt, buildImageModelArtPrompt, logosNamedIn } from '@cutaway/ai';
 import { toSourceTime, uid, type GeneratedArt, type PackagingConcept, type Project, type ThumbnailLayer } from '@cutaway/core';
 import { resolveSourcePath } from '../../shared/api';
 
@@ -227,7 +227,13 @@ export async function generateThumbnail(req: ArtRequest): Promise<ArtOutcome> {
   if (!artAllowed(req.project, source)) return { ok: false, code: 'no-consent', message: 'Nothing was sent: making pictures has not been allowed for this project.' };
   const photo = await creatorPhoto(req.projectPath, req.project, req.concept);
   if (req.signal.aborted) return { ok: false, code: 'cancelled', message: 'Cancelled. Nothing was changed.' };
-  const input = { imagePrompt: req.concept.imagePrompt || fallbackImagePrompt(req.concept), hasPhoto: !!photo, direction: req.direction, notes: req.notes ?? null };
+  const imagePrompt = req.concept.imagePrompt || fallbackImagePrompt(req.concept);
+  // The creator's saved logos that this thumbnail names go after the photo, so the model copies them instead of inventing one.
+  const saved = (await window.cutaway.ai.logos?.().catch(() => null)) ?? [];
+  const named = logosNamedIn(`${imagePrompt} ${req.direction}`, saved.map((l) => l.name));
+  const logos = saved.filter((l) => named.includes(l.name)).slice(0, 3);
+  const refs = [...(photo ? [photo.path] : []), ...logos.map((l) => l.path)];
+  const input = { imagePrompt, hasPhoto: !!photo, direction: req.direction, notes: req.notes ?? null, logos: logos.map((l, i) => ({ name: l.name, image: (photo ? 2 : 1) + i })) };
   const id = `thumb_${Date.now().toString(36)}_${(seq++).toString(36)}`;
   const started = Date.now();
   const onAbort = () => void (source.id === 'fal' ? window.cutaway.gen.cancel(id) : window.cutaway.ai.cancel(id)).catch(() => undefined);
@@ -235,10 +241,10 @@ export async function generateThumbnail(req: ArtRequest): Promise<ArtOutcome> {
   const made = (path: string, note: string): ArtOutcome => ({ ok: true, art: { id: uid('art'), path, provider: source.consent, note, direction: req.direction.trim(), at: new Date().toISOString(), kind: 'thumbnail' }, durationMs: Date.now() - started });
   try {
     if (source.id === 'fal') {
-      const r = await window.cutaway.gen.generate(req.projectPath, { jobId: id, provider: 'fal', kind: 'image', prompt: buildFullThumbnailPrompt(input), aspect: '16:9', ...(photo ? { referencePaths: [photo.path] } : { model: THUMBNAIL_TEXT_MODEL }) });
-      return made(r.path, `fal.ai · ${r.model}${photo ? ` · from ${photo.from === 'photo' ? 'your photo' : 'a frame of you in the video'}` : ''}`);
+      const r = await window.cutaway.gen.generate(req.projectPath, { jobId: id, provider: 'fal', kind: 'image', prompt: buildFullThumbnailPrompt(input), aspect: '16:9', ...(refs.length ? { referencePaths: refs } : { model: THUMBNAIL_TEXT_MODEL }) });
+      return made(r.path, `fal.ai · ${r.model}${photo ? ` · from ${photo.from === 'photo' ? 'your photo' : 'a frame of you in the video'}` : ''}${logos.length ? ` · with your ${logos.map((l) => l.name).join(' and ')} logo` : ''}`);
     }
-    const res = await window.cutaway.ai.generateImage({ id, projectPath: req.projectPath, prompt: buildCodexFullThumbnailPrompt(input), referencePaths: photo ? [photo.path] : [] });
+    const res = await window.cutaway.ai.generateImage({ id, projectPath: req.projectPath, prompt: buildCodexFullThumbnailPrompt(input), referencePaths: refs });
     if (!res.ok || !res.path) return { ok: false, code: res.error?.code ?? 'failed', message: res.error?.code === 'cancelled' ? 'Cancelled. Nothing was changed.' : (res.error?.message ?? 'No picture was made.') };
     return made(res.path, res.note ?? '');
   } catch (e) {

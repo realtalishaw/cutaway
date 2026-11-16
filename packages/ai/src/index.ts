@@ -484,6 +484,8 @@ export interface PackagingInput {
   editSummary: string;
   /** The creator's own additions to the craft playbooks (Settings). */
   playbookNotes?: PlaybookNotes;
+  /** Names of the creator's saved logos (Package tab). A picture of each is attached when a thumbnail mentions it. */
+  logos?: string[];
 }
 
 export const PACKAGING_SCHEMA = {
@@ -528,6 +530,28 @@ A thumbnail is a designed image, generated whole: a person (the creator), one or
 5. The look: high contrast, saturated, clean studio lighting, a background colour that makes the person and words pop, bold modern YouTube style, no clutter.
 About 120 words. No brand logos except ones the video is about; no famous people; no claims or numbers the video does not show.`;
 
+/** What Claude is told about the creator's saved logos. Pure. */
+export function logosBlock(logos: readonly string[] | undefined): string {
+  const names = (logos ?? []).map((n) => n.replace(/["\n]/g, ' ').trim()).filter(Boolean).slice(0, 3);
+  if (!names.length) return '';
+  return `CREATOR'S LOGOS
+The creator saved ${names.length === 1 ? 'this logo' : 'these logos'}: ${names.map((n) => `"${n}"`).join(', ')}. A picture of each is attached to the image model when an imagePrompt names it, so it is drawn exactly. When the video is about one of these, show it (as a glowing app-style icon, on a screen, held up, in an orbit…) and call it exactly "the ${names[0]} logo"${names.length > 1 ? ' (or the matching name)' : ''} in the imagePrompt, instead of inventing a generic icon. Do not describe its shape or colours: the picture decides that. Leave it out when it does not fit the format.`;
+}
+
+/** "cutaway-icon@2x.png" → "Cutaway". Pure. */
+export function logoNameFromFile(file: string): string {
+  const base = (file.split(/[\\/]/).pop() ?? '').replace(/\.[a-z0-9]+$/i, '').replace(/@\dx$/i, '');
+  const words = base.split(/[\s_.-]+/).filter((w) => w && !/^(logo|icon|app|mark|brand|final|copy|v?\d+|white|black|dark|light|transparent|square|rounded)$/i.test(w));
+  const name = words.map((w) => w[0]!.toUpperCase() + w.slice(1)).join(' ').slice(0, 40);
+  return name || 'My brand';
+}
+
+/** Which saved logos a thumbnail description names, in the order they were saved. Pure. */
+export function logosNamedIn(imagePrompt: string, logos: readonly string[]): string[] {
+  const text = imagePrompt.toLowerCase();
+  return logos.filter((n) => n.trim() && text.includes(n.trim().toLowerCase()));
+}
+
 export const PACKAGING_RULES = `PACKAGING RULES (non-negotiable)
 1. Everything must be true of the FINISHED video below. Use only what is said or shown in it.
 2. No unsupported claims: no invented numbers, results, rankings, speed-ups, earnings, endorsements or product names. A number may appear only if it is spoken in the transcript.
@@ -556,7 +580,7 @@ ${withNotes(TITLES_PLAYBOOK, input.playbookNotes?.titles)}
 ${withNotes(THUMBNAILS_PLAYBOOK, input.playbookNotes?.thumbnails)}
 
 ${THUMBNAIL_DESIGN}
-
+${logosBlock(input.logos) ? `\n${logosBlock(input.logos)}\n` : ''}
 THUMBNAIL FORMAT CATALOGUE (#number name: what is in it. Why it gets clicks.)
 ${thumbnailFormatsBlock()}
 

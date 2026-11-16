@@ -41,11 +41,9 @@ const shot = async (page, name) => {
 };
 
 // A solid 16:9 picture for the fake image tool to "make".
-{
-  const { execFileSync } = await import('node:child_process');
-  const ffmpeg = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg';
-  execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x1e7a46:s=1280x720', '-frames:v', '1', path.join(fakeDir, 'image.png')]);
-}
+const { execFileSync } = await import('node:child_process');
+const ffmpeg = fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg';
+execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x1e7a46:s=1280x720', '-frames:v', '1', path.join(fakeDir, 'image.png')]);
 
 const { app, page, libraryDir, exportDir } = await launch({ settings: { aiProvider: 'codex', codexPath: fake } });
 try {
@@ -193,6 +191,39 @@ try {
   await page.evaluate((pp) => window.cutaway.ai.removeImage(pp, '../../outside.png'), projectPath);
   check('the delete call refuses anything that is not a generated picture', fs.existsSync(path.join(projectPath, 'project.json')));
 
+  // ── the creator's logo goes in when a thumbnail shows it ──
+  const logoFile = path.join(work, 'acme_studio_logo_final.png');
+  execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xff5a36:s=256x256', '-frames:v', '1', logoFile]);
+  let logos = await page.evaluate((f) => window.cutaway.ai.addLogo(f), logoFile);
+  check('a logo is saved as a copy, named from its file', logos.length === 1 && logos[0].name === 'Acme Studio' && logos[0].path !== logoFile && fs.existsSync(logos[0].path), JSON.stringify(logos.map((l) => l.name)));
+  const badLogo = await page.evaluate(() => window.cutaway.ai.addLogo('/etc/passwd').then(() => 'saved', () => 'refused'));
+  check('a file that is not a picture is refused as a logo', badLogo === 'refused');
+  // the panel reads the saved logos when it opens
+  await page.evaluate(() => window.__cutaway.useApp.getState().setView('edit'));
+  await page.waitForTimeout(500);
+  await page.evaluate(() => window.__cutaway.useApp.getState().setView('package'));
+  await page.waitForSelector('[data-testid="thumb-logo"]', { timeout: 15000 });
+  await page.locator('[data-testid="thumb-logo-name"]').fill('Acme');
+  await page.locator('[data-testid="thumb-logo-name"]').press('Enter');
+  await page.waitForTimeout(400);
+  logos = await page.evaluate(() => window.cutaway.ai.logos());
+  check('the logo can be renamed in the panel', logos[0]?.name === 'Acme', logos[0]?.name);
+  await shot(page, '6-logo');
+  const artBefore = (await artState()).art.length;
+  await page.locator('[data-testid="art-direction"]').fill('hold up the Acme logo');
+  await page.locator('[data-testid="art-generate"]').click();
+  await page.waitForFunction((n) => (window.__cutaway.useApp.getState().project.packaging.concepts.find((x) => (x.art ?? []).length)?.art ?? []).length > n, artBefore, { timeout: 60000 });
+  const la = lastArgs();
+  const lp = lastPrompt();
+  const imgs = la.flatMap((x, i) => (x === '--image' ? [la[i + 1]] : []));
+  check('a thumbnail that shows the logo sends its picture after the creator', imgs.length === 2 && imgs[1] === logos[0].path, JSON.stringify(imgs));
+  check('the model is told which image is the logo and to copy it', /Image 2, attached, is the Acme logo\./.test(lp) && /The Acme logo is image 2: copy it exactly/.test(lp));
+  await page.locator('[data-testid="art-direction"]').fill('a calm green studio backdrop');
+  await page.locator('[data-testid="thumb-logo-remove"]').click();
+  await page.waitForTimeout(400);
+  const keptArt = (await artState()).art.length;
+  check('removing the logo deletes the saved copy', (await page.evaluate(() => window.cutaway.ai.logos())).length === 0 && !fs.existsSync(logos[0].path));
+
   // ── a failed picture leaves the thumbnail alone ──
   set('image.txt', null);
   set('reply.json', JSON.stringify({ generated: false, note: 'image generation is not available on this account' }));
@@ -200,7 +231,7 @@ try {
   await page.getByText('No picture was made').first().waitFor({ timeout: 60000 });
   const msg = await page.locator('[data-testid="art-panel"]').innerText();
   st = await artState();
-  check('a refusal is shown with its reason and changes nothing', /image generation is not available on this account/.test(msg) && st.art.length === 1, msg.match(/Codex did not[^.]*\./)?.[0] ?? '');
+  check('a refusal is shown with its reason and changes nothing', /image generation is not available on this account/.test(msg) && st.art.length === keptArt, msg.match(/Codex did not[^.]*\./)?.[0] ?? '');
   await shot(page, '6-art-failed');
 
   // ── the package says so ──
@@ -228,7 +259,7 @@ try {
     const c = p.packaging.concepts.find((x) => (x.art ?? []).length);
     return { art: c?.art?.length ?? 0, layer: c?.layers.find((l) => l.generated)?.path ?? null, artConsent: p.artConsent?.provider ?? null };
   }, projectPath);
-  check('after reopening, the picture, its label and the permission are all still there', reopened.art === 1 && /^media\/generated\//.test(reopened.layer ?? '') && reopened.artConsent === 'OpenAI via local Codex', JSON.stringify(reopened));
+  check('after reopening, the picture, its label and the permission are all still there', reopened.art === keptArt && /^media\/generated\//.test(reopened.layer ?? '') && reopened.artConsent === 'OpenAI via local Codex', JSON.stringify(reopened));
   // ── once allowed, new concepts get a picture each, made one after another ──
   set('image.txt', '1');
   set('reply.json', JSON.stringify({ concepts: ['Render it right the first time', 'Export settings that matter', 'One panel, zero mistakes'].map((title, i) => ({ title, thumbnailText: ['RENDER RIGHT', 'SETTINGS', 'ZERO MISTAKES'][i], template: 'headline', frameIndex: 0, paletteIndex: i, rationale: 'The video walks through the export panel.', evidence: [] })), description: 'A walkthrough of the export panel.', chapters: [] }));

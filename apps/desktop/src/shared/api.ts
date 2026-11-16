@@ -326,6 +326,12 @@ export interface AppSettings {
   analytics: false;
 }
 
+/** A logo the creator saved for thumbnails: the saved copy (absolute path) and the name thumbnails call it by. */
+export interface ThumbnailLogo {
+  path: string;
+  name: string;
+}
+
 /** One photo from the background image search. `thumb` is a data URL fetched by the main process. */
 export interface ImageSearchPhoto {
   id: string;
@@ -705,6 +711,12 @@ export interface CutawayApi {
     photo(): Promise<string | null>;
     /** Save a copy of this photo for thumbnails, or forget it (null). Returns the saved copy's path. */
     setPhoto(from: string | null): Promise<string | null>;
+    /** The creator's saved logos for thumbnails (up to three), in order. */
+    logos(): Promise<ThumbnailLogo[]>;
+    /** Save a copy of this picture as a logo. Its name starts from the file name. Returns the new list. */
+    addLogo(from: string): Promise<ThumbnailLogo[]>;
+    renameLogo(path: string, name: string): Promise<ThumbnailLogo[]>;
+    removeLogo(path: string): Promise<ThumbnailLogo[]>;
   };
   /** Look assets kept inside the project folder: colour LUTs and downloaded background photos. */
   looks: {

@@ -129,3 +129,39 @@ describe('whole AI thumbnails', async () => {
     expect(fallbackImagePrompt(base)).toContain('"I BUILT THIS"');
   });
 });
+
+describe('saved logos in AI thumbnails', async () => {
+  const { generateThumbnail } = await import('./imagegen');
+  const run = async (imagePrompt: string, photo: string | null) => {
+    const { project: full, concept } = setup();
+    // without a saved photo, no camera either: nothing of the creator to build on
+    const project = photo ? full : { ...full, sources: full.sources.filter((x) => x.role === 'screen') };
+    const allowed = { ...project, artConsent: { provider: ART_PROVIDER.consent, grantedAt: 'x' } } as Project;
+    const w = (globalThis as unknown as { window: { cutaway: { ai: Record<string, unknown> } } }).window;
+    w.cutaway.ai.photo = vi.fn(async () => photo);
+    w.cutaway.ai.logos = vi.fn(async () => [
+      { path: '/ud/thumbnail-logos/logo-a.png', name: 'Cutaway' },
+      { path: '/ud/thumbnail-logos/logo-b.png', name: 'Figma' },
+    ]);
+    const r = await generateThumbnail({ projectPath: '/lib/Demo.cutaway', project: allowed, concept: { ...concept, imagePrompt }, direction: '', signal: new AbortController().signal });
+    return { r, req: generateImage.mock.calls[0]?.[0] as AiImageRequest };
+  };
+  it('attaches only the logos the thumbnail names, after the photo, and tells the model which image is which', async () => {
+    const { r, req } = await run('YouTube thumbnail, 16:9. Glowing Icon: the person from image 1 holding up the cutaway logo as a glowing app icon.', '/ud/thumbnail-photo/photo-1.jpg');
+    expect(r.ok).toBe(true);
+    expect(req.referencePaths).toEqual(['/ud/thumbnail-photo/photo-1.jpg', '/ud/thumbnail-logos/logo-a.png']);
+    expect(req.prompt).toContain('Image 2, attached, is the Cutaway logo.');
+    expect(req.prompt).toContain('The Cutaway logo is image 2: copy it exactly');
+    expect(req.prompt).not.toContain('Figma');
+  });
+  it('numbers logos from image 1 when there is no picture of the creator, and sends none the thumbnail does not name', async () => {
+    const { req } = await run('YouTube thumbnail, 16:9. Tool + Tool: the Figma logo plus the Cutaway logo.', null);
+    expect(req.referencePaths).toEqual(['/ud/thumbnail-logos/logo-a.png', '/ud/thumbnail-logos/logo-b.png']);
+    expect(req.prompt).toContain('The Cutaway logo is image 1');
+    expect(req.prompt).toContain('The Figma logo is image 2');
+    generateImage.mockClear();
+    const plain = await run('YouTube thumbnail, 16:9. The Jump: a big graph going up.', null);
+    expect(plain.req.referencePaths).toEqual([]);
+    expect(plain.req.prompt).not.toMatch(/logo is image/);
+  });
+});

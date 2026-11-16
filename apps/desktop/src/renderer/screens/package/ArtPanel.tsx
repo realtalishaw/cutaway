@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { GeneratedArt, PackagingConcept } from '@cutaway/core';
 import { applyWholeThumbnail, artAllowed, artInUse, findArtSource, generateThumbnail, isWholeThumbnail, withArt, withoutArt, withoutWholeThumbnail } from '../../jobs/imagegen';
 import { thumbnailFormat } from '@cutaway/ai';
+import { LogoPicker } from './LogoPicker';
 import { PhotoPicker } from './PhotoPicker';
 import { openSettingsAt } from '../Settings';
 import { FalArtConsent } from './FalArtConsent';
@@ -108,6 +109,7 @@ export function ArtPanel({ concept }: { concept: PackagingConcept }) {
         </div>
       ) : null}
       <PhotoPicker />
+      <LogoPicker />
       {!src ? (
         <div className="tiny dim">Checking what can make pictures…</div>
       ) : !ready ? (
