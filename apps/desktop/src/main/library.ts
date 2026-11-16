@@ -102,7 +102,7 @@ async function uniquePath(dir: string, base: string, ext: string): Promise<strin
   return candidate;
 }
 
-const safeName = (name: string) => name.replace(/[/:\\]/g, '-').trim().slice(0, 80) || 'Untitled';
+const safeName = (name: string) => name.replace(/\s*:\s*/g, ' - ').replace(/[/\\]/g, '-').trim().slice(0, 80) || 'Untitled';
 
 // ───────────────────────────── library ─────────────────────────────
 
@@ -198,7 +198,9 @@ export async function rename(p: string, name: string): Promise<{ path: string }>
     await fsp.rename(p, target);
   }
   const project = JSON.parse(await fsp.readFile(projectFile(target), 'utf8')) as Project;
-  await atomicWrite(projectFile(target), JSON.stringify({ ...project, name: path.basename(target, PROJECT_EXT) }));
+  // The project keeps the name as typed (a title may have a colon); only the folder name is made safe for the disk.
+  const clean = name.replace(/[\n\r]/g, ' ').trim().slice(0, 100);
+  await atomicWrite(projectFile(target), JSON.stringify({ ...project, name: clean || path.basename(target, PROJECT_EXT) }));
   return { path: target };
 }
 

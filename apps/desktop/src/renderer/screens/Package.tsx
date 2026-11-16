@@ -31,7 +31,9 @@ import { CraftWarnings } from './package/CraftWarnings';
 import { ArtPanel } from './package/ArtPanel';
 import { FalArtConsent } from './package/FalArtConsent';
 import { ConsentSheet as ArtConsentSheet } from '../ui/Consent';
-import { applyWholeThumbnail, artAllowed, artInUse, findArtSource, generateThumbnail, isWholeThumbnail, type ArtSource } from '../jobs/imagegen';
+import { applyWholeThumbnail, artAllowed, artInUse, findArtSource, generateThumbnail, isWholeThumbnail, whenPicturesDone, type ArtSource } from '../jobs/imagegen';
+import { updatePoster } from '../engine/poster';
+import { renameProject } from '../state/actions';
 import { openSettingsAt } from './Settings';
 import { aiInfo, consentCovers, useAiInfo } from '../state/jobs';
 
@@ -1084,7 +1086,19 @@ export function Package() {
     void run(true);
   };
 
-  const choose = (id: string) => useApp.getState().pack((p) => ({ ...p, selectedId: id, reviewed: true }), 'Choose thumbnail and title');
+  const choose = (id: string) => {
+    const app = useApp.getState();
+    app.pack((p) => ({ ...p, selectedId: id, reviewed: true }), 'Choose thumbnail and title');
+    const title = app.project?.packaging.concepts.find((c) => c.id === id)?.title.trim();
+    // The project takes the chosen title as its name, and its card in the projects list shows the chosen thumbnail.
+    void (async () => {
+      await whenPicturesDone();
+      const renamed = title ? await renameProject(title) : null;
+      const now = useApp.getState();
+      if (now.projectPath && now.project) await updatePoster(now.projectPath, now.project);
+      if (renamed) now.toast(`Project renamed to “${renamed}”.`);
+    })();
+  };
   const running = gen.status === 'running';
   const stage = gen.stages.find((s) => s.status === 'running') ?? gen.stages[gen.stages.length - 1] ?? null;
   const claude = useApp((s) => s.claude);

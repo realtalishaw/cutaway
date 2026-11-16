@@ -133,7 +133,24 @@ let seq = 0;
 export const THUMBNAIL_FAL_MODEL = 'fal-ai/flux/dev';
 
 /** Make one picture. Never called without `artAllowed(project)`; it checks again so no path skips the sheet. */
+/** Pictures being made right now. They write into the project folder, so it is not renamed meanwhile. */
+let making = 0;
+const idle: (() => void)[] = [];
+async function tracked<T>(fn: () => Promise<T>): Promise<T> {
+  making++;
+  try {
+    return await fn();
+  } finally {
+    if (--making === 0) for (const f of idle.splice(0)) f();
+  }
+}
+/** Resolves once no picture is being made. */
+export const whenPicturesDone = (): Promise<void> => (making === 0 ? Promise.resolve() : new Promise((r) => idle.push(r)));
+
 export async function generateArt(req: ArtRequest): Promise<ArtOutcome> {
+  return tracked(() => generateArtNow(req));
+}
+async function generateArtNow(req: ArtRequest): Promise<ArtOutcome> {
   const source = req.source ?? ART_SOURCES.codex;
   if (!artAllowed(req.project, source)) return { ok: false, code: 'no-consent', message: 'Nothing was sent: making pictures has not been allowed for this project.' };
   // fal.ai is asked in words only; Codex also gets up to two stills of the video to match.
@@ -223,6 +240,9 @@ export async function creatorPhoto(projectPath: string, project: Project, concep
  * photo of the creator. Never called without `artAllowed(project, source)`; it checks again.
  */
 export async function generateThumbnail(req: ArtRequest): Promise<ArtOutcome> {
+  return tracked(() => generateThumbnailNow(req));
+}
+async function generateThumbnailNow(req: ArtRequest): Promise<ArtOutcome> {
   const source = req.source ?? ART_SOURCES.codex;
   if (!artAllowed(req.project, source)) return { ok: false, code: 'no-consent', message: 'Nothing was sent: making pictures has not been allowed for this project.' };
   const photo = await creatorPhoto(req.projectPath, req.project, req.concept);

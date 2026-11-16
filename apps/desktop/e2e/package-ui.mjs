@@ -16,7 +16,7 @@ fs.mkdirSync(shots, { recursive: true });
 // Canonical path: os.tmpdir() goes through the /var → /private/var symlink.
 const profile = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cutaway-pkg-e2e-')));
 const libraryDir = path.join(profile, 'Library');
-const projectDir = path.join(libraryDir, 'Fixture demo.cutaway');
+let projectDir = path.join(libraryDir, 'Fixture demo.cutaway');
 const DURATION = 36;
 const results = [];
 const check = (name, ok, detail = '') => {
@@ -78,6 +78,10 @@ const shot = async (name) => {
 };
 try {
   await page.waitForSelector('.project-card', { timeout: 15000 });
+  // A project with no card picture gets a frame from its video.
+  await page.locator('.project-card', { hasText: 'Fixture demo' }).locator('.poster img').waitFor({ timeout: 20000 }).catch(() => undefined);
+  check('a project without a chosen thumbnail shows a frame of its video on its card', (await page.locator('.project-card', { hasText: 'Fixture demo' }).locator('.poster img').count()) === 1 && fs.statSync(path.join(projectDir, 'poster.jpg')).size > 2000);
+  const framePoster = fs.readFileSync(path.join(projectDir, 'poster.jpg'));
   await page.locator('.project-card', { hasText: 'Fixture demo' }).click();
   await page.waitForSelector('.pkg-empty', { timeout: 15000 });
   await page.waitForTimeout(700);
@@ -122,7 +126,15 @@ try {
   await page.waitForTimeout(300);
   await shot('04-package-frame-inspector');
 
+  const chosenTitle = 'Export: a YouTube package';
+  await page.evaluate((t) => window.__cutaway.useApp.getState().pack((p) => ({ ...p, concepts: p.concepts.map((c, i) => (i === 0 ? { ...c, title: t } : c)) }), 'Edit title'), chosenTitle);
   await page.locator('.concept').first().getByRole('button', { name: 'Choose this pair' }).click();
+  await page.waitForFunction((t) => window.__cutaway.useApp.getState().project.name === t, chosenTitle, { timeout: 15000 }).catch(() => undefined);
+  const renamedPath = await page.evaluate(() => window.__cutaway.useApp.getState().projectPath);
+  check('choosing a pair renames the project to its title', path.basename(renamedPath) === 'Export - a YouTube package.cutaway' && !fs.existsSync(projectDir), path.basename(renamedPath));
+  projectDir = renamedPath;
+  await page.waitForTimeout(1500);
+  check("the card picture becomes the chosen thumbnail", fs.existsSync(path.join(projectDir, 'poster.jpg')) && !fs.readFileSync(path.join(projectDir, 'poster.jpg')).equals(framePoster));
   const title = page.locator('.title-input');
   await title.fill('How to export a YouTube package from one folder');
   await page.waitForTimeout(300);
@@ -328,7 +340,7 @@ try {
   const clipInfo = execFileSync('/usr/bin/osascript', ['-e', 'clipboard info']).toString().trim();
   let clipPath = '';
   try { clipPath = execFileSync('/usr/bin/osascript', ['-e', 'POSIX path of (the clipboard as «class furl»)']).toString().trim(); } catch (e) { clipPath = `unreadable: ${e.message.split('\n')[0]}`; }
-  check('Export to clipboard puts a bare file from the export folder on the clipboard', /Copied to the clipboard/.test(o5) && /furl/.test(clipInfo) && /Exports\/fixture-demo\.mp4$/.test(clipPath) && fs.existsSync(path.join(exportDir, 'fixture-demo.mp4')), `${o5} · ${clipPath} · ${clipInfo.slice(0, 80)}`);
+  check('Export to clipboard puts a bare file from the export folder on the clipboard', /Copied to the clipboard/.test(o5) && /furl/.test(clipInfo) && /Exports\/export-a-youtube-package\.mp4$/.test(clipPath) && fs.existsSync(path.join(exportDir, 'export-a-youtube-package.mp4')), `${o5} · ${clipPath} · ${clipInfo.slice(0, 80)}`);
   await back();
   await page.locator('.ex-sheet .seg button', { hasText: '1080p' }).click();
   // put the edit back as it was, so the later steps see the original timing
@@ -364,7 +376,7 @@ try {
   const bundle = await page.evaluate(async (dir) => { const st = window.__cutaway.useApp.getState(); await window.__cutaway.saveNow(); return window.cutaway.library.exportBundle(st.projectPath, dir); }, shareDir).catch((e) => ({ error: e.message }));
   let listing = '';
   if (bundle.path) listing = execFileSync('/usr/bin/unzip', ['-l', bundle.path]).toString();
-  check('Share project writes a zip holding project.json and the media', !!bundle.path && /Fixture demo\.cutaway\/project\.json/.test(listing) && /media\/imports\/screen\.mp4/.test(listing) && !/\/cache\/./.test(listing), bundle.error ?? `${path.basename(bundle.path)} · ${bundle.bytes} bytes`);
+  check('Share project writes a zip holding project.json and the media', !!bundle.path && /Export - a YouTube package\.cutaway\/project\.json/.test(listing) && /media\/imports\/screen\.mp4/.test(listing) && !/\/cache\/./.test(listing), bundle.error ?? `${path.basename(bundle.path)} · ${bundle.bytes} bytes`);
 
   // ── voiceover (synthetic system voice, on-device) ──
   const voDir = path.join(projectDir, 'media', 'voiceover');
@@ -409,7 +421,7 @@ try {
     const after = await page.evaluate(() => { const p = window.__cutaway.useApp.getState().project; return { sources: p.sources.filter((x) => x.path.startsWith('media/voiceover/')).length, music: window.__cutaway.core.musicClipsOf(p.edit, p.sources).length }; });
     check('deleting a voiceover take asks first, then removes it from the project and deletes the WAV', /Delete the file\?/.test(asks) && after.sources === 0 && after.music === 0 && !fs.existsSync(voFile) && voFiles().length === 0, `asked “${asks}” · ${after.sources} voiceover source(s) · music ${JSON.stringify(after.music)} · ${voFiles().length} wav file(s)`);
     const refused = await page.evaluate(async () => { const st = window.__cutaway.useApp.getState(); try { await window.cutaway.native.removeVoiceover(st.projectPath, 'media/imports/screen.mp4'); return 'deleted'; } catch (e) { return e.message; } });
-    check('only voiceover takes can be deleted through that call', /Only voiceover takes/.test(refused) && fs.existsSync(screenFile), refused);
+    check('only voiceover takes can be deleted through that call', /Only voiceover takes/.test(refused) && fs.existsSync(path.join(projectDir, 'media', 'imports', 'screen.mp4')), refused);
     await page.getByRole('button', { name: 'Cancel' }).click();
     await page.waitForSelector('.vo', { state: 'detached', timeout: 10000 });
   } else {
@@ -480,7 +492,7 @@ try {
 
   await page2.getByRole('button', { name: 'Show previous projects' }).click();
   await page2.waitForSelector('.project-card', { timeout: 10000 });
-  await page2.locator('.project-card', { hasText: 'Fixture demo' }).click();
+  await page2.locator('.project-card', { hasText: 'Export: a YouTube package' }).click();
   await page2.waitForSelector('.steps', { timeout: 10000 });
   await page2.locator('.titlebar .btn.primary').click();
   await page2.waitForSelector('.export .checks', { timeout: 10000 });

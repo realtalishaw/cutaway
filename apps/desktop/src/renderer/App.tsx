@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { portableAppearance } from '@cutaway/core';
 import { saveNow, startAutosave, useApp, usePlayback, type InspectorTab, type ProjectView } from './state/store';
 import { commandForEvent } from './state/keymap';
-import { backToLibrary, newRecording, pickAndImport, useDemoTake } from './state/actions';
+import { backToLibrary, newRecording, pickAndImport, renameProject, useDemoTake } from './state/actions';
 import { startControl } from './control/handlers';
 import { Icon, Logo } from './ui/icons';
 import { Button, Modal, fmtAgo } from './ui/kit';
@@ -65,15 +65,7 @@ function ProjectName() {
     setEditing(false);
     const next = draft.trim();
     if (!next || next === name || !path) return setDraft(name);
-    try {
-      await saveNow();
-      const r = await window.cutaway.library.rename(path, next);
-      const opened = await window.cutaway.library.open(r.path);
-      useApp.setState({ projectPath: opened.path, project: { ...useApp.getState().project!, name: opened.project.name } });
-    } catch (e) {
-      useApp.getState().toast(`Could not rename: ${(e as Error).message}`, 'error');
-      setDraft(name);
-    }
+    if (!(await renameProject(next))) setDraft(name);
   };
   if (editing) {
     return (

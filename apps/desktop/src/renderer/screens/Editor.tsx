@@ -360,25 +360,6 @@ export function Editor() {
   const boxDrag = useRef<{ id: string; from: PreviewPoint; box: Rect; resize: boolean } | null>(null);
   const textDrag = useRef<{ id: string; dx: number; dy: number } | null>(null);
 
-  // Keep the library card's poster current: grab the preview when leaving the editor.
-  useEffect(
-    () => () => {
-      const canvas = document.querySelector<HTMLCanvasElement>('.preview-canvas');
-      const path = useApp.getState().projectPath;
-      if (!canvas || !path || canvas.width < 16) return;
-      try {
-        const small = document.createElement('canvas');
-        small.width = 640;
-        small.height = Math.round((640 * canvas.height) / canvas.width);
-        small.getContext('2d')!.drawImage(canvas, 0, 0, small.width, small.height);
-        small.toBlob((blob) => blob && void blob.arrayBuffer().then((b) => window.cutaway.library.savePoster(path, new Uint8Array(b)).catch(() => {})), 'image/jpeg', 0.82);
-      } catch {
-        /* a poster is a nicety; never block navigation on it */
-      }
-    },
-    [],
-  );
-
   useEffect(() => {
     const onRevise = (e: Event) => {
       const { range, instruction } = (e as CustomEvent<{ range: Range; instruction: string }>).detail;

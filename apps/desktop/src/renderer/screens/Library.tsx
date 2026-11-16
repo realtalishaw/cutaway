@@ -5,9 +5,12 @@ import { useApp } from '../state/store';
 import { droppedPaths, errorText, importIntoNewProject, newRecording, openProjectAt, pickAndImport } from '../state/actions';
 import { Icon, type IconName } from '../ui/icons';
 import { Banner, Button, Empty, Modal, fmtAgo, fmtBytes } from '../ui/kit';
+import { updatePoster } from '../engine/poster';
 import './library.css';
 
 const ROLE_ICON: Record<string, IconName> = { screen: 'screen', cameraA: 'camera', cameraB: 'camera', voice: 'mic', systemAudio: 'speaker', broll: 'broll', music: 'music', image: 'image' };
+
+const posterTried = new Set<string>();
 
 function ProjectCard({ p, index, onChanged }: { p: ProjectSummary; index: number; onChanged: () => void }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -138,6 +141,26 @@ export function Library() {
     window.cutaway.library.recoverable().then(setRecoverable).catch(() => {});
   }, []);
   useEffect(refresh, [refresh]);
+  useEffect(() => {
+    window.addEventListener('cutaway-poster', refresh);
+    return () => window.removeEventListener('cutaway-poster', refresh);
+  }, [refresh]);
+  // Projects with no card picture yet get a frame from the middle of the video, once per session.
+  useEffect(() => {
+    const todo = (projects ?? []).filter((p) => !p.poster && !posterTried.has(p.path));
+    if (!todo.length) return;
+    void (async () => {
+      for (const p of todo) {
+        posterTried.add(p.path);
+        try {
+          const { project } = await window.cutaway.library.open(p.path);
+          await updatePoster(p.path, project);
+        } catch {
+          /* leave the card plain */
+        }
+      }
+    })();
+  }, [projects]);
 
   const recoverTake = async (t: RecoverableTake) => {
     setBusy(t.takeDir);

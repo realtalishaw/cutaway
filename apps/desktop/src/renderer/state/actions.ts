@@ -9,6 +9,43 @@ export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * Rename the open project (and its folder). Returns the new name, or null if it could not be renamed.
+ * Not while a job is running: it reads and writes files at the current path.
+ */
+export async function renameProject(next: string): Promise<string | null> {
+  const app = useApp.getState();
+  const name = next.trim();
+  const path = app.projectPath;
+  if (!name || !path || !app.project || name === app.project.name) return null;
+  if (app.job) {
+    app.toast('The project can be renamed when the current job finishes.', 'error');
+    return null;
+  }
+  try {
+    await saveNow();
+    const r = await api().library.rename(path, name);
+    const opened = await api().library.open(r.path);
+    useApp.setState({ projectPath: opened.path, project: { ...useApp.getState().project!, name: opened.project.name } });
+    return opened.project.name;
+  } catch (e) {
+    app.toast(`Could not rename: ${errorText(e)}`, 'error');
+    return null;
+  }
+}
+
+// Leaving a project refreshes its card picture in the projects list: the chosen thumbnail, or a frame if it has none.
+useApp.subscribe((s, prev) => {
+  if (!prev.projectPath || !prev.project || s.projectPath === prev.projectPath) return;
+  if (s.project && s.project.id === prev.project.id) return; // renamed, not left
+  const path = prev.projectPath;
+  const project = prev.project;
+  void api()
+    .library.exists(`${path}/poster.jpg`)
+    .then((hasPoster) => import('../engine/poster').then((m) => m.updatePoster(path, project, { hasPoster })))
+    .catch(() => undefined);
+});
+
 export async function openProjectAt(path: string) {
   const app = useApp.getState();
   try {
